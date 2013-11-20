@@ -1,5 +1,3 @@
-# Must be run from root (i.e. final_projects) folder
-
 import os
 import re
 from time import sleep
@@ -10,7 +8,7 @@ import requests
 for a in range(2005,2013):
     print "...getting projects from %s \n" % str(a)
 
-    directory = "data/%s" % str(a)
+    directory = "../data/%s" % str(a)
 
     year_url = "http://cs229.stanford.edu/projects" + str(a) + ".html"    
     data = urlopen(year_url).read()

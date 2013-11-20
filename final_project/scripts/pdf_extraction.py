@@ -1,5 +1,3 @@
-# Must be run from root (i.e. final_projects) folder
-
 from time import sleep
 import os
 import pdfminer
@@ -9,7 +7,7 @@ for a in range(2012,2013):
 	sleep(1)
 	print "\n...starting %s files" % str(a)
 
-	directory = "data/pdf/%s" % str(a)
+	directory = "../data/pdf/%s" % str(a)
 	files = os.listdir(directory)
 
 	for f in files:
