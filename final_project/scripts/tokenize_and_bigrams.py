@@ -1,17 +1,26 @@
+import re
 from time import sleep
 import os
-import re
-import collections
+# import collections
 import nltk
-
 from nltk.corpus import stopwords
-
-from nltk.tokenize import regexp_tokenize
-
+from nltk.stem import PorterStemmer
+from nltk import word_tokenize
+# from nltk.tokenize import regexp_tokenize
 
 punctuation = re.compile(r'[-.?!%,";:()|0-9]')
-
+stopwords = nltk.corpus.stopwords.words('english')
 year_range = range(2013, 2014)
+
+def tokenize_text(text):
+	# token script
+	return " ".join(words)
+
+def stem_text(text):
+	stemmer = PorterStemmer()
+	stem = stemmer.stem
+	words = (stem(word.lower()) for word in word_tokenize)
+	return " ".join(words)
 
 for year in year_range:
 
@@ -23,24 +32,23 @@ for year in year_range:
 
 	for f in files:
 
-		print f
-		print type(f)
-
-		if ".txt" in f:
+		if f.endswith(".txt"):
 			try:
 
 				filename = directory + "/" + f
-				
-				# === Word list and stopwords ===
+				text = open(filename).read().lower()
 
+				# === Tokenize and stem  ===
+				tokens = tokenize_text(text)
+				stems = stem_text(tokens)
+
+				# === Word list and stopwords ===
 				word_list = re.split('\s+', open(filename).read().lower())
 				words = (punctuation.sub("", word).strip() for word in word_list)
 #				words = (word for word in words if word not in stopwords.words('english'))
 
-				stopwords = nltk.corpus.stopwords.words('english')
 
 				# === Bigrams ===
-				
 				bigrams = nltk.bigrams([w for w in words])
 
 				fdist = nltk.FreqDist(bigrams)
