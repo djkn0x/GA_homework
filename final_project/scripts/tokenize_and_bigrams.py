@@ -7,21 +7,18 @@ import nltk
 from nltk.corpus import stopwords
 
 from nltk.tokenize import regexp_tokenize
-"""
-from nltk.collocations import BigramCollocationFinder
-from nltk.metrics import BigramAssocMeasures
-from nltk.collocations import TrigramCollocationFinder
-from nltk.metrics import TrigramAssocMeasures
-"""
+
 
 punctuation = re.compile(r'[-.?!%,";:()|0-9]')
 
-for a in range(2013,2014):
+year_range = range(2013, 2014)
+
+for year in year_range:
 
 	sleep(1)
-	print "\n...starting %s files" % str(a)
+	print "\n...starting %s files" % str(year)
 
-	directory = "../data/text/%s" % str(a)
+	directory = "../data/text/%s" % str(year)
 	files = os.listdir(directory)
 
 	for f in files:
