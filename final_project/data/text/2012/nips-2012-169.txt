@@ -1,0 +1,601 @@
+Identiﬁability and Unmixing of Latent Parse Trees
+
+Daniel Hsu
+Microsoft Research
+
+Sham M. Kakade
+Microsoft Research
+
+Percy Liang
+Stanford University
+
+Abstract
+
+This paper explores unsupervised learning of parsing models along two directions.
+First, which models are identiﬁable from inﬁnite data? We use a general tech-
+nique for numerically checking identiﬁability based on the rank of a Jacobian ma-
+trix, and apply it to several standard constituency and dependency parsing models.
+Second, for identiﬁable models, how do we estimate the parameters efﬁciently?
+EM suffers from local optima, while recent work using spectral methods [1] can-
+not be directly applied since the topology of the parse tree varies across sentences.
+We develop a strategy, unmixing, which deals with this additional complexity for
+restricted classes of parsing models.
+
+1
+
+Introduction
+
+Generative parsing models, which deﬁne joint distributions over sentences and their parse trees, are
+one of the core techniques in computational linguistics. We are interested in the unsupervised learn-
+ing of these models [2–6], where the goal is to estimate the model parameters given only examples
+of sentences. Unsupervised learning can fail for a number of reasons [7]: model misspeciﬁcation,
+non-identiﬁability, estimation error, and computation error. In this paper, we delve into two of these
+issues:
+identiﬁability and computation.
+In doing so, we confront a central challenge of parsing
+models—that the topology of the parse tree is unobserved and varies across sentences. This is in
+contrast to standard phylogenetic models [8] and other latent tree models for which there is a single
+ﬁxed global tree across all examples [9].
+A model is identiﬁable if there is enough information in the data to pinpoint the parameters (up
+to some trivial equivalence class); establishing the identiﬁability of a model is often a highly non-
+trivial task. A classic result of Kruskal [10] has been employed to prove the identiﬁability of a wide
+class of latent variable models, including hidden Markov models and certain restricted mixtures of
+latent tree models [11–13]. However, these techniques cannot be directly applied to parsing models
+since the tree topology varies over an exponential set of possible topologies. Instead, we turn to
+techniques from algebraic geometry [14–17]; we show that a simple numerical procedure can be
+used to check identiﬁability for a wide class of models in NLP. Using this tool, we discover that
+probabilistic context-free grammars (PCFGs) are non-identiﬁable, but that simpler PCFG variants
+and dependency models are identiﬁable.
+The most common way to estimate unsupervised parsing models is by using local techniques such
+as EM [18] or MCMC sampling [19], but these methods can suffer from local optima and slow
+mixing. Meanwhile, recent work [1, 20–23] has shown that spectral methods can be used to estimate
+mixture models and HMMs with provable guarantees. These techniques express low-order moments
+of the observable distribution as a product of matrix parameters and use eigenvalue decomposition
+to recover these matrices. However, these methods are not directly applicable to parsing models
+because the tree topology again varies non-trivially. To address this, we propose a new technique,
+unmixing. The main idea is to express moments of the observable distribution as a mixture over
+the possible topologies. For restricted parsing models, the moments for a ﬁxed tree structure can
+
+E-mail: dahsu@microsoft.com, skakade@microsoft.com, pliang@cs.stanford.edu
+
+1
+
+Figure 1: The two constituency trees and seven dependency trees over L = 3 words, x1 , x2 , x3 . (a)
+A constituency tree consists of a hierarchical grouping of the words with a latent state zv for each
+node v . (b) A dependency tree consists of a collection of directed edges between the words. In both
+cases, we have labeled each edge from i to j with the parameters used to generate the state of node
+j given i.
+
+be “unmixed”, thereby reducing the problem to one with a ﬁxed topology, which can be tackled
+using standard techniques [1]. Importantly, our unmixing technique does not require the training
+sentences be annotated with the tree topologies a priori, in contrast to recent extensions of [21] to
+learning PCFGs [24] and dependency trees [25, 26], which work on a ﬁxed topology.
+
+2 Notation
+
+For a positive integer n, deﬁne [n] def= {1, . . . , n} and (cid:104)n(cid:105) = {e1 , . . . , en}, where ei is the vector
+which is 1 in component i and 0 elsewhere. For integers a, b ∈ [n], let a⊗n b = (a−1)n+b ∈ [n2 ] be
+the integer encoding of the pair (a, b). For a pair of matrices, A, B ∈ Rm×n , deﬁne the columnwise
+tensor product A ⊗C B ∈ Rm2×n to be such that (A ⊗C B )(i1⊗m i2 )j = Ai1 j Bi2 j . For a matrix
+A ∈ Rm×n , let A† denote the Moore-Penrose pseudoinverse.
+
+3 Parsing models
+
+A sentence is a sequence of L words, x = (x1 , . . . , xL ), where each word xi ∈ (cid:104)d(cid:105) is one of
+d possible word types. A (generative) parsing model deﬁnes a joint distribution Pθ (x, z ) over a
+sentence x and its parse tree z (to be made precise later), where θ are the model parameters (a
+collection of multinomials). Each parse tree z has a topology Topology(z ) ∈ Topologies, which
+is both unobserved and varying across sentences. The learning problem is to recover θ given only
+samples of x.
+Two important classes of models of natural language syntax are constituency models, which rep-
+resent a hierarchical grouping and labeling of the phrases of a sentence (e.g., Figure 1(a)), and
+dependency models, which represent pairwise relationships between the words of a sentence (e.g.,
+Figure 1(b)).
+
+2
+
+TTTTTTTTOOx1z01OOx2z12z02OOx3z23z03πTTTTOOx1z01TTTTOOx2z12OOx3z23z13z03πTopology(z)=1Topology(z)=2x1x2x3πAATopology(z)=1x1x2x3πAATopology(z)=2x1x2x3πAATopology(z)=3x1x2x3AπATopology(z)=4x1x2x3AAπTopology(z)=5x1x2x3AAπTopology(z)=6x1x2x3AAπTopology(z)=7(a)Constituency(PCFG-IE)(b)Dependency(DEP-IE)3.1 Constituency models
+
+A constituency tree z = (V , s) consists of a set of nodes V and a collection of hidden states s =
+{sv }v∈V . Each state sv ∈ (cid:104)k(cid:105) represents one of k possible syntactic categories. Each node v has
+the form [i : j ] for 0 ≤ i < j ≤ L corresponding to the phrase between positions i and j of the
+sentence. These nodes form a binary tree as follows: the root node is [0 : L] ∈ V , and for each node
+[i : j ] ∈ V with j − i > 1, there exists a unique m with i < m < j deﬁning the two children nodes
+[i : m] ∈ V and [m : j ] ∈ V . Let Topology(z ) be an integer encoding of V .
+
+PCFG. Perhaps the most well-known constituency parsing model is the probabilistic context-free
+grammar (PCFG). The parameters of a PCFG are θ = (π , B , O), where π ∈ Rk speciﬁes the initial
+state distribution, B ∈ Rk2×k speciﬁes the binary production distributions, and O ∈ Rd×k speciﬁes
+the emission distributions.
+A PCFG corresponds to the following generative process (see Figure 1(a) for an example): choose a
+topology Topology(z ) uniformly at random; generate the state of the root node using π ; recursively
+generate pairs of children states given their parents using B ; and ﬁnally generate words xi given
+their parents using O . This generative process deﬁnes a joint probability over a sentence x and a
+L(cid:89)
+(cid:89)
+parse tree z :
+[i:m],[m:j ]∈V
+i=1
+
+Pθ (x, z ) = | Topologies |−1π(cid:62) s[0:L]
+
+(s[i:m] ⊗k s[m:j ] )(cid:62)B s[i:j ]
+
+x(cid:62)
+i Os[i−1:i] ,
+
+(1)
+
+We will also consider two variants of the PCFG with additional restrictions:
+
+PCFG-I. The left and right children states are generated independently—that is, we have the fol-
+lowing factorization: B = T1 ⊗C T2 for some T1 , T2 ∈ Rk×k .
+PCFG-IE. The left and the right productions are independent and equal: B = T ⊗C T .
+
+3.2 Dependency tree models
+
+In contrast to constituency trees, which posit internal nodes with latent states, dependency trees
+connect the words directly. A dependency tree z is a set of directed edges (i, j ), where i, j ∈ [L]
+are distinct positions in the sentence. Let Root(z ) denote the position of the root node of z . We
+consider only projective dependency trees [27]: z is projective if for every path from i to j to k in
+z , we have that j and k are on the same side of i (that is, j − i and k − i have the same sign). Let
+Topology(z ) be an integer encoding of z .
+
+DEP-I. We consider the simple dependency model of [4]. The parameters of this model are θ =
+(π , A(cid:46) , A(cid:38) ), where π ∈ Rd is the initial word distribution and A(cid:46) , A(cid:38) ∈ Rd×d are the left and
+right argument distributions. The generative process is as follows: choose a topology Topology(z )
+uniformly at random, generate the root word using π , and recursively generate argument words to
+the left to the right given the parent word using A(cid:46) and A(cid:38) , respectively. The corresponding joint
+(cid:89)
+probability distribution is as follows:
+Pθ (x, z ) = | Topologies |−1π(cid:62)xRoot(z)
+(i,j )∈z
+
+x(cid:62)
+j Adir(i,j )xi ,
+
+(2)
+
+where dir(i, j ) = (cid:46) if j < i and (cid:38) if j > i.
+We also consider the following two variants:
+
+DEP-IE. The left and right argument distributions are equal: A = A(cid:46) = A(cid:38) .
+
+DEP-IES. A = A(cid:46) = A(cid:38) and π is the stationary distribution of A (that is, π = Aπ ).
+Usually a PCFG induces a topology via a state-dependent probability of choosing a binary production
+versus an emission. Our model is a restriction which corresponds to a state-independent probability.
+
+3
+
+4
+Identiﬁability
+Our goal is to estimate model parameters θ0 ∈ Θ given only access to sentences x ∼ Pθ0 . Speciﬁ-
+cally, suppose we have an observation function φ(x) ∈ Rm , which is the only lens through which an
+algorithm can view the data. We ask a basic question: in the limit of inﬁnite data, is it information-
+theoretically possible to identify θ0 from the observed moments µ(θ0 ) def= Eθ0 [φ(x)]?
+To be more precise, deﬁne the equivalence class of θ0 to be the set of parameters θ that yield the
+same observed moments:
+SΘ (θ0 ) = {θ ∈ Θ : µ(θ) = µ(θ0 )}.
+(3)
+It is impossible for an algorithm to distinguish among the elements of SΘ (θ0 ). Therefore, one might
+want to ensure that |SΘ (θ0 )| = 1 for all θ0 ∈ Θ. However, this requirement is too strong for two rea-
+sons. First, models often have natural symmetries—e.g., the k states of any PCFG can be permuted
+without changing µ(θ), so |SΘ (θ0 )| ≥ k !. Second, |SΘ (θ0 )| = ∞ for some pathological θ0 ’s—e.g.,
+PCFGs where all states have the same emission distribution O are indistinguishable regardless of
+the production distributions B . The following deﬁnition of identiﬁability accommodates these two
+exceptional cases:
+Deﬁnition 1 (Identiﬁability). A model family with parameter space Θ is (globally) identiﬁable from
+φ if there exists a measure zero set E such that |SΘ (θ0 )| is ﬁnite for every θ0 ∈ Θ\E . It is locally
+identiﬁable from φ if there exists a measure zero set E such that, for every θ0 ∈ Θ\E , there exists an
+open neighborhood N (θ0 ) around θ0 such that SΘ (θ0 ) ∩ N (θ0 ) = {θ0}.
+
+Example of non-identiﬁability. Consider the DEP-IE model with L = 2 with the full observation
+function φ(x) = x1 ⊗ x2 . The corresponding observed moments are µ(θ) = 0.5A diag(π) +
+(cid:1) − 1 degrees of freedom. Therefore, SΘ (θ) has dimension (cid:0)d
+has (cid:0)d+1
+(cid:1) and therefore the model is
+0.5 diag(π)A(cid:62) . Note that A diag(π) is an arbitrary d × d matrix whose entries sum to 1, which
+has d2 − 1 degrees of freedom, whereas µ(θ) is a symmetric matrix whose entries sum to 1, which
+2
+2
+non-identiﬁable.
+Parameter counting.
+It is important to compute the degrees of freedom correctly—simple param-
+eter counting is insufﬁcient. For example, consider the PCFG-IE model with L = 2. The observed
+moments with respect to φ(x) = x1 ⊗ x2 is a d × d matrix, which places d2 constraints on the
+k2 + (d − 1)k parameters. When d ≥ 2k , there are more constraints than parameters, but the PCFG-
+IE model with L = 2 is actually non-identiﬁable (as we will see later). The issue here is that the
+number of constraints does not reveal the fact that some of these constraints are redundant.
+
+4.1 Observation functions
+An observation function φ(x) and its associated observed moments µ(θ0 ) = Eθ0 [φ(x)] reveals
+aspects of the distribution Pθ0 (x). For example, φ(x) = x1 would only reveal the marginal distribu-
+tion of the ﬁrst word, whereas φ(x) = x1 ⊗ · · · ⊗ xL reveals the entire distribution of x. There is a
+tradeoff: Higher-order moments provide more information, but are harder to estimate reliably given
+φ∗∗ (x) def= (cid:0)xi ⊗ xj : i, j ∈ [L](cid:1)
+ﬁnite data, and are also computationally more expensive. In this paper, we consider the following
+intermediate moments:
+φ∗∗∗ (x) def= (cid:0)xi ⊗ xj ⊗ xk : i, j, k ∈ [L](cid:1)
+φ12 (x) def= x1 ⊗ x2
+φ∗∗∗η (x) def= (cid:0)(xi ⊗ xj )(η(cid:62)xk ) : i, j, k ∈ [L](cid:1)
+φ123 (x) def= x1 ⊗ x2 ⊗ x3
+φ123η (x) def= (x1 ⊗ x2 )(η(cid:62)x3 )
+φall (x) def= x1 ⊗ · · · ⊗ xL
+Above, η ∈ Rd denotes a unit vector in Rd (e.g., e1 ) which picks out a linear combination of matrix
+slices from a third-order d × d × d tensor.
+
+4.2 Automatically checking identiﬁability
+
+One immediate goal is to determine which models in Section 3 are identiﬁable from which of the
+observed moments (Section 4.1). A powerful analytic tool that has been succesfully applied in
+
+4
+
+previous work is Kruskal’s theorem [10, 11], but (i) it is does not immediately apply to models with
+random topologies, and (ii) only gives sufﬁcient conditions for identiﬁability, and cannot be used to
+determine non-identiﬁability. Furthermore, since it is common practice to explore many different
+models for a given problem in rapid succession, we would like to check identiﬁability quickly and
+reliably. In this section, we develop an automatic procedure to do this.
+To establish identiﬁability, let us examine the algebraic structure of SΘ (θ0 ) for θ0 ∈ Θ, where we
+assume that the parameter space Θ is an open subset of [0, 1]n . Recall that SΘ (θ0 ) is deﬁned by the
+moment constraints µ(θ) = µ(θ0 ). We can write these constraints as hθ0 (θ) = 0, where
+hθ0 (θ) def= µ(θ) − µ(θ0 )
+
+is a vector of m polynomials in θ .
+Let us now compute the number of degrees of freedom of hθ0 around θ0 . The key quantity is
+J (θ) ∈ Rm×n , the Jacobian of hθ0 at θ (note that the Jacobian of hθ0 does not depend on θ0 ; it
+is precisely the Jacobian of µ). This Jacobian criterion is well-established in algebraic geometry,
+and has been adopted in the statistical literature for testing model identiﬁability and other related
+properties [14–17].
+Intuitively, each row of J (θ0 ) corresponds to a direction of a constraint violation, and thus the row
+space of J (θ0 ) corresponds to all directions that would take us outside the equivalence class SΘ (θ0 ).
+If J (θ0 ) has less than rank n, then there is a direction orthogonal to all the rows along which we
+can move and still satisfy all the constraints—in other words, |SΘ (θ0 )| is inﬁnite, and therefore the
+model is non-identiﬁable. This intuition leads to the following algorithm:
+
+CH ECK ID EN T I FIAB I L I TY:
+−1. Choose a point ˜θ ∈ Θ uniformly at random.
+−2. Compute the Jacobian matrix J ( ˜θ).
+−3. Return “yes” if the rank of J ( ˜θ) = n and “no” otherwise.
+
+The following theorem asserts the correctness of CH ECK ID EN T I FIAB I L I TY. It is largely based on
+techniques in [16], although we have not seen it explicitly stated in this form.
+Theorem 1 (Correctness of CH ECK ID EN T I FIAB I L I TY). Assume the parameter space Θ is a non-
+empty open connected subset of [0, 1]n ; and the observed moments µ : Rn → Rm , with respect to
+observation function φ, is a polynomial map. Then with probability 1, CH ECK ID EN T I FIAB I L I TY
+returns “yes” iff the model family is locally identiﬁable from φ. Moreover, if it returns “yes”, then
+there exists E ⊂ Θ of measure zero such that the model family with parameter space Θ \ E is
+identiﬁable from φ.
+
+The proof of Theorem 1 is given in Appendix A.
+
+4.3
+Implementation of CH ECK ID EN T I FIAB I L I TY
+Computing the Jacobian. The rows of J correspond to ∂Eθ [φj (x)]/∂ θ and can be computed ef-
+ﬁciently by adapting dynamic programs used in the E-step of an EM algorithm for parsing models.
+There are two main differences: (i) we must sum over possible values of x in addition to z , and (ii)
+we are not computing moments, but rather gradients thereof. Speciﬁcally, we adapt the CKY algo-
+rithm for constituency models and the algorithm of [27] for dependency models. See Appendix C.1
+for more details.
+
+Numerical issues. Because we implemented CH ECK ID EN T I FIAB I L I TY on a ﬁnite precision ma-
+chine, the results are subject to numerical precision errors. However, we veriﬁed that our numerical
+results are consistent with various analytically-derived identiﬁability results (e.g., from [11]).
+
+While we initially deﬁned θ to be a tuple of conditional probability matrices, we will now use its non-
+redundant vectorized form θ ∈ Rn .
+
+5
+
+Model \ Observation function
+PCFG
+PCFG-I / PCFG-IE
+DEP-I
+DEP-IE / DEP-IES
+
+φ∗∗∗e1
+φ∗∗
+φ123
+φ12
+φ123e1
+No, even from φall for L ∈ {3, 4, 5}
+No Yes iff L ≥ 4
+Yes iff L ≥ 3
+Yes iff L ≥ 3
+No
+Yes iff L ≥ 3
+
+φ∗∗∗
+
+Figure 2:
+These ﬁndings are given by
+identiﬁability of parsing models.
+Local
+CH ECK ID EN T I FIAB I L I TY have the semantics from Theorem 1. These were checked for d ∈
+{2, 3, . . . , 8}, k ∈ {2, . . . , d} (applies only for PCFG models), L ∈ {2, 3, . . . , 9}.
+
+4.4
+
+Identiﬁability of constituency and dependency tree models
+
+We checked the identiﬁability status of various constituency and dependency tree models using our
+implementation of CH ECK ID EN T I FIAB I L I TY. We focus on the regime where d ≥ k for PCFGs;
+additional results for d < k are given in Appendix B.
+The results are reported in Figure 2. First, we found that the PCFG is not identiﬁable from φall (and
+therefore not identiﬁable from any φ) for L ∈ {3, 4, 5}; we believe that the same holds for all L. This
+negative result motivates exploring restricted subclasses of PCFGs, such as PCFG-I and PCFG-IE,
+which factorize the binary productions. For these classes, we found that the sentence length L and
+choice of observation function can inﬂuence identiﬁability: Both models are identiﬁable for large
+enough L (e.g., L ≥ 3) and with a sufﬁciently rich observation function (e.g., φ123η ).
+The dependency models, DEP-I and DEP-IE, were all found to be identiﬁable for L ≥ 3 from
+second-order moments φ∗∗ . The conditions for identiﬁability are less stringent than their con-
+stituency counterparts (PCFG-I and PCFG-IE), which is natural since dependency models are sim-
+pler without the latent states. Note that in all identiﬁable models, second-order moments sufﬁce to
+determine the distribution—this is good news because low-order moments are easier to estimate.
+
+5 Unmixing algorithms
+
+Having established which parsing models are identiﬁable, we now turn to parameter estimation for
+these models. We will consider algorithms based on moment matching—those that try to ﬁnd a θ
+satisfying µ(θ) = u for some u. Typically, u is an empirical estimate of µ(θ0 ) = Eθ0 [φ(x)] based
+on samples x ∼ Pθ0 .
+In general, solving µ(θ) = u corresponds to ﬁnding solutions to systems of multivariate polyno-
+mials, which is NP-hard [28]. However, µ(θ) often has additional structure which we can exploit.
+For instance, for an HMM, the sliced third-order moments µ123η (θ) can be written as a product of
+parameter matrices in θ , and each matrix can be recovered by decomposing the product [1].
+For parsing models, the challenge is that the topology is random, so the moments is not a single prod-
+uct, but a mixture over products. To deal with this complication, we propose a new technique, which
+we call unmixing: We “unmix” the products from the mixtures, essentially reducing the problem to
+one with a ﬁxed topology.
+We will ﬁrst present the general idea of unmixing (Section 5.1) and then apply it to the PCFG-IE
+model (Section 5.2) and the DEP-IES model (Section 5.3).
+
+5.1 General case
+
+We assume the observation function φ(x) consists of a collection of observation matrices
+{φo (x)}o∈O (e.g., for o = (i, j ), φo (x) = xi ⊗ xj ). Given an observation matrix φo (x) and a
+topology t ∈ Topologies, consider the mapping that computes the observed moment conditioned on
+Note that these subclasses occupy measure zero subsets of the PCFG parameter space, which is expected
+given the non-identiﬁability of the general PCFG.
+We will develop our algorithms assuming true moments (u = µ(θ0 )). The empirical moments converge
+to the true moments at Op (n− 1
+2 ), and matrix perturbation arguments (e.g., [1]) can be used derive sample
+complexity arguments for the parameter error.
+
+6
+
+Ψp
+
+(4)
+
+µo (θ) =
+
+for all o ∈ O,
+
+that topology: Ψo,t (θ) = Eθ [φo (x) | Topology = t]. As we range o over O and t over Topologies,
+we will enounter a ﬁnite number of such mappings. We call these mappings compound parameters,
+denoted {Ψp}p∈P .
+(cid:88)
+Now write the observed moments as a weighted sum:
+(cid:124)
+(cid:123)(cid:122)
+(cid:125)
+P(Ψo,Topology = Ψp )
+p∈P
+def= Mop
+where we have deﬁned Mop to be the probability mass over tree topologies that yield compound
+parameter Ψp . We let {Mop}o∈O,p∈P be the mixing matrix. Note that (4) deﬁnes a system of
+equations µ = M Ψ, where the variables are the compound parameters and the constraints are the
+observed moments. In a sense, we have replaced the original system of polynomial equations (in θ)
+with a system of linear equations (in Ψ).
+The key to the utility of this technique is that the number of compound parameters can be polynomial
+in L even when the number of possible topologies is exponential in L. Previous analytic techniques
+[13] based on Kruskal’s theorem [10] cannot be applied here because the possible topologies are too
+many and too varied.
+Note that the mixing equation µ = M Ψ holds for each sentence length L, but many compound pa-
+rameters p appear in the equations of multiple L. Therefore, we can combine the equations across all
+observed sentence lengths, yielding a more constrained system than if we considered the equations
+of each L separately.
+The following proposition shows how we can recover θ by unmixing the observed moments µ:
+Proposition 1 (Unmixing). Suppose that there exists an efﬁcient base algorithm to recover θ from
+some subset of compound parameters {Ψp (θ) : p ∈ P0 }, and that e(cid:62)
+p is in the row space of M for
+each p ∈ P0 . Then we can recover θ as follows:
+
+UNM IX(µ):
+−1. Compute the mixing matrix M (4).
+−2. Retrieve the compound parameters Ψp (θ) = (M †µ)p for each p ∈ P0 .
+−3. Call the base algorithm on {Ψp (θ) : p ∈ P0} to obtain θ .
+
+For all our parsing models, M can be computed efﬁciently using dynamic programming (Ap-
+pendix C.2). Note that M is data-independent, so this computation can be done once in advance.
+
+5.2 Application to the PCFG-IE model
+
+µ132η
+
+µ123η
+
+µ231η
+
+As a concrete example, consider the PCFG-IE model over L = 3 words. Write A = OT . For
+any η ∈ Rd , we can express the observed moments as a sum over the two possible topologies in
+Figure 1(a):
+def= E[x1 ⊗ x2 (η(cid:62)x3 )] = 0.5Ψ1;η + 0.5Ψ2;η ,
+def= A diag(T diag(π)A(cid:62) η)A(cid:62) ,
+def= E[x1 ⊗ x3 (η(cid:62)x2 )] = 0.5Ψ3;η + 0.5Ψ2;η ,
+def= A diag(π)T (cid:62) diag(A(cid:62) η)A(cid:62) ,
+Ψ2;η
+def= E[x2 ⊗ x3 (η(cid:62)x1 )] = 0.5Ψ3;η + 0.5Ψ1;η ,
+def= A diag(A(cid:62) η)T diag(π)A(cid:62) ,
+Ψ3;η
+(cid:32) µ123η
+(cid:33)
+(cid:32) 0.5I
+(cid:33)
+(cid:32) Ψ1;η
+(cid:33)
+or compactly in matrix form:
+0.5I
+(cid:123)(cid:122)
+(cid:124)
+(cid:123)(cid:122)
+(cid:125)
+(cid:125)
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+(cid:124)
+µ132η
+0
+0.5I
+Ψ2;η
+µ231η
+0.5I
+0
+Ψ3;η
+observed moments µη
+mixing matrix M
+compound parameters Ψη
+Let us observe µη at two different values of η , say at η = 1 and η = τ for some random τ . Since
+the mixing matrix M is invertible, we can obtain the compound parameters Ψ2;1 = (M −1µ1 )2 and
+Ψ2;τ = (M −1µτ )2 .
+
+0
+0.5I
+0.5I
+
+=
+
+.
+
+Ψ1;η
+
+7
+
+Now we will recover θ from Ψ2;1 and Ψ2;τ by ﬁrst extracting A = OT via an eigenvalue decom-
+position, and then recovering π , T , and O in turn (all up to the same unknown permutation) via
+elementary matrix operations.
+For the ﬁrst step, we will use the following tool (adapted from Algorithm A of [1]), which allow us
+to decompose two related matrix products:
+Lemma 1 (Spectral decomposition). Let M1 , M2 ∈ Rd×k have full column rank and D be a diag-
+onal matrix with distinct diagonal entries. Suppose we observe X = M1M (cid:62)
+2 and Y = M1DM (cid:62)
+2 .
+Then D ECOM PO S E(X, Y ) recovers M1 up to a permutation and scaling of the columns.
+
+D ECOM PO S E(X, Y ):
+−1. Find U1 , U2 ∈ Rd×k such that range(U1 ) = range(X ) and range(U2 ) = range(X (cid:62) ).
+−2. Perform an eigenvalue decomposition of (U (cid:62)
+1 Y U2 )(U (cid:62)
+1 X U2 )−1 = V SV −1 .
+−3. Return (U (cid:62)
+1 )†V .
+First, run D ECOM PO S E(X = Ψ(cid:62)
+2;1 , Y = Ψ(cid:62)
+2;τ ) (Lemma 1), which corresponds to M1 = A and
+M2 = A diag(π)T (cid:62) . This produces AΠS for some permutation matrix Π and diagonal scaling S .
+Since we know that the columns of A sum to one, we can identify AΠ.
+To recover the initial distribution π (up to permutation), take Ψ2;11 = Aπ and left-multiply by
+(AΠ)† to get Π−1π . For T , put the entries of π in a diagonal matrix: Π−1 diag(π)Π. Take Ψ(cid:62)
+2;1 =
+AT diag(π)A(cid:62) and multiply by (AΠ)† on the left and ((AΠ)(cid:62) )† (Π−1 diag(π)Π)−1 on the right,
+which yields Π−1T Π. (Note that Π is orthogonal, so Π−1 = Π(cid:62) .) Finally, multiply AΠ = OT Π
+and (Π−1T Π)−1 , which yields OΠ.
+The above algorithm identiﬁes the PCFG-IE from only length 3 sentences. To exploit sentences of
+different lengths, we can compute a mixing matrix M which includes constraints from sentences
+of length 1 ≤ L ≤ Lmax up to some upper bound Lmax . For example, Lmax = 10 results in a
+990 × 2376 mixing matrix. We can retrieve the same compound parameters (Ψ2;1 and Ψ2;τ ) from
+the pseudoinverse of M and as proceed as before.
+
+5.3 Application to the DEP-IES model
+
+µ1
+
+µ12
+
+µ13
+
+We now turn to the DEP-IES model over L = 3 words. Our goal is to recover the parameters
+θ = (π , A). Let D = diag(π) = diag(Aπ), where the second equality is due to stationarity of π .
+def= E[x1 ] = π ,
+def= E[x1 ⊗ x2 ] = 7−1 (DA(cid:62) + DA(cid:62) + DA(cid:62)A(cid:62) + AD + ADA(cid:62) + AD + DA(cid:62) ),
+def= E[x1 ⊗ x3 ] = 7−1 (DA(cid:62) + DA(cid:62)A(cid:62) + DA(cid:62) + ADA(cid:62) + AD + AAD + AD),
+def= ˜E[x1 ⊗ x2 ] = 2−1 (DA(cid:62) + AD),
+˜µ12
+where ˜E[·] is taken with respect to length 2 sentences. Having recovered π from µ1 , it remains to
+recover A. By selectively combining the moments above, we can compute AA + A = [7(µ13 −
+µ12 ) + 2 ˜µ12 ] diag(µ1 )−1 . Assuming A is generic position, it is diagonalizable: A = QΛQ−1 for
+some diagonal matrix Λ = diag(λ1 , . . . , λd ), possibly with complex entries. Therefore, we can
+recover Λ2 + Λ = Q−1 (AA + A)Q. Since Λ is diagonal, we simply have d independent quadratic
+equations in λi , which can be solved in closed form. After obtaining Λ, we retrieve A = QΛQ−1 .
+
+6 Discussion
+
+In this work, we have shed some light on the identiﬁability of standard generative parsing models us-
+ing our numerical identiﬁability checker. Given the ease with which this checker can be applied, we
+believe it should be a useful tool for analyzing more sophisticated models [6], as well as developing
+new ones which are expressive yet identiﬁable.
+There is still a large gap between showing identiﬁability and developing explicit algorithms. We
+have made some progress on closing it with our unmixing technique, which can deal with models
+where the tree topology varies non-trivially.
+
+8
+
+In
+
+References
+[1] A. Anandkumar, D. Hsu, and S. M. Kakade. A method of moments for mixture models and hidden
+Markov models. In COLT, 2012.
+[2] F. Pereira and Y. Shabes. Inside-outside reestimation from partially bracketed corpora. In ACL, 1992.
+[3] G. Carroll and E. Charniak. Two experiments on learning probabilistic dependency grammars from cor-
+pora. In Workshop Notes for Statistically-Based NLP Techniques, AAAI, pages 1–13, 1992.
+[4] M. A. Paskin. Grammatical bigrams. In NIPS, 2002.
+[5] D. Klein and C. D. Manning. Conditional structure versus conditional estimation in NLP models.
+EMNLP, 2002.
+[6] D. Klein and C. D. Manning. Corpus-based induction of syntactic structure: Models of dependency and
+constituency. In ACL, 2004.
+[7] P. Liang and D. Klein. Analyzing the errors of unsupervised learning. In HLT/ACL, 2008.
+[8] J. T. Chang. Full reconstruction of Markov models on evolutionary trees: Identiﬁability and consistency.
+Mathematical Biosciences, 137:51–73, 1996.
+[9] A. Anandkumar, K. Chaudhuri, D. Hsu, S. M. Kakade, L. Song, and T. Zhang. Spectral methods for
+learning multivariate latent tree structure. In NIPS, 2011.
+[10] J. B. Kruskal. Three-way arrays: Rank and uniqueness of trilinear decompositions, with application to
+arithmetic complexity and statistics. Linear Algebra and Applications, 18:95–138, 1977.
+[11] E. S. Allman, C. Matias, and J. A. Rhodes. Identiﬁability of parameters in latent structure models with
+many observed variables. Annals of Statistics, 37:3099–3132, 2009.
+[12] E. S. Allman, S. Petrovi, J. A. Rhodes, and S. Sullivant. Identiﬁability of 2-tree mixtures for group-based
+models. Transactions on Computational Biology and Bioinformatics, 8:710–722, 2011.
+[13] J. A. Rhodes and S. Sullivant. Identiﬁability of large phylogenetic mixture models. Bulletin of Mathe-
+matical Biology, 74(1):212–231, 2012.
+[14] T. J. Rothenberg. Identiﬁcation in parameteric models. Econometrica, 39:577–591, 1971.
+[15] L. A. Goodman. Exploratory latent structure analysis using both identiﬁabile and unidentiﬁable models.
+Biometrika, 61(2):215–231, 1974.
+[16] D. Bamber and J. P. H. van Santen. How many parameters can a model have and still be testable? Journal
+of Mathematical Psychology, 29:443–473, 1985.
+[17] D. Geiger, D. Heckerman, H. King, and C. Meek. Stratiﬁed exponential families: graphical models and
+model selection. Annals of Statistics, 29:505–529, 2001.
+[18] K. Lari and S. J. Young. The estimation of stochastic context-free grammars using the inside-outside
+algorithm. Computer Speech and Language, 4:35–56, 1990.
+[19] M. Johnson, T. Grifﬁths, and S. Goldwater. Bayesian inference for PCFGs via Markov chain Monte Carlo.
+In HLT/NAACL, 2007.
+[20] E. Mossel and S. Roch. Learning nonsingular phylogenies and hidden Markov models. Annals of Applied
+Probability, 16(2):583–614, 2006.
+[21] D. Hsu, S. M. Kakade, and T. Zhang. A spectral algorithm for learning hidden Markov models. In COLT,
+2009.
+[22] S. M. Siddiqi, B. Boots, and G. J. Gordon. Reduced-rank hidden Markov models. In AISTATS, 2010.
+[23] A. Parikh, L. Song, and E. P. Xing. A spectral algorithm for latent tree graphical models. In ICML, 2011.
+[24] S. B. Cohen, K. Stratos, M. Collins, D. P. Foster, and L. Ungar. Spectral learning of latent-variable
+PCFGs. In ACL, 2012.
+[25] F. M. Luque, A. Quattoni, B. Balle, and X. Carreras. Spectral learning for non-deterministic dependency
+parsing. In EACL, 2012.
+[26] P. Dhillon, J. Rodue, M. Collins, D. P. Foster, and L. Ungar. Spectral dependency parsing with latent
+variables. In EMNLP-CoNLL, 2012.
+[27] J. Eisner. Three new probabilistic models for dependency parsing: An exploration. In COLING, 1996.
+[28] S. Sahni. Computationally related problems. SIAM Journal on Computing, 3:262–279, 1974.
+[29] J. Eisner. Bilexical grammars and their cubic-time parsing algorithms. In Advances in Probabilistic and
+Other Parsing Technologies, pages 29–62, 2000.
+
+9
+
+

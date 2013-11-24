@@ -1,0 +1,510 @@
+Localizing Bugs in Program Executions
+with Graphical Models
+
+Laura Dietz
+Max-Planck Institute for Computer Science
+Saarbruecken, Germany
+dietz@mpi-inf.mpg.de
+
+Valentin Dallmeier
+Saarland University
+Saarbruecken, Germany
+dallmeier@cs.uni-saarland.de
+
+Andreas Zeller
+Saarland University
+Saarbruecken, Germany
+zeller@cs.uni-saarland.de
+
+Tobias Scheffer
+Potsdam University
+Potsdam, Germany
+scheffer@cs.uni-potsdam.de
+
+Abstract
+
+We devise a graphical model that supports the process of debugging software by
+guiding developers to code that is likely to contain defects. The model is trained
+using execution traces of passing test runs; it reﬂects the distribution over tran-
+sitional patterns of code positions. Given a failing test case, the model deter-
+mines the least likely transitional pattern in the execution trace. The model is
+designed such that Bayesian inference has a closed-form solution. We evaluate
+the Bernoulli graph model on data of the software projects AspectJ and Rhino.
+
+1
+
+Introduction
+
+In today’s software projects, two types of source code are developed: product and test code. Product
+code, also referred to as the program, contains all functionality and will be shipped to the customer.
+The program and its subroutines are supposed to behave according to a speciﬁcation. The example
+program in Figure 1 (left), is supposed to always return the value 10. It contains a defect in line
+number 20, which lets it return a wrong value if the input variable equals ﬁve.
+In addition to product code, developers write test code that consists of small test programs, each
+testing a single procedure or module for compliance with the speciﬁcation. For instance, Figure 1
+(right) shows three test cases, the second of which reveals the defect. Development environments
+provide support for running test cases automatically and would report failure of the second test case.
+Localizing defects in complex programs is a difﬁcult problem because the failure of a test case
+conﬁrms only the existence of a defect, not its location.
+When a program is executed, its trace through the source code can be recorded. An executed line of
+source code is identiﬁed by a code position s ∈ S . The stream of code positions forms the trace t
+of a test case execution. The data that our model analyses consists of a set T of passing test cases
+t. In addition to the passing tests we are given a single trace ¯t of a failing test case. The passing
+test traces and the trace of the failing case refer to the same code revision; hence, the semantics of
+each code position remain constant. For the failing test case, the developer is to be provided with a
+ranking of code positions according to their likelihood of being defective.
+The semantics of code positions may change across revisions, and modiﬁcations of code may impact
+the distribution of execution patterns in the modiﬁed as well as other locations of the code. We focus
+on the problem of localizing defects within a current code revision. After each defect is localized,
+the code is typically revised and the semantics of code positions changes. Hence, in this setting, we
+
+1
+
+Figure 1: Example with product code (left) and test code (right).
+
+cannot assume that any negative training data—that is, previous failing test cases of the same code
+revision—are available. For that reason, discriminative models do not lend themselves to our task.
+Instead of representing the results as a ranked list of positions, we envision a tight integration in
+development environments. For instance, on failure of a test case, the developer could navigate
+between predicted locations of the defect, starting with top ranked positions.
+So far, Tarantula [1] is the standard reference model for localizing defects in execution traces. The
+authors propose an interface widget for test case results in which a pixel represents a code position.
+The hue value of the pixel is determined by the number of failing and passing traces that execute this
+position and correlates with the likelihood that s is faulty [1]. Another approach [2] includes return
+values and ﬂags for executed code blocks and builds on sensitivity and increase of failure probability.
+This approach was continued in project Holmes [3] to include information about executed control
+ﬂow paths. Andrzejewski et al. [4] extend latent Dirichlet allocation (LDA) [5] to ﬁnd bug patterns in
+recorded execution events. Their probabilistic model captures low-signal bug patterns by explaining
+passing executions from a set of usage topics and failing executions from a mix of usage and bug
+topics. Since a vast amount of data is to be processed, our approach is designed to not require
+estimating latent variables during prediction as is necessary with LDA-based approaches [4].
+
+Outline. Section 2 presents the Bernoulli graph model, a graphical, generative model that explains
+program executions. This section’s main result is the closed-form solution for Bayesian inference of
+the likelihood of a transitional pattern in a test trace given example execution traces. Furthermore,
+we discuss how to learn hyperparameters and smoothing coefﬁcients from other revisions, despite
+the fragile semantics of code positions. In Section 3, reference methods and simpler probabilistic
+models are detailed. Section 4 reports on the prediction performance of the studied models for the
+AspectJ and Rhino development projects. Section 5 concludes.
+
+2 Bernoulli Graph Model
+
+The Bernoulli graph model is a probabilistic model that generates program execution graphs. In
+contrast to an execution trace, the graph is a representation of an execution that abstracts from the
+number of iterations over code fragments. The model allows for Bayesian inference of the likelihood
+of a transition between code positions within an execution, given previously seen executions.
+The n-gram execution graph Gt = (Vt , Et , Lt ) of an execution t connects vertices Vt by edges
+Et ⊆ Vt × Vt . Labeling function Lt : Vt → S (n−1) injectively maps vertices to n − 1-grams of
+code positions, where S is the alphabet of code positions.
+In the bigram execution graph, each vertex v represents a code position Lt (v); each arc (u, v)
+indicates that code position Lt (v) has been executed directly after code position Lt (u) at least once
+during the program execution. In n-gram execution graphs, each vertex v represents a fragment
+Lt (v) = s1 . . . sn−1 of consecutively executed statements. Vertices u and v can only be connected
+by an arc if the fragments are overlapping in all but the ﬁrst code position of u and the last code
+position of v ; that is, Lt (u) = s1 . . . sn−1 and Lt (v) = s2 . . . sn . Such vertices u and v are
+
+2
+
+10  /**  11   * A procedure containing a defect.  12   *  13   * @param param an arbitrary parameter.  14   * @return 10  15   */  16  public static int defect (int param) {  17      int i = 0;  18      while (i < 10) {  19          if (param == 5) {  20              return 100;  21          }  22          i++;  23      }  24      return i;  25  }   public static class TestDefect extends TestCase {     public void testParam1() {          assertEquals(10, defect(1));      }                                                      /** Failing test case. */      public void testParam5() {          assertEquals(10, defect(5));      }           public void testParam10() {          assertEquals(10, defect(10));      }  }                Figure 2: Expanding vertex “22 18” in the generation of a tri-gram execution graph corresponding
+to the trace at the bottom. Graph before expansion is drawn in black, new parts are drawn in solid
+red.
+
+connected by an arc if code positions s1 . . . sn are executed consecutively at least once during the
+execution. For the example program in Figure 1 the tri-gram execution graph is given in Figure 2.
+
+Generative process. The Bernoulli graph model generates one graph Gm,t = (Vm,t , Em,t , Lm,t )
+per execution t and procedure m. The model starts the graph generation with an initial vertex
+representing a fragment of virtual code positions ε.
+In each step, it expands a vertex u labeled Lm,t (u) = s1 . . . sn−1 that has not yet been expanded;
+e.g., vertex “22 18” in Figure 2. Expansion proceeds by tossing a coin with parameter ψm,s1 ...sn
+for each appended code position sn ∈ S . If the coin toss outcome is positive, an edge to vertex v
+labeled Lm,t (v) = s2 . . . sn is introduced. If Vm,t does not yet include a vertex v with this labeling,
+it is added at this point. Each vertex is expanded only once. The process terminates if no vertex is
+left that has been introduced but not yet expanded. Parameters ψm,s1 ...sn are governed by a Beta
+distribution with ﬁxed hyperparameters αψ and βψ . In the following we focus on the generation
+of edges, treating the vertices as observed. Figure 3a) shows a factor graph representation of the
+generative process and Algorithm 1 deﬁnes the generative process in detail.
+Inference. Given a collection Gm of previously seen execution graphs for method m and a
+new execution Gm = (Vm , Em , Lm ), Bayesian inference determines the likelihood p((u, v) ∈
+Em |Vm , Gm , αψ , βψ ) of each of the edges (u, v), thus indicating unlikely transitions in the new
+execution of m represented by execution graph Gm . Since we employ independent models for all
+
+Algorithm 1 Generative process of the Bernoulli graph model.
+for all procedures m do
+for all s1 ...sn ∈ (Sm )n do
+draw ψm,s1 ...sn ∼ B eta(αψ , βψ ).
+for all executions t do
+create a new graph Gm,t .
+add a vertex u labeled εε...ε.
+initialize queue Q = {u}.
+while queue Q is not empty do
+dequeue u ← Q, with L(u) = s1 . . . sn−1 .
+for all sn ∈ Sm do
+let v be a vertex with L(v) = s2 . . . sn .
+draw b ∼ B ernoulli(ψm,s1 ...sn ).
+if b = 1 then
+if v /∈ Vm,t then
+add v to Vm,t .
+enqueue v → Q.
+add arc (u, v) to Em,t .
+
+3
+
+e 1719 2222 18e e18 1917 180 ~ y22 18 1718 170 ~ y22 18 2018 2018 241 ~ y22 18 24  0 ~ y22 18 1818 1817 | 18 | 19 | 22 | 18 | 19 |22 | …. | 22 | 18 | 241 ~ y22 18 19...0 ~ y22 18 2318 23Figure 3: Generative models in directed factor graph notation with dashed rectangles indicating
+gates [6].
+
+.
+
+(1)
+
+methods m, inference can be carried out for each method separately. Since vertices Vm are ob-
+served, coin parameters Ψ are d-separated from each other (cf. Figure 3a). We yield independent
+Beta-Bernoulli models conditioned on the presence of start vertices u. Thus, predictive distributions
+for presence of edges in future graphs can be derived in closed form (Equation 1) where #G
+u denotes
+the number of training graphs containing vertices labeled L(u) and #G
+(u,v) denotes the number of
+training graphs containing edges between vertices labeled L(u) and L(v). See the appendix for a
+detailed derivation of Equation 1.
+#G
+(u,v) + αψ
+p((u, v) ∈ Em |Vm , Gm , αψ , βψ ) =
+#G
+u + αψ + βψ
+By deﬁnition, an execution graph G for an execution contains a vertex if its label is a substring of
+the execution’s trace t. Likewise, an edge is contained if an aggregation of the vertex labels is a
+substring of t. It follows1 that the predictive distribution can be reformulated as in Equation 2 to
+predict the probability of seeing the code position ˜s = sn after a fragment of preceding statements
+˜f = s1 . . . sn−1 using the trace representation of an execution. Thus, it is not neccessary to represent
+execution graphs G explicitly.
+#{t ∈ T | ˜f ˜s ∈ t} + αψ
+p(˜s| ˜f , T , αψ , βψ ) =
+#{t ∈ T | ˜f ∈ t} + αψ + βψ
+Estimating interpolation coefﬁcients and hyperparameters. For given hyperparameters and
+ﬁxed context length n, Equation 2 predicts the likelihood for ˜si following a fragment ˜f =
+˜si−1 . . . ˜si−n+1 . To avoid sparsity issues while maintaining good expressiveness, we smooth various
+N(cid:88)
+context lengths up to N by interpolation.
+p(˜si |˜si−1 . . . ˜si−N +1 , T , αψ , βψ , θ) =
+p(n|θ) · p(˜si |˜si−1 . . . ˜si−n+1 , T , αψ , βψ )
+n=1
+We can learn from different revisions by integrating multiple Bernoulli graphs models in a generative
+process, in which coin parameters are not shared across revisions and context lengths n. This process
+generates a stream of statements with defect ﬂags. We learn hyperparameters αψ and βψ jointly with
+θ using an automatically derived Gibbs sampling algorithm [7].
+
+(2)
+
+Predicting defective code positions. Having learned point estimates for ˆαψ , ˆβψ , and ˆθ from other
+(cid:17)
+(cid:16)
+revisions in a leave-one-out fashion, statements ˜s are scored by the complementary event of being
+normal for any preceding fragment ˜f .
+1 − p(˜s| ˜f , T , ˆαψ , ˆβψ , ˆθ)
+score(˜s) = max
+˜f preceding ˜s
+The maximum is justiﬁed because an erroneous code line may show its defective behavior only
+in combination with some preceding code fragments, and even a single erroneous combination is
+enough to lead to defective behavior of the software.
+1For a set A we denote its cardinality by #A rather than |A| to avoid confusion with conditioned signs.
+
+(3)
+
+4
+
+for each procedure mfor eachfragment  f Snfor each trace tFragmentcoinψαψβψBetaBernoulliftbαγProceduredistrγαϕCode Pos. distrϕSymm. Dirichletfor eachcode position in tfor eachtrace tProceduremCode pos.sFragmentf=si-1,...Multinomialm,ffor each procedure mfor each fragment fMultiSymm. Dirichletb) Bernoulli fragmentc) Multinomial n-gramfor each procedure mfor each vertex ufor each code position sEdgecoinψαψβψBetauVtruefalseBern(u,v) Ebfalsea) Bernoulli graphfor each graph GEqualsαβφψγϕ3 Reference Methods
+
+The Tarantula model is a popular scoring heuristic for defect localization in software engineering.
+We will prove a connection between Tarantula and the unigram variant of a Bernoulli graph model.
+Furthermore, we will discuss other reference models which we will consider in the experiments.
+
+3.1 Tarantula
+
+scoreT arantula (˜s) =
+
+Tarantula [1] scores the likelihood of a code position s being defective according to the proportions
+of failing F and passing traces T that execute this position (Equation 4).
+#{¯t∈F |˜s∈¯t}
+#{¯t∈F }
+#{¯t∈F } + #{t∈T |˜s∈t}
+#{¯t∈F |˜s∈¯t}
+#{t∈T }
+For the case that only one test case fails, we can show an interesting relationship between Tarantula,
+the unigram Bernoulli graph model, and multivariate Bernoulli models (referred to in [8]). In the
+unigram case, the Bernoulli graph model generates a graph in which all statements in an execution
+are directly linked to an empty start vertex. In this case, the Bernoulli graph model is equal to a
+multi-variate Bernoulli model generating a set of statements for each execution.
+Using an improper prior αψ = βψ = 0, the unigram Bernoulli graph model scores a statement by
+scoreGraph (˜s) = 1 − #{t∈T |˜s∈t}
+. Letting g(s) = #{t∈T |˜s∈t}
+, the rank order of any two code
+#{t∈T }
+#{t∈T }
+positions s1 , s2 is determined by 1 − g(s1 ) > 1 − g(s2 ) or equivalently
+1+g(s2 ) which is
+1
+1
+1+g(s1 ) >
+Tarantula’s ranking criterion if #F is 1.
+
+(4)
+
+3.2 Bernoulli Fragment Model
+
+Inspired by this equivalence, we study a naive n-gram extension to multi-variate Bernoulli models
+which we call Bernoulli fragment model. Instead of generating a set of statements, the Bernoulli
+model may generate a set of fragments for each execution.
+Given a ﬁxed order n, the Bernoulli fragment model draws a coin parameter for each possible
+fragment f = s1 . . . sn over the alphabet Sm . For each execution the fragment set is generated by
+tossing a fragment’s coin and including all fragments with outcome b = 1 (cf. Figure 3b). The
+probability of an unseen fragment ˜f is given by p( ˜f |T , αψ , βψ ) = #{t∈T | ˜f ∈t}+αψ
+.
+#{t∈T }+αψ +βψ
+The model deviates from reality in that it may generate fragments that may not be aggregateable
+into a consistent sequence of code positions. Thus, non-zero probability mass is given to impossible
+events, which is a potential source of inaccuracy.
+
+3.3 Multinomial Models
+
+The multinomial model is popular in the text domain—e.g., [8]. In contrast to the Bernoulli graph
+model, the multinomial model takes the number of occurrences of a pattern within an execution into
+account. It consists of a hierarchical process in which ﬁrst a procedure m is drawn from multinomial
+distribution γ , then a code position s is drawn from the multinomial distribution φm ranging over all
+code positions Sm in the procedure.
+The n-gram model is a well-known extension of the unigram multinomial model, where the dis-
+tributions φ are conditioned on the preceding fragment of code positions f = s1 . . . sn−1 to draw
+a follow-up statement sn ∼ φm,f . Using ﬁxed symmetric Dirichlet distributions with parameter
+αγ and αφ as priors for the multinomial distributions, the probability for unseen code positions ˜s
+following on fragment ˜f is given in Equation 5. Shorthand #T
+s∈m denotes how often statements in
+prodecure m are executed (summing over all traces t ∈ T in the training set); and #T
+m,s1 ...sn denotes
+the number times statements s1 . . . sn are executed subsequently by procedure m.
+(cid:80)
+· #T
++ αφ
+#T
+s∈ ˜m + αγ
+(cid:124)
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+(cid:123)(cid:122)
+(cid:125)
+˜m, ˜f ˜s
++ αφ#S ˜m
+s∈m(cid:48) + αγ #M
+m(cid:48)∈M #T
+#T
+˜m, ˜f
+γ ( ˜m)
+φ ˜m, ˜f (˜s)
+
+p(˜s, ˜m| ˜f , T , αγ , αφ ) ∝
+
+(5)
+
+5
+
+3.4 Holmes
+
+Chilimbi et al. [3] propose an approach that relies on a stream of sampled boolean predicates P ,
+each corresponding to an executed control ﬂow branch starting at code position s. The approach
+evaluates whether P being true increases the probability of failure in contrast to reaching the code
+position by chance. Each code position is scored according to the importance of its predicate P
+which is the harmonic mean of sensitivity and increase in failure probability. Shorthands Fe (P ) and
+Se (P ) refer to the failing/passing traces that executed the path P , where Fo (P ) and So (P ) refer to
+failing/passing traces that executed the start point of P .
+(cid:17)−1
+(cid:16)
+
+Importance(P ) =
+
+log Fe (P ) +
+log #F
+
+2
+Se (P )+Fe (P ) −
+Fe (P )
+
+Fo (P )
+So (P )+Fo (P )
+
+This scoring procedure is not applicable to cases where a path is executed in only one failing trace, as
+a division by zero occurs in the ﬁrst term when Fe (P ) = 1. This issue renders Holmes inapplicable
+to our case study where typically only one test case fails.
+
+3.5 Delta LDA
+
+Andrzejewski et al.
+[4] use a variant of latent Dirichlet Allocation (LDA) [5] to identify topics
+of co-occurring statements. Most topics may be used to explain passing and failing traces, where
+some topics are reserved to explain statements in the failing traces only. This is obtained by running
+LDA with different Dirichlet priors on passing and failing traces. After inference, the topic speciﬁc
+statement distributions φ = p(s|z ) are converted to p(z |s) via Bayes’ rule. Then statements j are
+ranked according to the conﬁdence Sij = p(z = i|s = j ) − maxk (cid:54)=i p(z = k |s = j ) of being rather
+about a bug topic i than any other topic k .
+
+4 Experimental Evaluation
+
+In this section we study empirically how accurately the Bernoulli graph model and the reference
+models discussed in Section 3 localize defects that occurred in two large-scale development projects.
+We ﬁnd that data used for previous studies is not appropriate for our investigation. The SIR repos-
+itory [9] provides traces of small programs into which defects have been injected. However, as
+pointed out in [10], there is no strong argument as to why results obtained on speciﬁcally designed
+programs with artiﬁcial defects should necessarily transfer to realistic software development projects
+with actual defects. The Cooperative Bug Isolation project [11], on the other hand, collects execution
+data from real applications, but records only a random sample of 1% of the executed code positions;
+complete execution traces cannot be reconstructed. Therefore, we use the development history of
+two large-scale open source development projects, AspectJ and Rhino, as gathered in [12].
+
+Data set. From Rhino’s and AspectJ’s bug database, we select defects which are reproducable by
+a test case and identify corresponding revisions in the source code repository. For such revisions,
+the test code contains a test case that fails in one revision, but passes in the following revision. We
+use the code positions that were modiﬁed between the two revisions as ground truth for the defective
+code positions D . For AspectJ, these are one or two lines of code; the Rhino project contains larger
+code changes. For each such revision, traces T of passing test cases are recorded on a line number
+basis. In the same manner, the failing trace t (in which the defective code is to be identiﬁed) is
+recorded.
+The AspectJ data set consists of 41 defective revisions and a total of 45 failing traces. Each failing
+trace has a length of up to 2,000,000 executed statements covering approx. 10,000 different code
+positions (of the 75,000 lines in the project), spread across 300 to 600 ﬁles and 1,000 to 4,000
+procedures. For each revision, we recorded 100 randomly selected valid test cases (drawn out of
+approx. 1000).
+Rhino consists of 15 defective revisions with one failing trace per bug.
+Failing traces
+have an average length of 3,500,000 executed statements, covering approx. 2,000 of 38,000
+
+6
+
+Figure 4: Recall of defective code positions within the 1% highest scored statements for AspectJ
+(top) and Rhino (bottom), for windows of h = 0, h = 1, and h = 10 code lines.
+
+code positions, spread across 70 ﬁles and 650 procedures. We randomly selected 100 of
+the 1500 valid traces for each revision as training data. Both data sets are available at
+http://www.mpi-inf.mpg.de/~dietz/debugging.html.
+
+Evaluation criterion. Following the evaluation in [1], we evaluate how well the models are able
+to guide the user into the vicinity of a defective code position. The models return a ranked list of
+code positions. Envisioning that the developer can navigate from the ranking into the source code
+to inspect a code line within its context, we evaluate the rank k at which a line of code occurs that
+lies within a window of ±h lines of code of a defective line. We plot relative ranks; that is, absolute
+ranks divided by the number of covered code lines, corresponding to the fraction of code that the
+developer has to walk through in order to ﬁnd the defect. We examine the recall@k%, that is the
+fraction of successfully localized defects over the fraction of code the user has to inspect. We expect
+a typical developer to inspect the top 0.25% of the ranking, corresponding to approximately 25 ranks
+for AspectJ.
+Neither the AUC nor the Normalized Discounted Cummulative Gain (NDCG) appropriately measure
+performance in our application. AUC does not allow for a cut-off rank; NDCG will inappropriately
+reward cases in which many statements in a defect’s vicinity are ranked highly.
+
+Reference methods.
+In order to study the helpfulness of each generative model, we evaluate
+smoothed models with maximum length N = 5 for each the multinomial, Bernoulli fragment and
+Bernoulli graph model. We compare those to the unigram multinomial model and Tarantula. Tuning
+and prediction of reference methods follow in accordance to Section 2. In addition, we compare to
+the latent variable model Delta LDA with nine usage and one bug topics, α = 0.5, β = 0.1, and 50
+sampling iterations.
+
+Results. The results are presented in Figure 4. The Bernoulli graph model is always ahead of the
+reference methods that have a closed form solution in the top 0.25% and top 0.5% of the ranking.
+This improvement is signiﬁcant with level 0.05 in comparison to Tarantula for h = 1 and h = 10. It
+is signiﬁcantly better than the n-gram multinomial model for h = 1. Although increasing h makes
+the prediction problem generally easier, only Bernoulli graph and the multinomial n-gram model
+play to their strength.
+A comparison by Area under the Curve in top 0.25% and top 0.5% indicates that the Bernoulli
+graph is more than twice as effective as Tarantula for the data sets for h = 1 and h = 10. Using the
+
+7
+
+ 0 0.1 0.2 0.3 0.4 0.5 0.6 0 0.2 0.4 0.6 0.8 1RecallTop k%AspectJ: h = 0n-gram Bernoulli Graphn-gram Bernoulli Fragmentn-gram MultinomialUnigram MultinomialTarantulaDelta LDA 0 0.1 0.2 0.3 0.4 0.5 0.6 0 0.2 0.4 0.6 0.8 1RecallTop k%AspectJ: h = 1 0 0.1 0.2 0.3 0.4 0.5 0.6 0 0.2 0.4 0.6 0.8 1RecallTop k%AspectJ: h = 10 0 0.1 0.2 0.3 0.4 0.5 0.6 0 0.2 0.4 0.6 0.8 1RecallTop k%Rhino: h = 0 0 0.1 0.2 0.3 0.4 0.5 0.6 0 0.2 0.4 0.6 0.8 1RecallTop k%Rhino: h = 1 0 0.1 0.2 0.3 0.4 0.5 0.6 0 0.2 0.4 0.6 0.8 1RecallTop k%Rhino: h = 10Bernoulli graph model, a developer ﬁnds nearly every second bug in the top 1% in both data sets,
+where ranking a failing trace takes between 10 and 20 seconds.
+According to a pair-t-test with 0.05-level, Bernoulli graph’s prediction performance is signiﬁcantly
+better than Delta LDA for the Rhino data set. No signiﬁcant diffference is found for the AspectJ
+data set, but Delta LDA takes much longer to compute (approx. one hour versus 20 seconds) since
+parameters can not be obtained in closed form but require iterative sampling.
+
+Analysis. Most revisions in our data sets had bugs that were equally difﬁcult for most of the
+models. From revisions where one model drastically outperformed the others we identiﬁed different
+categories of suspicious code areas. In some cases, the defective procedures were executed in very
+few or no passing trace; we refer such code as being insufﬁciently covered. Another category refers
+to defective code lines in the vicinity of branching points such as if-statements. If code before the
+branch point is executed in many passing traces, but code in one of the branches only rarely, we call
+this a suspicious branch point.
+The Bernoulli fragment model treats both kinds of suspicious code areas in a similar way. They
+have a different effect on the predictive Beta-posteriors in the Bernoulli graph model: insufﬁcient
+coverage decreases the conﬁdence; suspicious branch points will decrease the mean. The Beta-
+priors αψ and βψ play a crucial role in weighting these two types of potential bugs in the ranking
+and encode prior beliefs on expecting one or the other. Our hyperparameter estimation procedure
+usually selects αψ = 1.25 and βψ = 1.03 for all context lengths.
+Revisions in which Bernoulli fragment outperformed Bernoulli graph contained defects in insufﬁ-
+ciently covered areas. Presumably, Bernoulli graph identiﬁed many suspicious branching points, and
+assigned them a higher score. Revisions in which Bernoulli graph outperformed Bernoulli fragment
+contained bugs at suspicious branching points.
+In contrast to the Bernoulli-style models, the multinomial models take the number of occurrences of
+a code position within a trace into account. Presumably, multiple occurrences of code lines within a
+trace do not indicate their defectiveness.
+
+5 Conclusions
+
+We introduced the Bernoulli graph model, a generative model that implements a distribution over
+program executions. The Bernoulli graph model generates n-gram execution graphs. Compared
+to execution traces, execution graphs abstract from the number of iterations that sequences of code
+positions have been executed for. The model allows for Bayesian inference of the likelihood of
+transitional patterns in a new trace, given execution traces of passing test cases. We evaluated the
+model and several less complex reference methods with respect to their ability to localize defects
+that occurred in the development history of AspectJ and Rhino. Our evaluation does not rely on
+artiﬁcially injected defects.
+We ﬁnd that the Bernoulli graph model outperforms Delta LDA on Rhino and performs as good
+as Delta LDA on the AspectJ project, but in substantially less time. Delta LDA is based on a
+multinomial unigram model, which performs worst in our study. This gives raise to the conjecture
+that Delta LDA might beneﬁt from replacing the multinomial model with a Bernoulli graph model.
+this conjecture would need to be studied empirically.
+The Bernoulli graph model outperforms the reference models with closed-form solution with respect
+to giving a high rank to code positions that lie in close vicinity of the actual defect. In order to ﬁnd
+every second defect in the release history of Rhino, the Bernoulli graph model walks the developer
+through approximately 0.5% of the code positions and 1% in the AspectJ project.
+
+Acknowledgements
+
+Laura Dietz is supported by a scholarship of Microsoft Research Cambridge. Andreas Zeller and
+Tobias Scheffer are supported by a Jazz Faculty Grant.
+
+8
+
+References
+[1] James A. Jones and Mary J. Harrold. Empirical evaluation of the tarantula automatic fault-
+localization technique. In Proceedings of the International Conference on Automated Software
+Engineering, 2005.
+[2] Ben Liblit, Mayur Naik, Alice X. Zheng, Alex Aiken, and Michael I. Jordan. Scalable statis-
+tical bug isolation. In Proceedings of the Conference on Programming Language Design and
+Implementation, 2005.
+[3] Trishul Chilimbi, Ben Liblit, Krishna Mehra, Aditya Nori, and Kapil Vaswani. Holmes: Ef-
+fective statistical debugging via efﬁcient path proﬁling. In Proceedings of the International
+Conference on Software Engineering, 2009.
+[4] David Andrzejewski, Anne Mulhern, Ben Liblit, and Xiaojin Zhu. Statistical debugging using
+latent topic models. In Proceedings of the European Conference on Machine Learning, 2007.
+[5] David M. Blei, Andrew Y. Ng, and Michael I. Jordan. Latent Dirichlet allocation. Journal of
+Machine Learning Research, 3:993–1022, 2003.
+[6] Tom Minka and John Winn. Gates. In Advances in Neural Information Processing Systems,
+2008.
+[7] Hal Daume III. Hbc: Hierarchical Bayes Compiler. http://hal3.name/HBC, 2007.
+[8] Andrew McCallum and Kamal Nigam. A comparison of event models for Naive Bayes text
+In Proceedings of the AAAI Workshop on Learning for Text Categorization,
+classiﬁcation.
+1998.
+[9] Hyunsook Do, Sebastian Elbaum, and Gregg Rothermel. Supporting controlled experimenta-
+tion with testing techniques: An infrastructure and its potential impact. Empirical Software
+Engineering, 10(4):405–435, October 2005.
+[10] Lionel C. Briand. A critical analysis of empirical research in software testing. In Proceedings
+of the Symposium on Empirical Software Engineering and Measurement, 2007.
+[11] Ben Liblit, Mayur Naik, Alice X. Zheng, Alex Aiken, and Michael I. Jordan. Public deploy-
+ment of cooperative bug isolation. In Proceedings of the Workshop on Remote Analysis and
+Measurement of Software Systems, 2004.
+[12] Valentin Dallmeier and Thomas Zimmermann. Extraction of bug localization benchmarks from
+history. In Proceedings of the International Conference on Automated Software Engineering,
+2007.
+
+9
+
+

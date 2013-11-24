@@ -1,0 +1,658 @@
+A Generalized Natural Actor-Critic Algorithm
+
+Tetsuro Morimuray , Eiji Uchibez , Junichiro Yoshimotoz , Kenji Doyaz
+y: IBM Research (cid:150) Tokyo, Kanagawa, Japan
+z: Okinawa Institute of Science and Technology, Okinawa, Japan
+tetsuro@jp.ibm.com, fuchibe,jun-y,doyag@oist.jp
+
+Abstract
+Policy gradient Reinforcement Learning (RL) algorithms have received substan-
+tial attention, seeking stochastic policies that maximize the average (or discounted
+cumulative) reward. In addition, extensions based on the concept of the Natural
+Gradient (NG) show promising learning ef(cid:2)ciency because these regard metrics
+for the task. Though there are two candidate metrics, Kakade’s Fisher Information
+Matrix (FIM) for the policy (action) distribution and Morimura’s FIM for the state-
+action joint distribution, but all RL algorithms with NG have followed Kakade’s
+approach. In this paper, we describe a generalized Natural Gradient (gNG) that
+linearly interpolates the two FIMs and propose an ef(cid:2)cient implementation for the
+gNG learning based on a theory of the estimating function, the generalized Natu-
+ral Actor-Critic (gNAC) algorithm. The gNAC algorithm involves a near optimal
+auxiliary function to reduce the variance of the gNG estimates. Interestingly, the
+gNAC can be regarded as a natural extension of the current state-of-the-art NAC
+algorithm [1], as long as the interpolating parameter is appropriately selected. Nu-
+merical experiments showed that the proposed gNAC algorithm can estimate gNG
+ef(cid:2)ciently and outperformed the NAC algorithm.
+
+1 Introduction
+
+Policy Gradient Reinforcement Learning (PGRL) attempts to (cid:2)nd a policy that maximizes the av-
+erage (or time-discounted) reward, based on gradient ascent in the policy parameter space [2, 3, 4].
+Since it is possible to handle the parameters controlling the randomness of the policy, the PGRL,
+rather than the value-based RL, can (cid:2)nd the appropriate stochastic policy and has succeeded in sev-
+eral practical applications [5, 6, 7]. However, depending on the tasks, PGRL methods often require
+an excessively large number of learning time-steps to construct a good stochastic policy, due to the
+learning plateau where the optimization process falls into a stagnant state, as was observed for a
+very simple Markov Decision Process (MDP) with only two states [8]. In this paper, we propose a
+new PGRL algorithm, a generalized Natural Actor-Critic (gNAC) algorithm, based on the natural
+gradient [9].
+Because (cid:147)natural gradient(cid:148) learning is the steepest gradient method in a Riemannian space and the
+direction of the natural gradient is de(cid:2)ned on that metric, it is an important issue how to design
+the Riemannian metric. In the framework of PGRL, the stochastic policies are represented as para-
+metric probability distributions. Thus the Fisher Information Matrices (FIMs) with respect to the
+policy parameter induce appropriate Riemannian metrics. Kakade [8] used an average FIM for the
+policy over the states and proposed a natural policy gradient (NPG) learning. Kakade’s FIM has
+been widely adopted and various algorithms for the NPG learning have been developed by many
+researchers [1, 10, 11]. These are based on the actor-critic framework, called the natural actor-critic
+(NAC) [1]. Recently, the concept of (cid:147)Natural State-action Gradient(cid:148) (NSG) learning has been pro-
+posed in [12], which shows potential to reduce the learning time spent by being better at avoiding
+the learning plateaus than the NPG. This natural gradient is on the FIM of the state-action joint
+distribution as the Riemannian metric for RL, which is directly associated with the average rewards
+as the objective function. Morimura et al. [12] showed that the metric of the NSG corresponds with
+
+1
+
+the changes in the stationary state-action joint distribution. In contrast, the metric of the NPG takes
+into account only changes in the action distribution and ignores changes in the state distribution,
+which also depends on the policy in general. They also showed experimental results with exact gra-
+dients where the NSG learning outperformed NPG learning, especially with large numbers of states
+in the MDP. However, no algorithm for estimating the NSG has been proposed, probably because
+the estimation for the derivative of log stationary state distribution was dif(cid:2)cult [13]. Therefore, the
+development of a tractable algorithm for NSG would be of great importance, and this is the one of
+the primary goals of this paper.
+Meanwhile, it would be very dif(cid:2)cult to select an appropriate FIM because it would be dependent on
+the given task. Accordingly, we created a linear interpolation of both of the FIMs as a generalized
+Natural Gradient (gNG) and derived an ef(cid:2)cient approach to estimate the gNG by applying the
+theory of the estimating function for stochastic models [14] in Section 3. In Section 4, we derive
+a gNAC algorithm with an instrumental variable, where a policy parameter is updated by a gNG
+estimate that is a solution of the estimating function derived in Section 3, and show that the gNAC
+can be regarded as a natural extension of the current state-of-the-art NAC algorithm [1]. To validate
+the performance of the proposed algorithm, numerical experiments are shown in Section 5, where
+the proposed algorithm can estimate the gNG ef(cid:2)ciently and outperformed the NAC algorithm [1].
+
+2 Background of Policy Gradient and Natural Gradient for RL
+
+We brie(cid:3)y review the policy gradient and natural gradient learning as gradient ascent methods for
+RL and also present the motivation of the gNAC approach.
+
+2.1 Policy Gradient Reinforcement Learning
+
+PGRL is modeled on a discrete-time Markov Decision Process (MDP) [15, 16]. It is de(cid:2)ned by the
+quintuplet (S ; A; p; r; (cid:25)), where S 3 s and A 3 a are (cid:2)nite sets of states and actions, respectively.
+Also, p : S (cid:2) A (cid:2) S ! [0; 1] is a state transition probability function of a state s, an action a,
+and the following state s+1 , i.e.1 , p(s+1 js; a) , Pr(s+1 js; a). R : S (cid:2) A (cid:2) S ! R is a bounded
+reward function of s, a, and s+1 , which de(cid:2)nes an immediate reward r = R(s; a; s+1 ) observed by
+a learning agent at each time step. The action probability function (cid:25) : A (cid:2) S (cid:2) Rd ! [0; 1] uses a,
+s, and a policy parameter (cid:18) 2 Rd to de(cid:2)ne the decision-making rule of the learning agent, which is
+also called a policy, i.e., (cid:25)(ajs; (cid:18)) , Pr(ajs; (cid:18)). The policy is normally parameterized by users and
+is controlled by tuning (cid:18) . Here, we make two assumptions in the MDP.
+
+Assumption 1 The policy is always differentiable with respect to (cid:18) and is non-redundant for the
+task, i.e., the statistics F a ((cid:18)) 2 Rd(cid:2)d (de(cid:2)ned in Section 2.2) are always bounded and non-singular.
+
+Assumption 2 The Markov chain M((cid:18)) , fS ; A; p; (cid:25) ; (cid:18)g is always ergodic (irreducible and aperi-
+odic).
+
+Under Assumption 2, there exists a unique stationary state distribution d(cid:18)(s) , Pr(sjM((cid:18))), which
+is equal to the limiting distribution and independent of the initial state, d(cid:18)(s0 ) = limt!1 Pr(S+t =
+s0 jS = s; M((cid:18))), 8 s 2 S . This distribution satis(cid:2)es the balance equation: d(cid:18)(s+1 ) =
+Ps2S Pa2A p(s+1 js; a)(cid:25)(ajs;(cid:18))d(cid:18)(s).
+The goal of PGRL is to (cid:2)nd the policy parameter (cid:18) (cid:3) that maximizes the average of the immediate
+rewards, the average reward,
+(cid:17)((cid:18)) , E(cid:18) [r] = Xs2S Xa2A Xs+1 2S
+where E(cid:18) [a] denotes the expectation of a on the Markov chain M((cid:18)). The derivative of the average
+reward for (1) with respect to the policy parameter, r(cid:18) (cid:17)((cid:18)) , [@ (cid:17)((cid:18))=@ (cid:18)1 ; :::; @ (cid:17)((cid:18))=@ (cid:18)d ]> , which
+is referred to as the Policy Gradient (PG), is
+r(cid:18) (cid:17)((cid:18)) = E(cid:18) [ rr(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g] :
+1Although to be precise it should be Pr(S+1 = s+1 jSt = s; A = a) for the random variables S+1 , S , and A,
+we write Pr(s+1 js; a) for simplicity. The same simpli(cid:2)cation is applied to the other distributions.
+
+d(cid:18)(s)(cid:25)(ajs;(cid:18))p(s+1 js; a)R(s; a; s+1 );
+
+(1)
+
+2
+
+Therefore, the average reward (cid:17)((cid:18)) will be increased by updating the policy parameter as (cid:18) :=
+(cid:18) + (cid:11)r(cid:18) (cid:17)((cid:18)), where := denotes the right-to-left substitution and (cid:11) is a suf(cid:2)ciently small learning
+rate. This framework is called the PGRL [4].
+It is noted that the ordinary PGRL methods omit the differences in sensitivities and the correla-
+tions between the elements of (cid:18) , as de(cid:2)ned by the probability distributions of the MDP, while most
+probability distributions expressed in the MDP have some form of a manifold structure instead of
+a Euclidean structure. Accordingly, the updating direction of the policy parameter by the ordinary
+gradient method will be different from the steepest directions on these manifolds. Therefore, the
+optimization process sometimes falls into a stagnant state, commonly called a plateau [8, 12].
+
+2.2 Natural Gradients for PGRL
+
+To avoid the plateau problem, the concept of the natural gradient was proposed by Amari [9], which
+is a gradient method on a Riemannian space. The parameter space being a Riemannian space implies
+that the parameter (cid:18) 2 Rd is on the manifold with the Riemannian metric G((cid:18)) 2 Rd(cid:2)d (a semi-
+positive de(cid:2)nite matrix), instead of being on a Euclidean manifold of an arbitrarily parameterized
+policy, and the squared length of a small incremental vector (cid:1)(cid:18) connecting (cid:18) to (cid:18) + (cid:1)(cid:18) is given
+by k(cid:1)(cid:18)k2
+G = (cid:1)(cid:18)>G((cid:18))(cid:1)(cid:18) , where > denotes the transpose. Under the constraint k(cid:1)(cid:18)k2
+G = "2
+for a suf(cid:2)ciently small constant ", the steepest ascent direction of the function (cid:17)((cid:18)) on the manifold
+G((cid:18)) is given by
+erG((cid:18)) (cid:17)((cid:18)) = G((cid:18))(cid:0)1r(cid:18) (cid:17)((cid:18));
+which is called the natural gradient (NG). Accordingly, to (locally) maximize (cid:17)((cid:18)), (cid:18) is incremen-
+tally updated with
+(cid:18) := (cid:18) + (cid:11) erG((cid:18)) (cid:17)((cid:18)):
+The direction of the NG is de(cid:2)ned using a Riemannian metric. Thus, an appropriate choice of the
+Riemannian metric for the task is required. With RL, two kinds of Fisher Information Matrices
+(FIMs) F ((cid:18)) have been proposed as the Riemannian metric matrices G((cid:18)):2
+(I) Kakade [8] focuses only on the changes in the policy (action) distributions and proposes de(cid:2)ning
+the metric matrix with the notation r(cid:18) a(cid:18) b(cid:18) , (r(cid:18) a(cid:18) )b(cid:18) , as
+F a ((cid:18)) , E(cid:18) (cid:2)r(cid:18) ln(cid:25)(ajs;(cid:18))r(cid:18) ln(cid:25)(ajs;(cid:18))> (cid:3) = E(cid:18) [Fa ((cid:18) ; s)] ;
+(2)
+where Fa ((cid:18) ; s) , E(cid:18)(cid:2)r(cid:18) ln(cid:25)(ajs;(cid:18))r(cid:18) ln(cid:25)(ajs;(cid:18))> js(cid:3) is the FIM of the policy at a state s. The NG
+on this FIM, erF
+a ((cid:18)) (cid:17)((cid:18)) = F a ((cid:18))(cid:0)1r(cid:18) (cid:17)((cid:18)), is called the Natural Policy Gradient (NPG).
+(II) Considering that the average reward (cid:17)((cid:18)) in (1) is affected not only by the policy distributions
+(cid:25)(ajs;(cid:18)) but also by the stationary state distribution d(cid:18)(s), Moimura et al. [12] proposed the use of
+the FIM of the state-action joint distribution for RL,
+Fs;a ((cid:18)) , E(cid:18) hr(cid:18) ln fd(cid:18)(s)(cid:25)(ajs;(cid:18))g r(cid:18) ln fd(cid:18)(s)(cid:25)(ajs;(cid:18))g> i = Fs ((cid:18)) + F a ((cid:18));
+(3)
+where Fs ((cid:18)) , Ps2S d(cid:18)(s)r(cid:18) ln d(cid:18)(s)r(cid:18) ln d(cid:18)(s)> is the FIM of d(cid:18)(s). The NG on this FIM,
+erF
+s;a ((cid:18)) (cid:17)((cid:18)) = Fs;a ((cid:18))(cid:0)1r(cid:18) (cid:17)((cid:18)), is called the Natural State-action Gradient (NSG).
+Some algorithms for the NPG learning, such as NAC [1] and NTD [10, 11], can be successfully
+implemented using modi(cid:2)cations of the actor-critic frameworks based on the LSTDQ((cid:21)) [18] and
+TD((cid:21)) [16]. In contrast, no tractable algorithm for the NSG learning has been proposed to date.
+However, it has been suggested that the NSG learning it better than the NPG learning due to the
+three differences [12]: (a) The NSG learning appropriately bene(cid:2)ts from the concepts of Amari’s
+NG learning, since the metric Fs;a ((cid:18)) necessarily and suf(cid:2)ciently accounts for the probability dis-
+tribution that the average reward depends on. (b) Fs;a ((cid:18)) is an analogy to the Hessian matrix of
+the average reward. (c) Numerical experiments show a strong tendency to avoid entrapment in a
+learning plateau3 , especially with large numbers of states. Therefore, the development of a tractable
+algorithm for NSG is important, and this is one of the goals of our work.
+2The reason for using F ((cid:18)) as G((cid:18)) is because the FIM Fx ((cid:18)) is a unique metric matrix of the second-
+order Taylor expansion of the Kullback-Leibler divergence Pr(xj(cid:18) +(cid:1)(cid:18)) from Pr(xj(cid:18)) [17].
+3Although there were numerical experiments involving the NSG in [12], they computed the NSG analyti-
+cally with the state transition probabilities and the reward function, which is typically unknown in RL.
+
+3
+
+On the other hand, it was proven that the metric of NPG learning, F a ((cid:18)), accounts for the in(cid:2)nite
+time-steps joint distribution in the Markov chain M((cid:18)) [19, 1], while the metric of NSG learning,
+Fs;a ((cid:18)) accounts only for the single time-step distribution, which is the stationary state-action joint
+distribution d(cid:18)(s)(cid:25)(ajs;(cid:18)). Accordingly, the mixing time of M((cid:18)) might be drastically changed with
+NSG learning compared to NPG learning, since the mixing time depends on the multiple (not neces-
+sarily in(cid:2)nite) time-steps rather than the single time-step, i.e., while various policies can lead to the
+same stationary state distribution, Markov chains associated with these policies have different mix-
+ing times. A larger mixing time makes it dif(cid:2)cult for the learning agent to explore the environment
+and to estimate the gradient with (cid:2)nite samples. The ranking of the performances of the NPG and
+NSG learning will be dependent on the RL task properties. Thus, we consider a mixture of NPG and
+NSG as a generalized NG (gNG) and propose the approach of ’generalized Natural Actor-Critic’
+(gNAC), in which the policy parameter of an actor is updated by an estimate of the gNG of a critic.
+
+3 Generalized Natural Gradient for RL
+
+First we explain the de(cid:2)nition and properties of the generalized Natural Gradient (gNG). Then we
+introduce the estimating functions to build up a foundation for an ef(cid:2)cient estimation of the gNG.
+
+3.1 De(cid:2)nition of gNG for RL
+In order to de(cid:2)ne an interpolation between NPG and NSG with a parameter (cid:19) 2 [0; 1], we consider
+a linear interpolation from the FIM of (2) for the NPG to the FIM of (3) for the NSG, written as
+~Fs;a ((cid:18) ; (cid:19)) , (cid:19)Fs ((cid:18)) + F a ((cid:18)):
+Then the natural gradient of the interpolated FIM is
+s;a ((cid:18) ;(cid:19)) (cid:17)((cid:18)) = ~Fs;a ((cid:18) ; (cid:19))(cid:0)1r(cid:18) (cid:17)((cid:18));
+er~F
+(5)
+which we call the (cid:147)generalized natural gradient(cid:148) for RL with the interpolating parameter (cid:19), gNG((cid:19)).
+Obviously, gNG((cid:19) = 0) and gNG((cid:19) = 1) are equivalent to the NPG and the NSG, respectively. When
+(cid:19) is equal to 1=t, this FIM ~Fs;a ((cid:18) ; (cid:19)) is equivalent to the FIM of the t time-steps joint distribution
+from the stationary state distribution d(cid:18)(s) on M((cid:18)) [12]. Thus, this interpolation controlled by (cid:19) can
+be interpreted as a continuous interpolation with respect to the time-steps of the joint distribution,
+so that (cid:19) : 1 ! 0 is inversely proportional to t : 1 ! 1. The term ’generalized’ of gNG((cid:19)) re(cid:3)ects
+the generalization as the time steps on the joint distribution that the NG follows.
+
+(4)
+
+3.2 Estimating Function of gNG((cid:19))
+We provide a general view of the estimation of the gNG((cid:19)) using the theory of the estimating func-
+tion, which provides well-established results for parameter estimation [14].
+Such a function g 2 Rd for an estimator ! 2 Rd (and a variable x) is called an estimating function
+when it satis(cid:2)es these conditions for all (cid:18) :
+E(cid:18) [g(x; !(cid:3) )] = 0
+(6)
+(7)
+det j E(cid:18) [r! g(x; !)] j 6= 0;
+E(cid:18) (cid:2)g(x; !)>g(x; !)(cid:3) < 1;
+(8)
+where !(cid:3) and det j (cid:1) j denote the exact solution of this estimation and the determinant, respectively.
+Proposition 1 The d-dimensional (random) function
+(cid:19);(cid:18)(s; a; !) , r(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g (cid:0) r (cid:0) r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>!(cid:1)
+g 0
+(9)
+is an estimating function for gNG((cid:19)), such that the unique solution of E(cid:18) [g 0
+(cid:19);(cid:18)(s; a; !)] = 0 with
+respect to ! is equal to the gNG((cid:19)).
+Proof: From (1) and (4), the equation
+(cid:19);(cid:18)(s; a; !(cid:3) )] = r(cid:18) (cid:17)((cid:18)) (cid:0) ~Fs;a ((cid:18) ; (cid:19))!(cid:3)
+0 = E(cid:18) [g 0
+holds. Thus, ! (cid:3) is equal to the gNG((cid:19)) from (5). The remaining conditions from (7) and (8), which
+the estimating function must satisfy, also obviously hold (under Assumption 1).
+(cid:3)
+
+8!
+8!
+
+4
+
+In order to estimate gNG((cid:19)) by using the estimating function (9) with (cid:2)nite T samples on M((cid:18)), the
+simultaneous equation
+T (cid:0)1Xt=0
+1
+g 0
+(cid:19);(cid:18)(st ; at ; b!) = 0
+T
+is solved with respect to ! . The solution b! , which is also called the M-estimator [20], is an unbiased
+estimate of gNG((cid:19)), so that b! = !(cid:3) holds in the limit as T ! 1.
+Note that the conduct of solving the estimating function of (9) is equivalent to the linear regression
+with the instrumental variable r(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g where the regressand, the regressor, and the
+model parameter (estimator) are r (or R(s; a)), r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g, and ! , respectively [21], so
+that the regression residuals ‘r (cid:0) r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>! ’ are not correlated with the instrumental
+variables r(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g.
+
+3.3 Auxiliary Function of Estimating Function
+
+Although we made a simple algorithm implementing the gNAC approach with the M-estimator of
+the estimating function in (9), the performance of the estimation of gNG((cid:19)) may be unacceptable
+for real RL applications, since the variance of the estimates of gNG((cid:19)) tends to become too large.
+For that reason, we extend the estimating function using (9) by embedding an auxiliary function to
+create space for improvement in (9).
+
+Lemma 1 The d-dimensional (random) function is an estimating function for gNG((cid:19)),
+g(cid:19);(cid:18)(s; a; !) , r(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g (cid:0)r (cid:0) r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>! (cid:0) (cid:26)(s; s+1 )(cid:1) ;
+where (cid:26)(s; s+1 ) is called the auxiliary function for (9):
+(cid:26)(s; s+1 ) , c + b(s) (cid:0) b(s+1 ):
+
+(10)
+
+(11)
+
+The c and b(s) are an arbitrary bounded constant and an arbitrary bounded function of the state.
+respectively.
+Proof: See supplementary material.
+Let G(cid:18) denote the class of such functions g(cid:18) with various auxiliary functions (cid:26). An optimal aux-
+iliary function, which leads to minimizing the variance of the gNG estimate b! , is de(cid:2)ned by the
+optimality criterion of the estimating functions [22]. An estimating function g (cid:3)
+(cid:19);(cid:18) is optimal in G(cid:19);(cid:18) if
+, E(cid:18) (cid:2)g(cid:19);(cid:18)(s; a; !(cid:3) )g(cid:19);(cid:18)(s; a; !(cid:3))> (cid:3).
+(cid:19);(cid:18) j (cid:20) det j (cid:6)g(cid:19);(cid:18) j where (cid:6)g(cid:18)
+det j (cid:6)g(cid:3)
+Lemma 2 Let us approximate (or assume)
+(12)
+r (cid:25) E(cid:18) [R(s; a; s+1 )js; a] , R(s; a);
+(13)
+(cid:26)(s; s+1 ) (cid:25) E(cid:18) [(cid:26)(s; s+1 )js; a] , (cid:26)(s; a):
+If the policy is non-degenerate for the task (so the dimension of (cid:18) , d, is equal to PjS j
+i=1 (jAi j (cid:0) 1),
+where jS j and jAi j are the numbers of states and the available actions at state s i , respectively) and
+!(cid:3) denotes the gNG((cid:19)), then the ‘near’ optimal auxiliary function (cid:26)(cid:3) in the ‘near’ optimal estimating
+(cid:19);(cid:18)(s; a; !) satis(cid:2)es4
+function g(cid:3)
+
+R(s; a) = r(cid:18) lnfd(cid:18)(s)(cid:19) (cid:25)(ajs;(cid:18))g>!(cid:3) + E(cid:18) [(cid:26)(cid:3) (s; s+1 )js; a]:
+(14)
+Proof Sketch: The covariance matrix for the criterion of the auxiliary function (cid:26) is approximated as
+(cid:6)g(cid:18) (cid:25) E(cid:18) (cid:2)r(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))gr(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g> (R(s; a) (cid:0) r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>!(cid:3) (cid:0) (cid:26)(s; a))2 (cid:3)
+, ^(cid:6)g(cid:18) :
+(15)
+The function (cid:26)(s; a) usually has jS j degrees of freedom over all of the (s; a) couplets with the ergod-
+icity of M((cid:18)), because (cid:147)b(s) (cid:0) b(s+1)(cid:148) in (cid:26) has (jS j (cid:0) 1) degrees of freedom over all of the (s; s+1 )
+4The ‘near’ of the near estimating function comes from the approximations of (12) and (13), which im-
+plicitly assume that the sum of the (co)variances, E(cid:18) [(r (cid:0) R(s; a))2 + ((cid:26)(s; a; s+1 ) (cid:0) (cid:26)(s; a))2 (cid:0) 2(r (cid:0)
+R(s; a))((cid:26)(s; a; s+1 )(cid:0)(cid:26)(s; a))js; a], are not large. This assumption seems to hold in many RL tasks.
+
+5
+
+couplets. The value of r(cid:18) lnfd(cid:18)(s)(cid:19) (cid:25)(ajs;(cid:18))g>! has PjS j
+i=1 (jAi j (cid:0) 1) degrees of freedom. R(s; a)
+has at most PjS j
+i=1 jAi j degrees of freedom. Therefore, there exist (cid:26)(cid:3) and r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>!?
+that satisfy (14). Remembering that r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>!(cid:3) is the approximator of R(s; a) (or r)
+and !(cid:3) is independent of the choice of (cid:26) due to Lemma 1, we know that ! ? = !(cid:3) holds. Therefore,
+if the estimating function has an auxiliary function (cid:26)(cid:3) satisfying (14), the criterion of the optimality
+for (cid:26) is minimized for det j ^(cid:6)g(cid:3)
+(cid:18) j = 0 due to (15).
+(cid:3)
+From Lemma 2,
+the near optimal auxiliary function (cid:26)(cid:3) can be regarded as minimiz-
+ing the mean squared residuals to zero between R(s; a) and the estimator bR(cid:26) (s; a; !) ,
+r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g>! + (cid:26)(s; s+1 ). Thus, the meaning of this near optimality of g (cid:3)
+(cid:19);(cid:18)(s; a; b!)
+is interpreted as a near minimization of the Euclidean distance between r and its approximator
+bR(cid:26)(cid:3) (s; a; b!), so that (cid:26)(cid:3) works to reduce the distance of the regressand r and the subspace of the
+regressor r(cid:18) lnfd(cid:18)(s)(cid:19)(cid:25)(ajs;(cid:18))g of the M-estimator b! . In particular, R(s; a) is almost in this sub-
+space at the point b! = !(cid:3) . Lemma 2 leads directly to Corollary 1.
+Corollary 1 Let b(cid:3)
+(cid:19)=0 be the functions in the near optimal auxiliary function (cid:26)(cid:3) (s; s+1 )
+(cid:19)=0(s) and c(cid:3)
+(cid:19)=0 are equal to the (un-discounted) state value function [23] and the
+(cid:19)=0 (s) and c(cid:3)
+at (cid:19) = 0, then b(cid:3)
+average reward, respectively.
+Proof: For all s, ! , and (cid:18) , the following equation holds,
+E(cid:18) (cid:2)r(cid:18) lnfd(cid:18)(s)(cid:19)=0(cid:25)(ajs;(cid:18))g>! j s(cid:3) = !> Xa2A
+Therefore, the following equation, which is the same as the de(cid:2)nition of the value function b (cid:3)
+(cid:19)=0(s)
+(cid:19)=0 as the solution of the Poisson equation [23], can be derived from (14):
+with the average reward c(cid:3)
+b(cid:3)
+(cid:19)=0 (s) + c(cid:3)
+(cid:19)=0 = E(cid:18) [r + b(cid:3)
+8 s:
+(cid:3)
+(cid:19)=0(s+1 ) j s];
+
+r(cid:18) (cid:25)(ajs;(cid:18)) = 0:
+
+4 A Generalized NAC Algorithm
+
+We now propose a useful instrumental variable for the gNG((cid:19)) estimation and then derive a gNAC
+algorithm along with an algorithm for r(cid:18) ln d(cid:18)(s) estimation.
+
+4.1 Bias from Estimation of r(cid:18) ln d(cid:18)(s)
+For computation of the M-estimator of g(cid:19);(cid:18)(s; a; !) as the gNG((cid:19)) estimate on M((cid:18)), the computa-
+tions of both of the derivatives, r(cid:18) ln(cid:25)(ajs;(cid:18)) and r(cid:18) ln d(cid:18)(s), are required. While we can easily
+compute r(cid:18) ln(cid:25)(ajs;(cid:18)) since we have parameterized the policy, we cannot compute the Logarithm
+stationary State distribution Derivative (LSD) r(cid:18) ln d(cid:18)(s) analytically unless the state transition
+probabilities and the reward function are known. Thus, we use the LSD estimate from the algo-
+rithm, LS LSD [13]. These LSD estimates br(cid:18) ln d(cid:18)(s) usually have some estimation errors with
+(cid:2)nite samples, while the estimates are unbiased, so that br(cid:18) ln d(cid:18)(s) = r(cid:18) ln d(cid:18)(s) + (cid:15)(s), where
+(cid:15)(s) is an d-dimensional random variable satisfying Ef(cid:15)(s)jsg = 0.
+In such cases, the estimate of gNG((cid:19)) from the estimating function (9) or (10) would be biased,
+because the (cid:2)rst condition of (6) for g(cid:19);(cid:18) is violated unless E(cid:18) [(cid:15)(s)(cid:15)(s)> ] = 0. Thus, in Section
+4.2, we consider a re(cid:2)nement of the instrumental variable as the part r(cid:18) lnfd(cid:18)(s)(cid:25)(ajs;(cid:18))g in the
+estimating function (10), since the instrumental variable can be replaced with any function I that
+satis(cid:2)es their conditions5 for any s, (cid:18) , and ! [22] and makes the solution ! (cid:3) become the gNG((cid:19)):
+E(cid:18) hI (r (cid:0) f br(cid:18) ln d(cid:18)(s)(cid:19) + r(cid:18) ln(cid:25)(ajs;(cid:18))g>!(cid:3) (cid:0) (cid:26)(s; s+1 )i = 0;
+(16)
+det j E(cid:18) [I f br(cid:18) ln d(cid:18)(s)(cid:19) + r(cid:18) ln(cid:25)(ajs;(cid:18))g> ] j 6= 0;
+E(cid:18) h(r (cid:0) f br(cid:18) ln d(cid:18)(s)(cid:19) + r(cid:18) ln(cid:25)(ajs;(cid:18))g>! (cid:0) (cid:26)(s; s+1 ))2 I> I i < 1:
+4.2 Instrumental variables of near optimal estimating function for gNG((cid:19))
+We use a linear function to introduce the auxiliary function (de(cid:2)ned in (11)),
+(cid:26)(s; s+1 ; (cid:23) ) , ( ~(cid:30)(s) (cid:0) [(cid:30)(s+1 )>0]>)> (cid:23) ;
+
+(17)
+
+(18)
+
+5These correspond to the conditions for the estimating function, (6), (7), and (8).
+
+6
+
+A Generalized Natural Actor-Critic Algorithm with LS LSD((cid:21))
+Given: A policy (cid:25) (ajs;(cid:18)) with an adjustable (cid:18) and a feature vector function of the state, (cid:30)(s).
+Initialize: (cid:18) , (cid:12) 2 [0; 1], (cid:11), (cid:21) 2 [0; 1),.
+Set: A := 0; B := 0; C := 0; D := 0; E := 0; x := 0; y := 0.
+For t = 0 to T (cid:0) 1 do
+Critic: Compute the gNG((cid:19)) estimate b!(cid:19)
+A := (cid:12)A + r(cid:18) ln(cid:25) (at jst ;(cid:18))r(cid:18) ln(cid:25) (at jst ;(cid:18))> ; B := (cid:12)B + r(cid:18) ln(cid:25) (at jst ;(cid:18)) ~  (st ; st+1 )> ;
+C := (cid:12)C + ~(cid:30)(st )r(cid:18) ln(cid:25) (at jst ;(cid:18))> ; D := (cid:12)D + ~(cid:30)(st )(cid:30)(st )> ; E := (cid:12)E + ~(cid:30)(st ) ~  (st ; st+1 )> ;
+y := (cid:12)y + rt ~(cid:30)(st ); (cid:10) := (cid:147)LS LSD((cid:21)) algorithm(cid:148) [13]
+x := (cid:12)x + rtr(cid:18) ln(cid:25) (at jst ;(cid:18));
+b!(cid:19) := fA + (cid:19) ~C >(cid:10) (cid:0) BE(cid:0)1 (C + (cid:19)D(cid:10))g(cid:0)1 (x (cid:0) BE(cid:0)1 y )
+Actor: Update (cid:18) by the gNG((cid:19))estimate b!
+(cid:18) := (cid:18) + (cid:11) b!(cid:19) ;
+End
+Return: the policy (cid:25) (ajs;(cid:18)).
+(cid:3) ~C is the sub-matrix of C getting off the lowest row.
+
+where (cid:23) 2 RjS j+1 and (cid:30)(s) 2 RjS j are the model parameter and the regressor (feature vector
+function) of the state s, respectively, and ~(cid:30)(s) , [(cid:30)(s)> ; 1]> . We assume that the set of (cid:30)(s) is
+linearly independent. Accordingly, the whole model parameter of the estimating function is now
+[!> ; (cid:23) > ]> , $ .
+We propose the following instrumental variable
+I ? (s; a) , [r(cid:18) ln(cid:25)(ajs;(cid:18)); ~(cid:30)(s)]> :
+(19)
+Because this instrumental variable I ? has the desirable property as shown in Theorem 1, the esti-
+mating function g ?
+(cid:19);(cid:18)(s; a; $) with I ? is a useful function, even if the LSD is estimated.
+Theorem 1 To estimate gNG((cid:19)), let I ? (s; a) be used for the estimating function as
+(cid:19);(cid:18)(s; a; $) = I ? (s; a)(cid:8)r (cid:0) ( br(cid:18) ln d(cid:18)(s)(cid:19) + r(cid:18) ln(cid:25)(ajs;(cid:18)))>! (cid:0) (cid:26)(s; s+1 ; (cid:23) )(cid:9);
+(20)
+g?
+and !(cid:3) and (cid:23) (cid:3) be the solutions, so ! (cid:3) is equal to the gNG((cid:19)), ! (cid:3) = er~F
+s;a ((cid:18) ;(cid:19)) (cid:17)((cid:18)), and the auxil-
+iary function with (cid:23) (cid:3) is the near optimal auxiliary function provided in Lemma 2, (cid:26)(s; s+1 ; (cid:23) (cid:3) ) =
+(cid:26)(cid:3) (s; s+1 ), even if the LSD estimates include (zero mean) random noises.
+Proof Sketch: (i) The condition (18) for the instrumental variable is satis(cid:2)ed due to Assump-
+tion 1. (ii) Considering E(cid:18) [ br(cid:18) ln d(cid:18)(s)r(cid:18) ln(cid:25)(ajs;(cid:18))> ] = 0 and Assumption 1, the condition (17)
+(cid:19);(cid:18) ] j 6= 0, is satis(cid:2)ed. This guarantees that the solution $ (cid:3) , [!(cid:3)> ; (cid:23) (cid:3)> ]> of (20) that
+det j E(cid:18) [r$ g?
+(cid:19);(cid:18) ]=0 is unique. (iii) Assuming that Theorem 1 is true so that (cid:147)! (cid:3) = er~F
+satis(cid:2)es E(cid:18) [g?
+s;a ((cid:18) ;(cid:19)) (cid:17)((cid:18))(cid:148)
+(cid:19);(cid:18) (s; a; $> )js; a] becomes I ? (s; a)(cid:8)r (cid:0) R(s; a)(cid:9)
+and (cid:147)(cid:26)(s; s+1 ; (cid:23) (cid:3) )=(cid:26)(cid:3) (s; s+1 )(cid:148) hold, then E[g ?
+from (14) and its expectation over M((cid:18)) becomes equal to 0. This means that (20) also satis(cid:2)es the
+condition (16). From (i), (ii), and (iii), this theorem is proven.
+(cid:3)
+The optimal instrumental variable I (cid:3) (s; a) with respect to the variance minimization is derived
+straightforwardly with the results of [21, 24]. However, since I (cid:3) is usually to be estimated, we do
+not adress I (cid:3) here. Note that the proposed I ? (s; a) of (19) can be computed analytically.
+
+4.3 A Generalized Natural Actor-Critic Algorithm with LS LSD
+We can straightforwardly derive a generalized Natural Actor-Critic algorithm, gNAC((cid:19)), by solv-
+(cid:19);(cid:18)(s; a; $) in (20), using the LSD estimate br(cid:18) ln d(cid:18)(s) , (cid:10)>(cid:30)(s).
+ing the estimating function g ?
+However, since (cid:23) in the mode parameter is not required in updating the policy parameter (cid:18) , to re-
+duce the computational cost, we compute only ! by using the results of the block matrices, The
+above algorithm table shows an instance of the gNAC((cid:19)) algorithm with LS LSD((cid:21)) [13] with the
+forgetting parameter (cid:12) for the statistics, the learning rate of the policy (cid:11), and the the de(cid:2)nitions
+ (st(cid:0)1 ; st ) , [(cid:30)(st(cid:0)1 ) (cid:0) (cid:30)(st )] and ~ (st(cid:0)1 ; st ) , [ (st(cid:0)1 ; st )> ; 1]> .
+Note that the LSD estimate is not used at all in the proposed gNAC((cid:19) = 0).
+In addition, note
+that gNAC((cid:19) = 0) is equivalent to a non-episodic NAC algorithm modi(cid:2)ed to optimize the average
+reward, instead of the discounted cumulative reward [1]. This interpretation is consistent with the
+results of Corollary 1.
+
+7
+
+(A)
+
+2
+
+1.5
+
+1
+
+0.5
+
+0
+
+]
+n
+a
+i
+d
+a
+r
+[
+ 
+e
+l
+g
+n
+A
+
+gNG(1) estimate with r
+gNG(0.5) estimate with r
+gNG(0.25) estimate with r
+gNG(1) estimate without r
+gNG(0.5) estimate without r
+gNG(0.25) estimate without r
+
+(B)
+
+1
+
+0.8
+
+0.6
+
+0.4
+
+0.2
+
+d
+r
+a
+w
+e
+R
+ 
+e
+g
+a
+r
+e
+v
+A
+
+0
+0
+
+1
+
+gNAC(1)
+gNAC(0.5)
+gNAC(0.25)
+NAC = gNAC(0)
+AC
+
+4
+
+0
+
+200
+
+800
+
+1000
+
+5
+2
+3
+600
+400
+Time Step
+x 105
+Time Step
+Figure 1: Averages and standard deviations over 50 independent episodes: (A) The angles between
+the true gNG((cid:19)) and estimates with and without the auxiliary function (cid:26)(s; s+1 ; (cid:23) ) on the 5-states
+MDP, (B) The learning performances (average rewards) for the various (N)PGRL algorithms with
+the auxiliary functions on the 30-states MDP.
+5 Numerical Experiment
+We studied the results of the proposed gNAC algorithm with the various (cid:19) = f0; 0:25; 0:5; 1g and
+randomly synthesized MDPs with jS j = f5; 30g states and jAj = 2 actions. Starting with the per-
+formance baseline of the existing PG methods, we used Konda’s actor-critic algorithm [23]. This
+algorithm uses the baseline function in which the state value estimates are estimated by LSTD(0)
+[25], while the original version did not use any baseline function. Note that gNAC((cid:19) = 0) can be
+regarded as the NAC proposed by [1], which serves as the baseline for the current state-of-the-art
+PGRL algorithm. We initialized the setting of the MDP in each episode so the set of the actions was
+always jAj = fl; mg. The state transition probability function was set by using the Dirichlet distribu-
+tion Dir((cid:11) 2 R2 ) and the uniform distribution U(a; b) generating an integer from 1 to a other than
+b: we (cid:2)rst initialized it such that p(s0 js; a) := 0, 8 (s0 ; s; a) and then with q(s; a) (cid:24) Dir((cid:11)=[:3; :3])
+and snb (cid:24) U(jS j; b),
+(cid:26)p(sjs; m)
+(cid:26)p(s+ 1js; l) := q1 (s; l)
+:= q1 (s; m)
+p(xns js; m) := q2 (s; m)
+p(xns+1 js; l) := q2 (s; l)
+where s0 = 1 and s0 = jS j + 1 are the identical states. The the reward function R(s; a; s+1 ) was set
+temporarily with the Gaussian distribution N((cid:22) = 0; (cid:27) 2 = 1), normalized so that max(cid:18) (cid:17)((cid:18)) = 1 and
+min(cid:18) (cid:17)((cid:18)) = (cid:0)1; R(s; a; s+1 ) := 2(R(s; a; s+1 ) (cid:0) min(cid:18) (cid:17)((cid:18)))=(max(cid:18) (cid:17)((cid:18)) (cid:0) min(cid:18) (cid:17)((cid:18))) (cid:0) 1. The
+policy is represented by the sigmoidal function: (cid:25)(ljs; (cid:18)) = 1=(1 + exp((cid:0)(cid:18) >(cid:30)(s))). Each ith ele-
+ment of the initial policy parameter (cid:18)0 2 RjS j and the feature vector of the j th state, (cid:30)(sj ) 2 RjS j ,
+were drawn from N(0; 1) and N((cid:14)ij ; 0:5), respectively, where (cid:14)ij is the Kronecker delta. Figure 1 (A)
+shows the angles between the true gNG((cid:19)) and the gNG((cid:19)) estimates with and without the auxiliary
+function (cid:26)(s; s+1 ; (cid:23) ) at (cid:11) := 0 ((cid:2)xed policy), (cid:12) := 1, (cid:21) := 0. The estimation without the auxil-
+iary function was implemented by solving the estimating function of (9). We can con(cid:2)rm that the
+(cid:19);(cid:18)(s; a; $) in (20) that implements the near-optimal estimating function became
+estimate using g ?
+a much more ef(cid:2)cient estimator than without the auxiliary function. Figure 1 (B) shows the com-
+parison results in terms of the learning performances, where the learning rates for the gNACs and
+Konda’s actor-critic were set as (cid:11) := 3 (cid:2) 10(cid:0)4 and (cid:11)Konda := 60(cid:11). The other hyper parameters
+(cid:12) := 1 (cid:0) (cid:11) and (cid:21) := 0 were the same in each of the algorithms. We thus con(cid:2)rmed that our
+gNAC((cid:19) > 0) algorithm outperformed the current state-of-the-art NAC algorithm (gNAC((cid:19) = 0)).
+
+;
+
+;
+
+6 Summary
+In this paper, we proposed a generalized NG (gNG) learning algorithm that combines two Fisher
+information matrices for RL. The theory of the estimating function provided insight to prove some
+important theoretical results from which our proposed gNAC algorithm was derived. Numerical ex-
+periments showed that the gNAC algorithm can estimate gNGs ef(cid:2)ciently and that it can outperform
+a current state-of-the-art NAC algorithm. In order to utilize the auxiliary function of the estimating
+function for the gNG, we de(cid:2)ned an auxiliary function on the criterion of the near optimality of the
+estimating function, by minimizing the distance between the immediate reward as the regressand
+and the subspace of the regressors of the gNG at the solution of the gNG. However, it may be possi-
+ble to use different criterion, such as the optimality on the Fisher information matrix metric instead
+of the Euclidean metric. Also, an analysis of the properties of gNG itself will be necessary to more
+deeply understand the properties and ef(cid:2)cacy of our proposed gNAC algorithm.
+
+8
+
+In Advances in
+
+In European Conference on Machine
+
+References
+[1] J. Peters, S. Vijayakumar, and S. Schaal. Natural actor-critic.
+Learning, 2005.
+[2] V. Gullapalli. A stochastic reinforcement learning algorithm for learning real-valued functions. Neural
+Networks, 3(6):671(cid:150)692, 1990.
+[3] R. J. Williams. Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+Machine Learning, 8:229(cid:150)256, 1992.
+[4] J. Baxter and P. Bartlett. In(cid:2)nite-horizon policy-gradient estimation. Journal of Arti(cid:2)cial Intelligence
+Research, 15:319(cid:150)350, 2001.
+[5] R. Tedrake, T.W. T. W. Zhang, and H. S. Seung. Stochastic policy gradient reinforcement learning on a
+simple 3D biped. In IEEE International Conference on Intelligent Robots and Systems, 2004.
+[6] J. Peters and S. Schaal. Policy gradient methods for robotics.
+In IEEE International Conference on
+Intelligent Robots and Systems, 2006.
+[7] S. Richter, D. Aberdeen, and J. Yu. Natural actor-critic for road traf(cid:2)c optimisation.
+Neural Information Processing Systems. MIT Press, 2007.
+[8] S. Kakade. A natural policy gradient. In Advances in Neural Information Processing Systems, volume 14.
+MIT Press, 2002.
+[9] S. Amari. Natural gradient works ef(cid:2)ciently in learning. Neural Computation, 10(2):251(cid:150)276, 1998.
+[10] T. Morimura, E. Uchibe, and K. Doya. Utilizing natural gradient in temporal difference reinforcement
+learning with eligibility traces. In International Symposium on Information Geometry and its Applica-
+tions, pages 256(cid:150)263, 2005.
+[11] S. Bhatnagar, R. Sutton, M. Ghavamzadeh, and M. Lee. Incremental natural actor-critic algorithms. In
+Advances in Neural Information Processing Systems, pages 105(cid:150)112. MIT Press, 2008.
+[12] T. Morimura, E. Uchibe, J. Yoshimoto, and K. Doya. A new natural policy gradient by stationary distri-
+bution metric. In European Conference on Machine Learning and Principles and Practice of Knowledge
+Discovery in Databases, 2008.
+[13] T. Morimura, E. Uchibe, J. Yoshimoto, J. Peters, and K. Doya. Derivatives of logarithmic stationary
+distributions for policy gradient reinforcement learning. Neural Computation. (in press).
+[14] V. Godambe. Estimating function. Oxford Science, 1991.
+[15] D. P. Bertsekas. Dynamic Programming and Optimal Control, Volumes 1 and 2. Athena Scienti(cid:2)c, 1995.
+[16] R. S. Sutton and A. G. Barto. Reinforcement Learning. MIT Press, 1998.
+[17] S. Amari and H. Nagaoka. Method of Information Geometry. Oxford University Press, 2000.
+[18] M. G. Lagoudakis and R. Parr. Least-squares policy iteration. Journal of Machine Learning Research,
+4:1107(cid:150)1149, 2003.
+[19] D. Bagnell and J. Schneider. Covariant policy search. In Proceedings of the International Joint Conference
+on Arti(cid:2)cial Intelligence, July 2003.
+[20] S. Amari and M. Kawanabe. Information geometry of estimating functions in semi-parametric statistical
+models. Bernoulli, 3(1), 1997.
+[21] A. C. Singh and R. P. Rao. Optimal instrumental variable estimation for linear models with stochastic
+regressors using estimating functions. In Symposium on Estimating Functions, pages 177(cid:150)192, 1996.
+[22] B. Chandrasekhar and B. K. Kale. Unbiased statistical estimating functions in presence of nuisance
+parameters. Journal of Statistical Planning and. Inference, 9:45(cid:150)54, 1984.
+[23] V. S. Konda and J. N. Tsitsiklis. On actor-critic algorithms. SIAM Journal on Control and Optimization,
+42(4):1143(cid:150)1166, 2003.
+[24] T. Ueno, M. Kawanabe, T. Mori, S. Maeda, and S. Ishii. A semiparametric statistical approach to model-
+free policy evaluation. In International Conference on Machine Learning, pages 857(cid:150)864, 2008.
+[25] J. A. Boyan. Technical update: Least-squares temporal difference learning. Machine Learning, 49(2-
+3):233(cid:150)246, 2002.
+
+9
+
+

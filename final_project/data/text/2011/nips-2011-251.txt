@@ -1,0 +1,603 @@
+Learning person-object interactions for
+action recognition in still images
+
+Vincent Delaitre∗
+´Ecole Normale Sup ´erieure
+
+Josef Sivic*
+INRIA Paris - Rocquencourt
+
+Ivan Laptev*
+INRIA Paris - Rocquencourt
+
+Abstract
+
+We investigate a discriminatively trained model of person-object interactions for
+recognizing common human actions in still images. We build on the locally
+order-less spatial pyramid bag-of-features model, which was shown to perform
+extremely well on a range of object, scene and human action recognition tasks.
+We introduce three principal contributions. First, we replace the standard quan-
+tized local HOG/SIFT features with stronger discriminatively trained body part
+and object detectors. Second, we introduce new person-object interaction features
+based on spatial co-occurrences of individual body parts and objects. Third, we
+address the combinatorial problem of a large number of possible interaction pairs
+and propose a discriminative selection procedure using a linear support vector
+machine (SVM) with a sparsity inducing regularizer. Learning of action-speciﬁc
+body part and object interactions bypasses the difﬁcult problem of estimating the
+complete human body pose conﬁguration. Beneﬁts of the proposed model are
+shown on human action recognition in consumer photographs, outperforming the
+strong bag-of-features baseline.
+
+1
+
+Introduction
+
+Human actions are ubiquitous and represent essential information for understanding the content
+of many still images such as consumer photographs, news images, sparsely sampled surveillance
+videos, and street-side imagery. Automatic recognition of human actions and interactions, however,
+remains a very challenging problem. The key difﬁculty stems from the fact that the imaged appear-
+ance of a person performing a particular action can vary signiﬁcantly due to many factors such as
+camera viewpoint, person’s clothing, occlusions, variation of body pose, object appearance and the
+layout of the scene. In addition, motion cues often used to disambiguate actions in video [6, 27, 31]
+are not available in still images.
+In this work, we seek to recognize common human actions, such as ”walking”, ”running” or ”read-
+ing a book” in challenging realistic images. As opposed to action recognition in video [6, 27, 31],
+action recognition in still images has received relatively little attention. A number of previous
+works [21, 24, 37] focus on exploiting body pose as a cue for action recognition. In particular,
+several methods address joint modeling of human poses, objects and relations among them [21, 40].
+Reliable estimation of body conﬁgurations for people in arbitrary poses, however, remains a very
+challenging research problem. Less structured representations, e.g. [11, 39] have recently emerged
+as a promising alternative demonstrating state-of-the-art results for action recognition in static im-
+ages.
+In this work, we investigate discriminatively trained models of interactions between objects and
+human body parts. We build on the locally orderless statistical representations based on spatial
+∗WILLOW project, Laboratoire d’Informatique de l’ ´Ecole Normale Sup ´erieure, ENS/INRIA/CNRS UMR
+8548, Paris, France
+
+1
+
+pyramids [28] and bag-of-features models [9, 16, 34], which have demonstrated excellent perfor-
+mance on a range of scene [28], object [22, 36, 41] and action [11] recognition tasks. Rather than
+relying on accurate estimation of body part conﬁgurations or accurate object detection in the image,
+we represent human actions as locally orderless distributions over body parts and objects together
+with their interactions. By opportunistically learning class-speciﬁc object and body part interactions
+(e.g. relative conﬁguration of leg and horse detections for the riding horse action, see Figure 1), we
+avoid the extremely challenging task of estimating the full body conﬁguration. Towards this goal,
+we consider the following challenges: (i) what should be the representation of object and body part
+appearance; (ii) how to model object and human body part interactions; and (iii) how to choose
+suitable interaction pairs in the huge space of all possible combinations and relative conﬁgurations
+of objects and body parts.
+To address these challenges, we introduce the following three contributions. First, we replace the
+quantized HOG/SIFT features, typically used in bag-of-features models [11, 28, 36] with powerful,
+discriminatively trained, local object and human body part detectors [7, 25]. This signiﬁcantly
+enhances generalization over appearance variation, due to e.g. clothing or viewpoint while providing
+a reliable signal on part locations. Second, we develop a part interaction representation, capturing
+pair-wise relative position and scale between object/body parts, and include this representation in a
+scale-space spatial pyramid model. Third, rather than choosing interacting parts manually, we select
+them in a discriminative fashion. Suitable pair-wise interactions are ﬁrst chosen from a large pool of
+hundreds of thousands of candidate interactions using a linear support vector machine (SVM) with
+a sparsity inducing regularizer. The selected interaction features are then input into a ﬁnal, more
+computationally expensive, non-linear SVM classiﬁer based on the locally orderless spatial pyramid
+representation.
+
+2 Related work
+
+Modeling person-object interactions for action recognition has recently attracted signiﬁcant atten-
+tion. Gupta et al. [21], Wang et al. [37], and Yao and Fei Fei [40] develop joint models of body
+pose conﬁguration and object location within the image. While great progress has been made on
+estimating body pose conﬁgurations [5, 19, 25, 33], inferring accurate human body pose in images
+of common actions in consumer photographs remains an extremely challenging problem due to a
+signiﬁcant amount of occlusions, partial truncation by image boundaries or objects in the scene,
+non-upright poses, and large variability in camera viewpoint.
+While we build on the recent body pose estimation work by using strong pose-speciﬁc body part
+models [7, 25], we explicitly avoid inferring the complete body conﬁguration. In a similar spirit,
+Desai et al. [13] avoid inferring body conﬁguration by representing a small set of body postures using
+single HOG templates and represent relative position of the entire person and an object using simple
+relations (e.g. above, to the left). They do not explicitly model body parts and their interactions with
+objects as we do in this work. Yang et al. [38] model the body pose as a latent variable for action
+recognition. Differently to our method, however, they do not attempt to model interactions between
+people (their body parts) and objects. In a recent work, Maji et al. [30] also represent people by
+activation responses of body part detectors (rather than inferring the actual body pose), however,
+they model only interactions between person and object bounding boxes, not considering individual
+body parts, as we do in this work.
+Learning spatial groupings of low-level (SIFT) features for recognizing person-object interactions
+has been explored by Yao and Fei Fei [39]. While we also learn spatial interactions, we build on
+powerful body part and object detectors pre-learnt on separate training data, providing a degree of
+generalization over appearance (e.g. clothing), viewpoint and illumination variation. Differently
+to [39], we deploy dicriminative selection of interactions using SVM with sparsity inducing regular-
+izer.
+Spatial-pyramid based bag-of-features models have demonstrated excellent performance on action
+recognition in still images [1, 11] outperforming body pose based methods [21] or grouplet mod-
+els [40] on their datasets [11]. We build on these locally orderless representations but replace the
+low-level features (HOG) with strong pre-trained detectors. Similarly, the object-bank representa-
+tion [29], where natural scenes are represented by response vectors of densely applied pre-trained
+
+2
+
+Figure 1: Representing person-object interactions by pairs of body part (cyan) and object (blue)
+detectors. To get a strong interaction response, the pair of detectors (here visualized at positions pi
+and pj ) must ﬁre in a particular relative 3D scale-space displacement (given by the vector v) with a
+scale-space displacement uncertainty (deformation cost) given by diagonal 3×3 covariance matrix
+C (the spatial part of C is visualized as a yellow dotted ellipse). Our image representation is deﬁned
+by the max-pooling of interaction responses over the whole image, solved efﬁciently by the distance
+transform.
+
+object detectors, has shown a great promise for scene recognition. The work in [29], however, does
+not attempt to model people, body parts and their interactions with objects.
+Related work also includes models of contextual spatial and co-occurrence relationships between
+objects [12, 32] as well as objects and the scene [22, 23, 35]. Object part detectors trained from
+labelled data also form a key ingredient of attribute-based object representations [15, 26]. While we
+build on this body of work, these approaches do not model interactions of people and their body
+parts with objects and focus on object/scene recognition rather than recognition of human actions.
+
+3 Representing person-object interactions
+
+This section describes our image representation in terms of body parts, objects and interactions
+among them.
+
+3.1 Representing body parts and objects
+
+We assume to have a set of n available detectors d1 , . . . , dn which have been pre-trained for different
+body parts and object classes. Each detector i produces a map of dense 3D responses di (I, p) over
+locations and scales of a given image I. We express the positions of detections p in terms of scale-
+space coordinates p = (x, y , σ) where (x, y) corresponds to the spatial location and σ = log ˜σ is an
+additive scale parameter log-related to the image scale factor ˜σ making the addition in the position
+vector space meaningful.
+In this paper we use two types of detectors. For objects we use LSVM detector [17] trained on
+PASCAL VOC images for ten object classes1 . For body parts we implement the method of [25]
+and train ten body part detectors2 for each of sixteen pose clusters giving 160 body part detectors
+in total (see [25] for further details). Both of our detectors use Histograms of Oriented Gradients
+(HOG) [10] as an underlying low-level image representation.
+
+1The ten object detectors correspond to object classes bicycle, car, chair, cow, dining table, horse, motorbike,
+person, sofa, tv/monitor
+2The ten body part detectors correspond to head, torso, {left, right} × {forearm, upper arm, lower leg,
+thigh}
+
+3
+
+Detection dj(left thigh)    Detection di(horse)pjpivPerson bounding boxC3.2 Representing pairwise interactions
+We deﬁne interactions by the pairs of detectors (di , dj ) as well as by the spatial and scale relations
+among them. Each pair of detectors constitutes a two-node tree where the position and the scale of
+the leaf are related to the root by scale-space offset and a spatial deformation cost. More precisely,
+an interaction pair is deﬁned by a quadruplet q = (i, j, v, C) ∈ N × N × R3 × M3,3 where i and j
+are the indices of the detectors at the root and leaf, v is the offset of the leaf relatively to the root and
+C is a 3 × 3 diagonal matrix deﬁning the displacement cost of the leaf with respect to its expected
+position. Figure 1 illustrates an example of an interaction between a horse and the left thigh for the
+horse riding action.
+(cid:0)di (I, p1 ) + dj (I, p2 ) − uT Cu(cid:1)
+We measure the response of the interaction q located at the root position p1 by:
+r(I, q, p1 ) = max
+p2
+where u = p2 − (p1 + v) is the displacement vector corresponding to the drift of the leaf node with
+respect to its expected position (p1 + v). Maximizing over p2 in (1) provides localization of the
+leaf node with the optimal trade-off between the detector score and the displacement cost. For any
+interaction q we compute its responses for all pairs of node positions p1 , p2 . We do this efﬁciently
+in linear time with respect to p using distance transform [18].
+
+(1)
+
+3.3 Representing images by response vectors of pair-wise interactions
+Given a set of M interaction pairs q1 , · · · , qM , we wish to aggregate their responses (1), over an
+image region A. Here A can be (i) an (extended) person bounding box, as used for selecting dis-
+criminative interaction features (Section 4.2) or (ii) a cell of the scale-space pyramid representation,
+as used in the ﬁnal non-linear classiﬁer (Section 4.3). We deﬁne score s(I, q, A) of an interaction
+pair q within A of an image I by max-pooling, i.e. as the maximum response of the interaction pair
+within A:
+s(I, q, A) = max
+p∈A r(I, q, p).
+An image region A is then represented by a M -vector of interaction pair scores
+z = (s1 , · · · , sM ) with si = s(I, qi , A).
+
+(3)
+
+(2)
+
+4 Learning person-object interactions
+
+Given object and body part interaction pairs q introduced in the previous section, we wish to use
+them for action classiﬁcation in still images. A brute-force approach of analyzing all possible inter-
+actions, however, is computationally prohibitive since the space of all possible interactions is combi-
+natorial in the number of detectors and scale-space relations among them. To address this problem,
+we aim in this paper to select a set of M action-speciﬁc interaction pairs q1 , . . . , qM , which are both
+representative and discriminative for a given action class. Our learning procedure consists of the
+three main steps as follows. First, for each action we generate a large pool of candidate interactions,
+each comprising a pair of (body part / object) detectors and their relative scale-space displacement.
+This step is data-driven and selects candidate detection pairs which frequently occur for a particular
+action in a consistent relative scale-space conﬁguration. Next, from this initial pool of candidate in-
+teractions we select a set of M discriminative interactions which best separate the particular action
+class from other classes in our training set. This is achieved using a linear Support Vector Machine
+(SVM) classiﬁer with a sparsity inducing regularizer. Finally, the discriminative interactions are
+combined across classes and used as interaction features in our ﬁnal non-linear spatial-pyramid like
+SVM classiﬁer. The three steps are detailed below.
+
+4.1 Generating a candidate pool of interaction pairs
+To initialize our model, we ﬁrst generate a large pool of candidate interactions in a data-driven
+manner. Following the suggestion in [17] that the accurate selection of the deformation cost C may
+not be that important, we set C to a reasonable ﬁxed value for all pairs, and focus on ﬁnding clusters
+of frequently co-occurring detectors (di , dj ) in speciﬁc relative conﬁgurations.
+For each detector i and an image I, we ﬁrst collect a set of positions of all positive detector responses
+i = {p | di (I, p) > 0}, where di (I, p) is the response of detector i at position p in image I. We
+PI
+
+4
+
+then apply a standard non-maxima suppression (NMS) step to eliminate multiple responses of a
+detector in local image neighbourhoods and then limit PI
+i to the L top-scoring detections. The
+intuition behind this step is that a part/object interaction is not likely to occur many times in an
+image.
+from all the training images Ik : Dij = (cid:83)
+For each pair of detectors (di , dj ) we then gather relative displacements between their detections
+j }. To discover poten-
+i and pj ∈ PIk
+k {pj − pi | pi ∈ PIk
+tially interesting interaction pairs, we perform a mean-shift clustering over Dij using a window of
+radius R ∈ R3 (2D-image space and scale) equal to the inverse of the square root of the deformation
+cost: R = diag(C− 1
+2 ). We also discard clusters which contribute to less than η percent of the train-
+ing images. The set of m resulting candidate pairs (i, j, v1 , C), · · · , (i, j, vm , C) is built from the
+centers v1 , · · · , vm of the remaining clusters. By applying this procedure to all pairs of detectors,
+we generate a large pool (hundreds of thousands) of potentially interesting candidate interactions.
+
+4.2 Discriminative selection of interaction pairs
+The initialization described above produces a large number of candidate interactions. Many of
+them, however, may not be informative resulting in unnecessary computational load at the training
+and classiﬁcation times. For this reason we wish to select a smaller number of M discriminative
+interactions.
+Given a set of N training images, each represented by an interaction response vector zi , described
+in eq. (3) where A is the extended person bounding box given for each image, and a binary label
+yi (in a 1-vs-all setup for each class), the learning problem for each action class can be formulated
+N(cid:88)
+using the binary SVM cost function:
+i=1
+where w, b are parameters of the classiﬁer and λ is the weighting factor between the (hinge) loss on
+the training examples and the L1 regularizer of the classiﬁer.
+By minimizing (4) in a one-versus-all setting for each action class we search (by binary search) for
+the value of the regularization parameter λ resulting in the sparse weight vector w with M non-
+zero elements. Selection of M interaction pairs corresponding to non-zero elements of w gives M
+most discriminative (according to (4)) interaction pairs per action class. Note that other discrimi-
+native feature selection strategies such as boosting [20] can be also used. However, the proposed
+approach is able to jointly search the entire set of candidate feature pairs by minimizing a convex
+cost given in (4), whereas boosting implements a greedy feature selection procedure, which may be
+sub-optimal.
+
+max{0, 1 − yi (w(cid:62)zi + b)} + (cid:107)w(cid:107)1 ,
+
+J (w, b) = λ
+
+(4)
+
+4.3 Using interaction pairs for classiﬁcation
+Given a set of M discriminative interactions for each action class obtained as described above, we
+wish to train a ﬁnal non-linear action classiﬁer. We use spatial pyramid-like representation [28],
+aggregating responses in each cell of the pyramid using max-pooling as described by eq. (2), where
+A is one cell of the spatial pyramid. We extend the standard 2D pyramid representation to scale-
+space resulting in a 3D pyramid with D = 1 + 23 + 43 = 73 cells. Using the scale-space pyramid
+with D cells, we represent each image by concatenating M features from each of the K classes
+into a M KD-dimensional vector. We train a non-linear SVM with RBF kernel and L2 regularizer
+for each action class using a 5-fold cross-validation for the regularization and kernel band-width
+parameters. We found that using this ﬁnal non-linear classiﬁer consistently improves classiﬁcation
+performance over the linear SVM given by equation (4). Note that feature selection (section 4.2) is
+necessary in this case as applying the non-linear spatial pyramid classiﬁer on the entire pool of all
+candidate interactions would be computationally infeasible.
+
+5 Experiments
+
+We test our model on the Willow-action dataset downloaded from [4] and the PASCAL VOC 2010
+action classiﬁcation dataset [14]. The Willow-action dataset contains more than 900 images with
+more than 1100 labelled person detections from 7 human action classes: Interaction with Computer,
+
+5
+
+Photographing, Playing Music, Riding Bike, Riding Horse, Running and Walking. The training set
+contains 70 examples of each action class and the rest (at least 39 examples per class) is left for
+testing. The PASCAL VOC 2010 dataset contains the 7 above classes together with 2 other actions:
+Phoning and Reading. It contains a similar number of images. Each training and testing image
+in both datasets is annotated with the smallest bounding box containing each person and by the
+performed action(s). We follow the same experimental setup for both datasets.
+
+Implementation details: We use our implementation of body part detectors described in [25] with
+16 pose clusters trained on the publicly available 2000 image database [3], and 10 pre-trained PAS-
+CAL 2007 Latent SVM object detectors [2]: bicycle, car, chair, cow, dining table, horse, motorbike,
+person, sofa, tvmonitor. In the human action training/test data, we extend each given person bound-
+ing box by 50% and resize the image so that the bounding box has a maximum size of 300 pixels.
+We run the detectors over the transformed bounding boxes and consider the image scales sk = 2k/10
+for k ∈ {−10, · · · , 10}. At each scale we extract the detector response every 4 pixels and 8 pixels
+for the body part and object detectors, respectively. The outputs of each detector are then normal-
+ized by subtracting the mean of maximum responses within the training bounding boxes and then
+normalizing the variance to 1. We generate the candidate interaction pairs by taking the mean-shift
+radius R = (30, 30, log(2)/2), L = 3 and η = 8%. The covariance of the pair deformation cost C
+is ﬁxed in all experiments to R−2 . We select M = 310 discriminative interaction pairs to compute
+the ﬁnal spatial pyramid representation of each image.
+
+Results: Table 1 summarizes per-class action classiﬁcation results (reported using average preci-
+sion for each class) for the proposed method (d. Interactions), and three baselines. The ﬁrst baseline
+(a. BOF) is the bag-of-features classiﬁer [11], aggregating quantized responses of densely sampled
+HOG features in spatial pyramid representation, using a (non-linear) intersection kernel. Note that
+this is a strong baseline, which was shown [11] to outperform the recent person-object interaction
+models of [39] and [21] on their own datasets. The second baseline (b. LSVM) is the latent SVM
+classiﬁer [17] trained in a 1-vs-all fashion for each class. To obtain a single classiﬁcation score for
+each person bounding box, we take the maximum LSVM detection score from the detections over-
+lapping the extended bounding box with the standard overlap score [14] higher than 0.5. The ﬁnal
+baseline (c. Detectors) is a SVM classiﬁer with an RBF kernel trained on max-pooled responses of
+the entire bank of body part and object detectors in a spatial pyramid representation but without in-
+teractions. This baseline is similar in spirit to the object bank representation [29], but here targeted
+to action classiﬁcation by including a bank of pose-speciﬁc body part detectors as well as object
+detectors. On average, the proposed method (d.) outperforms all baselines, obtaining the best result
+on 4 out of 7 classes. The largest improvements are obtained on Riding Bike and Horse actions,
+for which reliable object detectors are available. The improvement of the proposed method d. with
+respect to using the plain bank of object and body part detectors c. directly demonstrates the beneﬁt
+of modeling interactions. Example detections of interaction pairs are shown in ﬁgure 2.
+Table 2 shows the performance of the proposed interaction model (d. Interactions) and its combi-
+nation with the baselines (e. BOF+LSVM+Inter.) on the Pascal VOC 2010 data. Interestingly, the
+proposed approach is complementary to both the BOF (51.25 mAP) and LSVM (44.08 mAP) meth-
+ods and by combining all three approaches (following [11]) the overall performance improves to
+60.66 mAP. We also report results of the ”Poselet” method [30], which, similar to our method, is
+trained from external non-Pascal data. Our combined approach achieves better overall performance
+and also outperforms the ”Poselet” approach on 6 out of 9 classes. Finally, our combined approach
+also obtains competitive performance compared to the overall best reported result on the Pascal VOC
+2010 data – ”SURREY MK KDA” [1] – and outperforms this method on the ”Riding Horse” and
+”Walking” classes.
+
+6 Conclusion
+
+We have developed person-object interaction features based on non-rigid relative scale-space dis-
+placement of pairs of body part and object detectors. Further, we have shown that such features can
+be learnt in a discriminative fashion and can improve action classiﬁcation performance over a strong
+bag-of-features baseline in challenging realistic images of common human actions. In addition, the
+learnt interaction features in some cases correspond to visually meaningful conﬁgurations of body
+parts, and body parts with objects.
+
+6
+
+Inter. w/ Comp.
+Blue: Screen
+Cyan: L. Leg
+
+Photographing
+Blue: Head
+Cyan: L. Thigh
+
+Playing Instr.
+Blue: L. Forearm
+Cyan: L. Forearm
+
+Riding Bike
+Blue: R. Forearm
+Cyan: Motorbike
+
+Riding Horse
+Blue: Horse
+Cyan: L. Thigh
+
+Running
+Blue: L. Arm
+Cyan: R. Leg
+
+Walking
+Blue: L. Arm
+Cyan: Head
+
+Figure 2: Example detections of discriminative interaction pairs. These body part interaction
+pairs are chosen as discriminative (high positive weight wi ) for action classes indicated on the left.
+In each row, the ﬁrst three images show detections on the correct action class. The last image
+shows a high scoring detection on an incorrect action class. In the examples shown, the interaction
+features capture either a body part and an object, or two body part interactions. Note that while these
+interaction pairs are found to be discriminative, due to the detection noise, they do not necessary
+localize the correct body parts in all images. However, they may still ﬁre at consistent locations
+across many images as illustrated in the second row, where the head detector consistently detects
+the camera lens, and the thigh detector ﬁres consistently at the edge of the head. Similarly, the leg
+detector seems to consistently ﬁre on keyboards (see the third image in the ﬁrst row for an example),
+thus improving the conﬁdence of the computer detections for the ”Interacting with computer” action.
+
+7
+
+d. Interactions
+c. Detectors
+b. LSVM
+a. BOF [11]
+Action / Method
+58.15
+56.60
+45.64
+30.21
+(1) Inter. w/ Comp.
+37.47
+36.35
+28.12
+35.39
+(2) Photographing
+73.19
+72.00
+68.35
+56.34
+(3) Playing Music
+90.39
+86.69
+68.70
+82.43
+(4) Riding Bike
+75.03
+71.44
+60.12
+69.60
+(5) Riding Horse
+59.73
+57.65
+51.99
+44.53
+(6) Running
+57.68
+57.64
+55.97
+54.18
+(7) Walking
+64.12
+Average (mAP)
+60.54
+50.21
+59.64
+Table 1: Per-class average-precision for different methods on the Willow-actions dataset.
+
+Action / Method
+(1) Phoning
+(2) Playing Instr.
+(3) Reading
+(4) Riding Bike
+(5) Riding Horse
+(6) Running
+(7) Taking Photo
+(8) Using Computer
+(9) Walking
+Average (mAP)
+
+d. Interactions
+42.11
+30.78
+28.70
+84.93
+89.61
+81.28
+26.89
+52.31
+70.12
+56.30
+
+e. BOF+LSVM+Inter.
+48.61
+53.07
+28.56
+80.05
+90.67
+85.81
+33.53
+56.10
+69.56
+60.66
+
+Poselets[30]
+49.6
+43.2
+27.7
+83.7
+89.4
+85.6
+31.0
+59.1
+67.9
+59.7
+
+MK-KDA[1]
+52.6
+53.5
+35.9
+81.0
+89.3
+86.5
+32.8
+59.2
+68.6
+62.2
+
+Table 2: Per-class average-precision on the Pascal VOC 2010 action classiﬁcation dataset.
+
+We use only a small set of object detectors available at [2], however, we are now in a position
+to include many more additional object (camera, computer, laptop) or texture (grass, road, trees)
+detectors, trained from additional datasets, such as ImageNet or LabelMe. Currently, we consider
+detections of entire objects, but the proposed model can be easily extended to represent interactions
+between body parts and parts of objects [8].
+
+Acknowledgements. This work was partly supported by the Quaero, OSEO, MSR-INRIA, ANR DETECT
+(ANR-09-JCJC-0027-01) and the EIT-ICT labs.
+
+References
+
+[1] http://pascallin.ecs.soton.ac.uk/challenges/voc/voc2010/results/index.html.
+[2] http://people.cs.uchicago.edu/∼pff/latent/.
+[3] http://www.comp.leeds.ac.uk/mat4saj/lsp.html.
+[4] http://www.di.ens.fr/willow/research/stillactions/.
+[5] M. Andriluka, S. Roth, and B. Schiele. Pictorial structures revisited: People detection and articulated
+pose estimation. In CVPR, 2009.
+[6] A. Bobick and J. Davis. The recognition of human movement using temporal templates. IEEE PAMI,
+23(3):257–276, 2001.
+[7] L. Bourdev and J. Malik. Poselets: Body part detectors trained using 3D human pose annotations. In
+ICCV, 2009.
+[8] T. Brox, L. Bourdev, S. Maji, and J. Malik. Object segmentation by alignment of poselet activations to
+image contours. In CVPR, 2011.
+[9] G. Csurka, C. Bray, C. Dance, and L. Fan. Visual categorization with bags of keypoints. In WS-SLCV,
+ECCV, 2004.
+[10] N. Dalal and B. Triggs. Histograms of oriented gradients for human detection. In CVPR, pages I:886–893,
+2005.
+[11] V. Delaitre, I. Laptev, and J. Sivic. Recognizing human actions in still images: a study of bag-
+In Proc. BMVC., 2010.
+of-features and part-based representations.
+updated version, available at
+http://www.di.ens.fr/willow/research/stillactions/.
+[12] C. Desai, D. Ramanan, and C. Fowlkes. Discriminative models for multi-class object layout. In ICCV,
+2009.
+
+8
+
+In
+
+[13] C. Desai, D. Ramanan, and C. Fowlkes. Discriminative models for static human-object interactions. In
+SMiCV, CVPR, 2010.
+[14] M. Everingham, L. Van Gool, C. Williams, J. Winn, and A. Zisserman. The pascal visual object classes
+(voc) challenge. IJCV, 2010. In press.
+[15] A. Farhadi, I. Endres, D. Hoiem, and D. Forsyth. Describing objects by their attributes. In CVPR, 2009.
+[16] L. Fei-Fei and P. Perona. A Bayesian hierarchical model for learning natural scene categories. In CVPR,
+Jun 2005.
+[17] P. Felzenszwalb, R. Girshick, D. McAllester, and D. Ramanan. Object detection with discriminatively
+trained part based models. IEEE PAMI, 2009.
+[18] P. Felzenszwalb and D. Huttenlocher. Distance transforms of sampled functions. Technical report, Cornell
+University CIS, Tech. Rep. 2004-1963, 2004.
+[19] V. Ferrari, M. Marin-Jimenez, and A. Zisserman. Pose search: retrieving people using their pose.
+CVPR, 2009.
+[20] Y. Freund and R. Schapire. A decision theoretic generalisation of online learning. Computer and System
+Sciences, 55(1):119–139, 1997.
+[21] A. Gupta, A. Kembhavi, and L. Davis. Observing human-object interactions: Using spatial and functional
+compatibility for recognition. IEEE PAMI, 31(10):1775–1789, 2009.
+[22] H. Harzallah, F. Jurie, and C. Schmid. Combining efﬁcient object localization and image classiﬁcation.
+In ICCV, 2009.
+[23] D. Hoiem, A. Efros, and M. Hebert. Putting objects in perspective. In CVPR, 2006.
+[24] N. Ikizler, R. G. Cinbis, S. Pehlivan, and P. Duygulu. Recognizing actions from still images. In Proc.
+ICPR, 2008.
+[25] S. Johnson and M. Everingham. Learning effective human pose estimation from inaccurate annotation.
+In CVPR, 2011.
+[26] C. Lampert, H. Nickisch, and S. Harmeling. Learning to detect unseen object classes by between-class
+attribute transfer. In CVPR, 2009.
+[27] I. Laptev, M. Marszałek, C. Schmid, and B. Rozenfeld. Learning realistic human actions from movies. In
+CVPR, 2008.
+[28] S. Lazebnik, C. Schmid, and J. Ponce. Beyond bags of features: spatial pyramid matching for recognizing
+natural scene categories. In CVPR, pages II: 2169–2178, 2006.
+[29] L. Li, H. Su, E. Xing, and L. Fei-Fei. Object bank: A high-level image representation for scene classiﬁ-
+cation and semantic feature sparsiﬁcation. In NIPS, 2010.
+[30] S. Maji, L. Bourdev, and J. Malik. Action recognition from a distributed representation of pose and
+appearance. In CVPR, 2011.
+[31] T. B. Moeslund, A. Hilton, and V. Kruger. A survey of advances in vision-based human motion capture
+and analysis. CVIU, 103(2-3):90–126, 2006.
+[32] A. Rabinovich, A. Vedaldi, C. Galleguillos, E. Wiewiora, and S. Belongie. Objects in context. In ICCV,
+2007.
+[33] B. Sapp, A. Toshev, and B. Taskar. Cascaded models for articulated pose estimation. In ECCV, 2010.
+[34] J. Sivic and A. Zisserman. Video Google: A text retrieval approach to object matching in videos. In
+ICCV, 2003.
+[35] A. Torralba. Contextual priming for object detection. IJCV, 53(2):169–191, July 2003.
+[36] A. Vedaldi, V. Gulshan, M. Varma, and A. Zisserman. Multiple kernels for object detection. In ICCV,
+2009.
+[37] Y. Wang, H. Jiang, M. S. Drew, Z. N. Li, and G. Mori. Unsupervised discovery of action classes. In
+CVPR, pages II: 1654–1661, 2006.
+[38] W. Yang, Y. Wang, and G. Mori. Recognizing human actions from still images with latent poses.
+CVPR, 2010.
+[39] B. Yao and L. Fei-Fei. Grouplet: A structured image representation for recognizing human and object
+interactions. In CVPR, 2010.
+[40] B. Yao and L. Fei-Fei. Modeling mutual context of object and human pose in human-object interaction
+activities. In CVPR, 2010.
+[41] J. Zhang, M. Marszalek, S. Lazebnik, and C. Schmid. Local features and kernels for classiﬁcation of
+texture and object categories: a comprehensive study. IJCV, 73(2):213–238, 2007.
+
+In
+
+9
+
+

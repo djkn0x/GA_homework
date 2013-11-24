@@ -1,0 +1,558 @@
+Structured Determinantal Point Processes
+
+Alex Kulesza
+Ben Taskar
+Department of Computer and Information Science
+University of Pennsylvania
+Philadelphia, PA 19104
+{kulesza,taskar}@cis.upenn.edu
+
+Abstract
+
+We present a novel probabilistic model for distributions over sets of structures—
+for example, sets of sequences, trees, or graphs. The critical characteristic of our
+model is a preference for diversity: sets containing dissimilar structures are more
+likely. Our model is a marriage of structured probabilistic models, like Markov
+random ﬁelds and context free grammars, with determinantal point processes,
+which arise in quantum physics as models of particles with repulsive interactions.
+We extend the determinantal point process model to handle an exponentially-sized
+set of particles (structures) via a natural factorization of the model into parts. We
+show how this factorization leads to tractable algorithms for exact inference, in-
+cluding computing marginals, computing conditional probabilities, and sampling.
+Our algorithms exploit a novel polynomially-sized dual representation of determi-
+nantal point processes, and use message passing over a special semiring to com-
+pute relevant quantities. We illustrate the advantages of the model on tracking and
+articulated pose estimation problems.
+
+1
+
+Introduction
+
+The need for distributions over sets of structures arises frequently in computer vision, computational
+biology, and natural language processing. For example, in multiple target tracking, sets of structures
+of interest are multiple object trajectories [6].
+In gene ﬁnding, sets of structures of interest are
+multiple proteins coded by a single gene via alternative splicing [13]. In machine translation, sets of
+structures of interest are multiple interpretations or parses of a sentence in a different language [12].
+Consider as a running example the problem of detecting and tracking several objects of the same
+type (e.g., cars, people, faces) in a video, assuming the number of objects is not known a priori. We
+would like a distribution over sets of trajectories that (1) includes sets of different cardinality and
+(2) prefers sets of trajectories that are spread out in space-time, as objects are likely to be [11, 15].
+Determinantal point processes [10] are attractive models for distributions over sets, because they
+concisely capture probabilistic mutual exclusion between items via a kernel matrix that determines
+which items are similar and therefore less likely to appear together. Intuitively, the model balances
+the diversity of a set against the quality of the items it contains (for example, observation likelihood
+of an object along the trajectory, or motion smoothness). Remarkably, algorithms for computing
+certain marginal and conditional probabilities as well as sampling from this model are O(N 3 ),
+where N is total number of possible items, even though there are 2N possible subsets of a set
+of size N [7, 1] .
+The problem, however, is that in our setting the total number of possible trajectories N is exponential
+in the number of time steps. More generally, we consider modeling distributions over sets of struc-
+tures (e.g., sequences, trees, graphs) where the total number of possible structures is exponential.
+Our structured determinatal point process model (SDPP) captures such distributions by combining
+structured probabilistic models (e.g., a Markov random ﬁeld to model individual trajectory quality)
+
+1
+
+(a)
+
+(b)
+
+Figure 1: (a) A set of points in the plane drawn from a DPP (left), and the same number of
+points sampled independently (right). (b) The ﬁrst three steps of sampling a DPP on a set of one-
+dimensional particle positions, from left to right. Red circles indicate already selected positions.
+The DPP naturally reduces the probabilities for positions that are similar to those already selected.
+
+with determinantal point processes. We introduce a natural factorization of the determinantal model
+into parts (as in graphical models and grammars), and show that this factorization together with a
+novel dual representation of the process enables tractable inference and sampling using message
+passing algorithms over a special semiring. The contributions of this paper are: (1) introducing
+SDPPs, (2) a concise dual representation of determinantal processes, (3) tractable message passing
+algorithms for exact inference and sampling in SDPPs, (4) experimental validation on synthetic mo-
+tion tracking and real-world pose detection problems. The paper is organized as follows: we present
+background on determinantal processes in Section 2 and introduce our model in Section 3; we de-
+velop inference and sampling algorithms in Section 4, and we describe experiments in Section 5.
+
+2 Background: determinantal point processes
+A point process P on a discrete set Y = {y1 , . . . , yN } is a probability measure on 2Y , the set of all
+subsets of Y . P is called a determinantal point process (DPP) if there exists a positive semideﬁnite
+matrix K indexed by the elements of Y such that if Y ∼ P then for every A ⊆ Y , we have
+P (A ⊆ Y ) = det(KA ) .
+Determinantal Point Process:
+(1)
+Here KA = [Kij ]yi ,yj ∈A is the restriction of K to the entries indexed by elements of A, and we
+adopt det(K∅ ) = 1. We will refer to K as the marginal kernel, as it contains all the information
+needed to compute the probability of including any subset A in Y ∼ P . A few simple observations
+follow from Equation (1):
+P (yi ∈ Y ) = Kii
+P (yi , yj ∈ Y ) = KiiKj j − Kij Kj i = P (yi ∈ Y )P (yj ∈ Y ) − K 2
+ij .
+That is, the diagonal of K gives the marginal probabilities of inclusion for individual elements of
+Y , and the off-diagonal elements determine the (anti-) correlations between pairs of elements: large
+values of Kij imply that i and j tend not to co-occur. Note that DPPs cannot represent distributions
+where elements are more likely to co-occur than if they were independent: correlations are negative.
+Figure 1a shows the difference between sampling a set of points in the plane using a DPP (with Kij
+inversely related to the distance between points i and j ), which leads to a set that is spread out with
+good coverage, and sampling points independently, where the points exhibit random clumping.
+Determinantal point processes, introduced to model fermions [10], also arise in studies of non-
+intersecting random paths, random spanning trees, and eigenvalues of random matrices [3, 2, 7].
+The most relevant construction of DPPs for our purpose is via L-ensembles [1]. An L-ensemble
+deﬁnes a DPP via a positive semideﬁnite matrix L indexed by the elements of Y .
+det(LY )
+PL (Y ) =
+L-ensemble DPP:
+(4)
+det(L + I ) ,
+P
+where I is the N × N identity matrix. Note that PL is normalized due to the identity
+Y ⊆Y det(LY ) = det(L+ I ). L-ensembles directly deﬁne the probability of observing each subset
+
+(2)
+(3)
+
+2
+
+DPPIndependent0101020x 10−3PositionStep 0Probability01PositionStep 101PositionStep 2(6)
+
+of Y , and subsets that have higher diversity (as measured by the corresponding determinant) have
+higher likelihood. To get probabilities of item co-occurrence as in Equation (1), we can compute the
+marginal kernel K for the L-ensemble PL :
+Note that K can be computed from the eigen-decomposition of L = PN
+K = (L + I )−1L.
+L-ensemble marginal kernel:
+(5)
+re-scaling of eigenvalues: K = PN
+k=1 λk vk v>
+k by a simple
+λk+1 vk v>
+k .
+λk
+k=1
+To get a better understanding of how L affects marginals K , note that L can be written as a Gram
+matrix with L(yi , yj ) = q(yi )φ(yi )>φ(yj )q(yj ) for q(yi ) ≥ 0 and some “feature mapping” φ(y) :
+Y 7→ RD , where D ≤ N and ||φ(yi )||2 = 1. We can think of q(yi ) as the “quality score” for item
+PL (Y ) ∝ det(φ(Y )>φ(Y )) Y
+yi and φ(yi )>φ(yj ) as normalized “similarity” between items yi and yj .
+L-ensemble (L=quality*similarity):
+q2 (yi ) ,
+yi∈Y
+where φ(Y ) is a D × |Y | matrix with columns φ(yi ), yi ∈ Y . We will use this quality*similarity
+based representation extensively below. Roughly speaking, PL (yi ∈ Y ) increases monotonically
+with quality q(yi ) and PL (yi , yj ∈ Y ) decreases monotonically with similarity φ(yi )>φ(yj ).
+We brieﬂy mention a few other efﬁciently computable quantities of DPPs [1]:
+det(LA∪B )
+L-ensemble conditionals: PL (Y = A ∪ B | A ⊆ Y ) =
+(7)
+det(L + IY \A ) ,
+where IY \A is the matrix with ones in the diagonal entries indexed by elements of Y \ A and
+zeros everywhere else. Conditional marginal probabilities PL (B ⊆ Y | A ⊆ Y ) as well as in-
+clusion/exclusion probabilities PL (A ⊆ Y ∧ B ∩ Y = ∅) can also be computed efﬁciently using
+eigen-decompositions of L and related matrices.
+Sampling from PL is also efﬁcient [7]. Let L = PN
+Sampling
+k=1 λk vk v>
+k be an orthonormal eigen-
+decomposition, and let ei be the ith standard basis N -vector (all zeros except for a 1 in the ith
+position). Then the following algorithm samples Y ∼ PL :
+Initialize: Y = ∅, V = ∅;
+P
+Add each eigenvector vk to V independently with prob. λk
+λk+1 ;
+while |V | > 0 do
+Select a yi from Y with Pr(yi ) = 1|V |
+v∈V (v> ei )2 ;
+Update Y = Y ∪ yi ;
+Compute V⊥ , an orthonormal basis for the subspace of V orthogonal to ei , and let V = V⊥ ;
+end
+Return Y ;
+
+Algorithm 1: Sampling algorithm for L-ensemble DPPs.
+This yields a natural and efﬁcient procedure for sampling from P given an eigen-decomposition
+of L. It also offers some additional insights. Because the dimension of V is reduced by one on
+each iteration of the loop, and because the initial dimension of V is simply the number of selected
+E[|Y |] = PN
+eigenvectors in step one, the size of Y is distributed as the number of successes in N Bernoulli trials
+λk+1 . In particular, |Y | cannot be larger than rank(L), and
+where trial k succeeds with probability λk
+λk+1 .
+λk
+k=1
+To get a feel for the sampling algorithm, it is useful to visualize the distributions used to select yi at
+each time step, and to see how they are inﬂuenced by previously chosen items. Figure 1b shows this
+progression for a simple DPP where Y is the set of points in [0, 1], quality scores are uniformly 1, and
+the feature mapping is such that φ(yi )>φ(yj ) ∝ exp(−(yi − yj )2 )—that is, points are more similar
+the closer together they are. Initially, the eigenvectors V give rise to a fairly uniform distribution
+over points in Y , but as each successive point is selected and V is updated, the distribution shifts to
+avoid points near those already chosen.
+
+3
+
+Meaning
+Symbol
+Y , Y , yi , N Y is the base set, Y is a subset of Y , yi is an element of Y , N is the size of |Y |
+L is a p.s.d. matrix deﬁning P (Y ) ∝ det(LY ), LY is a submatrix indexed by Y
+L, LY
+K is a p.s.d. matrix deﬁning marginals via P (A ⊆ Y ) = det(KA )
+K, KA
+quality*similarity decomposition; Lij = q(yi )φ(yi )>φ(yj )q(yj ), φ(yj ) ∈ RD
+q(yi ), φ(yi )
+C = BB> is the dual of L = B>B ; the columns of B are Bi = q(yi )φ(yi )
+B , C
+α is a factor of a structure; yiα , yα index the relevant part of the structure
+α, yiα , yα
+
+Table 1: Summary of notation.
+
+3 Structured determinantal point processes
+DPPs are amazingly tractable distributions when N , the size of the base set Y , is small. However,
+we are interested in deﬁning DPPs over exponentially sized Y . For example, consider the case where
+each yi is itself a sequence of length T : yi = (yi1 , . . . , yiT ), where yit is the state at time t (e.g., the
+location of an object in the t-th frame of a video). Assuming there are n states at each time t and all
+state transitions are possible, there are nT possible sequences, so N = nT .
+In order to deﬁne a DPP over structures such as sequences or trees, we assume a factorization of
+the quality score q(yi ) and similarity score φ(yi )>φ(yj ) into parts, similar to a graphical model
+decomposition. For a sequence, the scores can be naturally decomposed into factors that depend on
+the state yit at each time t and the states (yit , yit+1 ) for each transition (t, t + 1). More generally, we
+assume a set of factors and use the notation yiα to refer to the α part of the structure yi (similarly, we
+use yα to refer to the α part of the structure y ). We assume that quality decomposes multiplicatively
+and φ(yi ) = X
+q(yi ) = Y
+and similarity decomposes additively, as follows. (As before, L(yi , yj ) = q(yi )φ(yi )>φ(yj )q(yj ).)
+Structured DPP Factorization:
+φ(yiα ).
+q(yiα )
+(8)
+α
+α
+We argue that these are quite natural factorizations. Quality scores, for example, can be given by a
+typical log-linear Markov random ﬁeld, which deﬁnes a multiplicative distribution over structures.
+Similarity scores can be thought of as dot products between features of the two labelings.
+In our tracking example, the feature mapping φ(yit ) should reﬂect similarity between trajectories;
+e.g., features could track coarse-level position at time t, so that the model considers sets with tra-
+jectories that pass near or through the same states less likely. A common problem in multiple target
+tracking is that the quality of one object’s trajectory and its neighborhood “tube” is often much
+more likely than other objects’ trajectories as measured by an HMM or CRF model, so standard
+sampling from a graphical model will produce very similar, overlapping trajectories, ignoring less
+“detectable” targets. A sample from the structured DPP model would be much more likely to contain
+diverse trajectories. (See Figure 2.)
+
+Dual representation
+While the factorization in Equation (8) concisely deﬁnes a DPP over a structured Y , the more re-
+markable fact is that it gives rise to tractable algorithms for computing key marginals and condition-
+als when the set of factors is low-treewidth, just as in graphical model inference [8], even though L
+is too large to even write down. We propose the following dual representation of L in order to exploit
+the factorization. Let us deﬁne a D × N matrix B whose columns are given by Bi = q(yi )φ(yi ), so
+the eigenvectors are related as follows: if C = P
+k , then L = P
+that L = B>B . Consider the D × D matrix C = BB> ; note that typically D (cid:28) N (actually, the
+rank of B is at most O(nT ) in the sequence case). The eigenvalues of C and L are identical, and
+k λk (B> vk )> (B> vk ).
+k λk vk v>
+That is, if vk is the k-th eigenvector of C , B> vk is the k-th eigenvector of L, and it has the same
+For example, to compute the L-ensemble normalization det(L + I ) = Q
+eigenvalue λk . This connection allows us to compute important quantities from C .
+P
+k (λk + 1) in Equa-
+tion (4), we just need the eigenvalues of C . To compute C itself, we need to compute BB> =
+q2 (yi )φ(yi )φ(yi )> . This appears daunting, but the factorization turns out to offer an efﬁcient
+yi
+dynamic programming solution. We discuss in more detail how to compute C for sequences (and
+for ﬁxed-treewidth factors in general) in the next section. Assuming we can compute C efﬁciently,
+
+4
+
+4
+
+(9)
+
+(10)
+
+Figure 2: Sets of (structured) particle trajectories sampled from the SDPP (top row) and indepen-
+dently using only quality scores (bottom row). The curves to the left indicate the quality scores for
+the possible initial positions.
+we can eigen-decompose it as C = P
+k in O(D3 ). Then, to compute PL (yi ∈ Y ), the
+k λk vk v>
+Structured Marginal: Kii = X
+i vk )2 = q2 (yi ) X
+probability of any single trajectory being included in Y ∼ PL , we have all we need:
+(φ(yi )> vk )2
+(B>
+λk
+λk
+λk + 1
+λk + 1
+j vk ) = q(yi )q(yj ) X
+Kij = X
+k
+k
+Similarly, given two trajectories yi and yj , PL (yi , yj ∈ Y ) = KiiKj j − K 2
+ij , where:
+(φ(yi )> vk )(φ(yj )> vk ) .
+i vk )(B>
+(B>
+λk
+λk
+λk + 1
+λk + 1
+k
+k
+Inference for SDPPs
+!  X
+!  X
+ Y
+C = X
+q2 (y)φ(y)φ(y)> = X
+We now turn to computing C using the factorization in Equation (8). We have
+If we think of q2 (yα ) as factor potentials of a graphical model p(y) ∝ Q
+φ(yα )
+q2 (yα )
+y∈Y
+y∈Y
+α
+α
+α
+α q2 (yα ), then computing
+α,α0 P
+expectation, add up the contributions: C = Z P
+C is equivalent to computing second moments of additive features (modulo normalization Z ). A
+naive algorithm can simply compute all O(T 2 ) pairwise marginals p(yα , yα0 ) and, by linearity of
+yα ,yα0 p(yα , yα0 )φ(yα )φ(yα0 )> .
+However, we can use a much more efﬁcient O(D2T ) algorithm based on second-order semiring
+message passing [9]. The details are given in Appendix A of the supplementary material, but in short
+we apply the standard two-pass belief propagation algorithm for trees with a particular semiring in
+!
+!  X
+!  X
+ Y
+place of the usual sum-product or max-sum. By performing message passing under this second-order
+X
+semiring, one can efﬁciently compute any quantity of the form:
+b(yα )
+a(yα )
+p(yα )
+y∈Y
+α
+α
+α
+for functions p ≥ 0, a, and b in time O(T ). Since the outer product in Equation (11) comprises D2
+quantities of the type in Equation (12), we can compute C in time O(D2T ).
+
+!>
+φ(yα )
+
+(12)
+
+.
+
+(11)
+
+Sampling
+
+As described in Section 3, the eigen-decomposition of C yields an implicit representation of L: for
+each eigenvalue/vector pair (λk , vk ) of C , (λk , B> vk ) is a corresponding pair for L. We show that
+this implicit representation is enough to efﬁciently perform the sampling procedure in Algorithm 1.
+
+5
+
+10203040501020304050SDPP10203040501020304050Independent10203040501020304050Sampled particle trajectories (position vs. time)102030405010203040501020304050102030405010203040501020304050Pr(yi ) =
+
+q2 (yi )(v>φ(yi ))2 .
+
+The key is to represent V , the orthonormal set of vectors in RN , as a set ˆV of vectors in RD ,
+with the mapping V = {B> v |v ∈ ˆV }. Let vi , vj be two arbitrary vectors in ˆV . Then we have
+(B> vi )> (B> vj ) = v>
+i BB> vj = v>
+i C vj . Thus we can compute dot products between vectors in
+V using their preimage in ˆV . This is sufﬁcient to compute the normalization for each eigenvector
+B> v , as required to obtain an initial orthonormal basis. Trivially, we can also compute (implicit)
+sums between vectors in V ; this combined with dot products is enough to perform the Gram-Schmidt
+orthonormalization needed to obtain ˆV⊥ from ˆV and the most recently selected yi at each iteration.
+1/| ˆV | P
+is to choose a structure yi according to the distribution Pr(yi ) =
+All that remains,
+then,
+v∈ ˆV ((B> v)> ei )2 . Recall that the columns of B are given by Bi = q(yi )φ(yi ). Thus
+X
+the distribution can be rewritten as
+1
+| ˆV |
+v∈ ˆV
+By assumption q2 (yi ) decomposes multiplicatively over parts of yi , and v>φ(yi ) decomposes ad-
+ditively. Thus the distribution is a sum of | ˆV | terms, each having the form of Equation (12). We
+can therefore apply message passing in the second-order semiring to compute marginals of this
+X
+X
+distribution—that is, for each part yα we can compute
+1
+q2 (y)(v>φ(y))2 ,
+| ˆV |
+y∼yα
+v∈ ˆV
+where the sum is over all structures consistent with the value of yα . This only takes O(T | ˆV |) time.
+In fact, the message-passing computation of these marginals yields an efﬁcient algorithm for sam-
+pling individual full structures yi as required by Algorithm 1; the key is to pass normal messages
+forward, but conditional messages backward. Suppose we have a sequence model; since the forward
+pass completes with correct marginals at the ﬁnal node, we can correctly sample its value before any
+backwards messages are sent. Once the value of the ﬁnal node is ﬁxed, we pass a conditional mes-
+sage backwards; that is, we send zeros for all values other than the one just selected. This results
+in condtional marginals at the penultimate node. We can then conditionally sample its value, and
+repeat this process until all nodes have been assigned. Furthermore, by applying the second-order
+semiring we are able to sample from a distribution quite different from that of a traditional graphical
+model. The algorithm is described in more detail in Appendix B of the supplementary material.
+
+(13)
+
+(14)
+
+5 Experiments
+
+We begin with a synthetic motion tracking task, where the goal is to follow a collection of particles as
+they travel in a one-dimensional space over time. This is the structured analog of the setting shown
+in Figure 1b, where elements of Y are no longer single positions in [0, 1], but are now sequences of
+such positions over many time periods. For our experiments, we modeled paths yi over T = 50 time
+steps, where at each time t a particle can be in one of 50 discretized positions, yit ∈ {1, . . . , 50}.
+The total number of possible trajectories is thus 5050 , and there are 25050 possible sets of trajectories.
+While a real tracking problem would involve quality scores q(y) that depend on some observations,
+q(y1 ) QT
+e.g., measurements over time from a set of physical sensors, for simplicity we determine the quality
+of a trajectory using only its starting position and a measure of smoothness over time: q(y) =
+t=2 q(yt−1 , yt ). The initial quality scores q(y1 ) depicted on the left of Figure 2 are high
+in the middle with secondary modes on each side. The transition quality is given by q(yt−1 , yt ) =
+f (yt−1 − yt ), where f is the density function of the zero-mean Gaussian with unit variance. We
+scale the quality scores so that the expected number of selected trajectories is 5.
+a 50-dimensional feature vector φ(y) = PT
+We want trajectories to be considered similar if they travel through similar positions, so we deﬁne
+t=1 φ(yt ) where φr (yt ) ∝ f (i − yt ) for r = 1, . . . , 50.
+Intuitively, feature r is activated when the trajectory passes near position r , so trajectories passing
+through nearby positions will activate the same features and thus appear similar.
+Figure 2 shows the results of applying our SDPP sampling algorithm to this setting. Sets of trajec-
+tories drawn independently according to quality score tend to cluster in the middle region (second
+
+6
+
+row). The SDPP samples, however, are more diverse, tending to cover more of the space while still
+respecting the quality scores—they are still smooth, and still tend to start near the middle position.
+
+Pose estimation
+
+To demonstrate that SDPPs effectively model characteristics of real-world data, we apply them to
+a multiple-person pose estimation task. Our dataset consists of 73 still frames taken from various
+TV shows, each approximately 720 by 540 pixels in size1 . As much as possible, the selected frames
+contain three or more people at similar scale, all facing the camera and without serious occlusions.
+Sample images from the dataset are shown in Figure 4. The task is to identify the location and pose
+of each person in the image. For our purposes, each pose is a structure containing four parts (head,
+torso, right arm, and left arm), each of which takes a value consisting of a pixel location and an
+orientation (one of 24 discretized angles). There are approximately 75,000 possible such values for
+each part, so there are about 475,000 possible poses. Each image was labeled by hand for evaluation.
+across the nodes (body parts) P and edges (joints) J as q(y) = γ (Q
+p∈P q(yp ) Q
+We use a standard pictorial strucure model [4, 5], treating each pose as a two-level tree with the torso
+as the root and the head and arms as leaves. Our quality scores are derived from [14]; they factorize
+pp0∈J q(yp , yp0 ))β .
+γ is a scale parameter that controls the expected number of poses in each sample, and β is a sharpness
+parameter that we found helpful in controlling the impact of the quality scores. (We set parameter
+values using a held-out training set; see below.) Each part receives a quality score q(yp ) given by
+a customized part detector previously trained on similar images. The joint quality score q(yp , yp0 )
+is given by a Gaussian “spring” that encourages, for example, the left arm to begin near the left
+shoulder. Full details of the quality terms are provided in [14].
+and use φ(y) = P
+Given our data, we want to discourage the model from selecting overlapping poses, so we design our
+similarity features spatially. We deﬁne an evenly spaced 8 by 4 grid of reference points x1 , . . . , x32 ,
+p∈P φ(yp ), where φr (yp ) ∝ f (kyp − xr k2 /σ). Recall that f is the standard
+normal density function, and kyp − xr k2 is the distance between the position of part p (ignoring
+angle) and the reference point xr . The parameter σ controls the width of the kernel. Poses that
+occupy the same part of the image will be near the same reference points, and thus appear similar.
+We compare our model against two baselines. The ﬁrst is an independent model which draws poses
+independently according to the distribution obtained by normalizing the quality scores. The second
+is a simple non-maxima suppression model that iteratively selects successive poses using the nor-
+malized quality scores, but under the hard constraint that they do not overlap with any previously
+selected pose. (Poses overlap if they cover any of the same pixels when rendered.) In both cases,
+the number of poses is given by a draw from the SDPP model, ensuring no systematic bias.
+We split our data randomly into a training set of 13 images and a test set of 60 images. Using the
+training set, we select values for γ , β , and σ that optimize overall F1 score at radius 100 (see below),
+as well as distinct optimal values of β for the baselines. (γ and σ are irrelevant for the baselines.)
+We then use each model to sample 10 sets of poses for each test image, or 600 samples per model.
+For each sample, we compute precision, recall, and F1 score. For our purposes, precision is the
+fraction of predicted parts where both endpoints are within a particular radius of the endpoints of
+an expert-labeled part of the same type (head, left arm, etc.). Correspondingly, recall is the fraction
+of expert-labeled parts within a given radius of a predicted part of the same type. Since our SDPP
+model encourages diversity, we expect to see improvements in recall at the expense of precision.
+F1 score is the harmonic mean of precision and recall. We compute all metrics separately for each
+sample, and then average the results across samples and images in the test set.
+The results over several different radii are shown in Figure 3a. At tight tolerances the SDPP performs
+comparably to the independent samples (perhaps because the quality scores are only accurate at the
+mode, so diverse samples are not close enough to be valuable). As the radius increases, however,
+the SDPP obtains signiﬁcantly better results, outperforming both baselines. Figure 3b shows the
+curves for the arms alone; the arms tend to be more difﬁcult to locate accurately. Figure 3c shows
+the precision/recall obtained by each model. As expected, the SDPP model achieves its improved
+F1 score by increasing recall at the cost of precision.
+
+1The images and code from [14] are available at http://www.vision.grasp.upenn.edu/video
+
+7
+
+(a)
+
+(b)
+
+(c)
+
+Figure 3: Results for pose estimation. The horizontal axis gives the distance threshold used to
+determine whether two parts are successfully matched. 95% conﬁdence intervals are shown.
+
+Figure 4: Structured marginals for the pose estimation task on successive steps of the sampling
+algorithm, with already selected poses superimposed. Input images are shown on the left.
+
+For illustration, we show the sampling process for a few images in Figure 4. As in Figure 1b, the
+SDPP efﬁciently discounts poses that are similar to those already selected.
+
+6 Conclusion
+
+We introduced the structured determinantal point process (SDPP), a probabilistic model over sets of
+structures such as sequences, trees, or graphs. We showed the intuitive “diversiﬁcation” properties
+of the SDPP, and developed efﬁcient message-passing algorithms to perform inference through a
+dual characterization of the standard DPP and a natural factorization.
+
+Acknowledgments
+
+The authors were partially supported by NSF Grant 0803256.
+
+8
+
+4060801001201400.10.20.30.40.50.6Match radius (in pixels)Overall F1  SDPPNon−maxIndep.4060801001201400.10.20.30.40.50.6Match radius (in pixels)Arms F14060801001201400.20.40.60.8Match radius (in pixels)Precision / recall (circles)References
+[1] A. Borodin. Determinantal point processes, 2009.
+Janossy densities. I. Determinantal ensembles. Journal of
+[2] A. Borodin and A. Soshnikov.
+Statistical Physics, 113(3):595–610, 2003.
+[3] D. Daley and D. Vere-Jones. An introduction to the theory of point processes: volume I:
+elementary theory and methods. Springer, 2003.
+[4] P. Felzenszwalb and D. Huttenlocher. Pictorial structures for object recognition. International
+Journal of Computer Vision, 61(1):55–79, 2005.
+[5] M. Fischler and R. Elschlager. The representation and matching of pictorial structures. IEEE
+Transactions on Computers, 100(22), 1973.
+[6] D. Forsyth and J. Ponce. Computer Vision: A Modern Approach. Prentice Hall, 2003.
+[7] J. Hough, M. Krishnapur, Y. Peres, and B. Vir ´ag. Determinantal processes and independence.
+Probability Surveys, 3:206–229, 2006.
+[8] D. Koller and N. Friedman. Probabilistic Graphical Models: Principles and Techniques. The
+MIT Press, 2009.
+[9] Z. Li and J. Eisner.
+First-and second-order expectation semirings with applications to
+minimum-risk training on translation forests. In Proc. EMNLP, 2009.
+[10] O. Macchi. The coincidence approach to stochastic point processes. Advances in Applied
+Probability, 7(1):83–122, 1975.
+[11] J. MacCormick and A. Blake. A probabilistic exclusion principle for tracking multiple objects.
+International Journal of Computer Vision, 39(1):57–71, 2000.
+[12] C. D. Manning and H. Sch ¨utze. Foundations of Statistical Natural Language Processing. MIT
+Press, Boston, MA, 1999.
+[13] T. Nilsen and B. Graveley. Expansion of the eukaryotic proteome by alternative splicing.
+Nature, 463(7280):457–463, 2010.
+In IEEE
+[14] B. Sapp, C. Jordan, and B. Taskar. Adaptive pose priors for pictorial structures.
+Computer Society Conference on Computer Vision and Pattern Recognition (CVPR’10), 2010.
+[15] T. Zhao and R. Nevatia. Tracking multiple humans in complex situations. IEEE Transactions
+on Pattern Analysis and Machine Intelligence, 26:1208–1221, 2004.
+
+9
+
+

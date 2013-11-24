@@ -1,0 +1,1299 @@
+Truly Nonparametric Online Variational Inference
+for Hierarchical Dirichlet Processes
+
+Michael Bryant and Erik B. Sudderth
+Department of Computer Science, Brown University, Providence, RI
+mbryantj@gmail.com, sudderth@cs.brown.edu
+
+Abstract
+
+Variational methods provide a computationally scalable alternative to Monte Carlo
+methods for large-scale, Bayesian nonparametric learning. In practice, however,
+conventional batch and online variational methods quickly become trapped in lo-
+cal optima. In this paper, we consider a nonparametric topic model based on the
+hierarchical Dirichlet process (HDP), and develop a novel online variational in-
+ference algorithm based on split-merge topic updates. We derive a simpler and
+faster variational approximation of the HDP, and show that by intelligently split-
+ting and merging components of the variational posterior, we can achieve substan-
+tially better predictions of test data than conventional online and batch variational
+algorithms. For streaming analysis of large datasets where batch analysis is in-
+feasible, we show that our split-merge updates better capture the nonparametric
+properties of the underlying model, allowing continual learning of new topics.
+
+1 Introduction
+
+Bayesian nonparametric methods provide an increasingly important framework for unsupervised
+learning from structured data. For example, the hierarchical Dirichlet process (HDP) [1] provides
+a general approach to joint clustering of grouped data, and leads to effective nonparametric topic
+models. While nonparametric methods are best motivated by their potential to capture the details
+of large datasets, practical applications have been limited by the poor computational scaling of
+conventional Monte Carlo learning algorithms.
+
+Mean ﬁeld variational methods provide an alternative, optimization-based framework for nonpara-
+metric learning [2, 3]. Aiming at larger-scale applications, recent work [4] has extended online
+variational methods [5] for the parametric, latent Dirichlet allocation (LDA) topic model [6] to the
+HDP. While this online approach can produce reasonable models of large data streams, we show that
+the variational posteriors of existing algorithms often converge to poor local optima. Multiple runs
+are usually necessary to show robust performance, reducing the desired computational gains. Fur-
+thermore, by applying a ﬁxed truncation to the number of posterior topics or clusters, conventional
+variational methods limit the ability of purportedly nonparametric models to fully adapt to the data.
+
+In this paper, we propose novel split-merge moves for online variational inference for the HDP
+(oHDP) which result in much better predictive performance. We validate our approach on two cor-
+pora, one with millions of documents. We also propose an alternative, direct assignment HDP repre-
+sentation which is faster and more accurate than the Chinese restaurant franchise representation used
+in prior work [4]. Additionally, the inclusion of split-merge moves during posterior inference allows
+us to dynamically vary the truncation level throughout learning. While conservative truncations can
+be theoretically justifed for batch analysis of ﬁxed-size datasets [2], our data-driven adaptation of
+the trunction level is far better suited to large-scale analysis of streaming data.
+
+Split-merge proposals have been previously investigated for Monte Carlo analysis of nonparametric
+models [7, 8, 9]. They have also been used for maximum likelihood and variational analysis of
+
+1
+
+α
+
+γ
+
+πj
+
+zjn
+
+wjn
+
+β
+
+η
+
+Nj D
+
+φk
+
+∞
+
+Figure 1: Directed graphical representation of a hierarchical Dirichlet process topic model, in which an un-
+bounded collection of topics φk model the Nj words in each of D documents. Topics occur with frequency πj
+in document j , and with frequency β across the full corpus.
+
+parametric models [10, 11, 12, 13]. These deterministic algorithms validate split-merge proposals
+by evaluating a batch objective on the entire dataset, an approach which is unexplored for nonpara-
+metric models and infeasible for online learning. We instead optimize the variational objective via
+stochastic gradient ascent, and split or merge based on only a noisy estimate of the variational lower
+bound. Over time, these local decisions lead to global estimates of the number of topics present in a
+given corpus. We review the HDP and conventional variational methods in Sec. 2, develop our novel
+split-merge procedure in Sec. 3, and evaluate on various document corpora in Sec. 4.
+
+2 Variational Inference for Bayesian Nonparametric Models
+
+2.1 Hierarchical Dirichlet processes
+
+The HDP is a hierarchical nonparametric prior for grouped mixed-membership data. In its simplest
+form, it consists of a top-level DP and a collection of D bottom-level DPs (indexed by j ) which
+share the top-level DP as their base measure:
+
+j = 1, . . . , D .
+
+Gj ∼ DP(αG0 ),
+G0 ∼ DP(γH ),
+Here, H is a base measure on some parameter space, and γ > 0, α > 0 are concentration parameters.
+Using a stick-breaking representation [1] of the global measure G0 , the HDP can be expressed as
+∞
+∞
+X
+X
+k=1
+k=1
+The global weights β are drawn from a stick-breaking distribution β ∼ GEM(γ ), and atoms are
+independently drawn as φk ∼ H . Each Gj shares atoms with the global measure G, and the lower-
+level weights are drawn πj ∼ DP(αβ ). For this direct assignment representation, the k indices for
+each Gj index directly into the global set of atoms. To complete the deﬁnition of the general HDP,
+parameters ψjn ∼ Gj are then drawn for each observation n in group j , and observations are drawn
+xjn ∼ F (ψjn ) for some likelihood family F . Note that ψjn = φzjn for some discrete indicator zjn .
+
+πjk δφk .
+
+G0 =
+
+βk δφk ,
+
+Gj =
+
+In this paper we focus on an application of the HDP to modeling document corpora. The top-
+ics φk ∼ Dirichlet(η) are distributions on a vocabulary of W words. The global topic weights,
+β ∼ GEM(γ ), are still drawn from a stick-breaking prior. For each document j , document-speciﬁc
+topic frequencies are drawn πj ∼ DP(αβ ). Then for each word index n in document j , a topic
+indicator is drawn zjn ∼ Categorical(πj ), and ﬁnally a word is drawn wjn ∼ Categorical(φzjn ).
+
+2.2 Batch Variational Inference for the HDP
+
+We use variational inference [14] to approximate the posterior of the latent variables (φ, β , π , z) —
+the topics, global topic weights, document-speciﬁc topic weights, and topic indicators, respectively
+— with a tractable distribution q , indexed by a set of free variational parameters. Appealing to mean
+ﬁeld methods, our variational distribution is fully factorized, and is of the form
+
+q(φ, β , π , z | λ, θ , ϕ) = q(β )
+
+∞
+Y
+k=1
+
+q(φk | λk )
+
+D
+Y
+j=1
+
+q(πj | θj )
+
+Nj
+Y
+n=1
+
+q(zjn | ϕjn ),
+
+(1)
+
+2
+
+where D is the number of documents in the corpus and Nj is the number of words in document j .
+Individual distributions are selected from appropriate exponential families:
+
+q(β ) = δβ ∗ (β )
+q(φk | λk ) = Dirichlet(φk | λk )
+q(πj | θj ) = Dirichlet(πj | θj )
+q(zjn ) = Categorical(zjn | ϕjn )
+where δβ ∗ (β ) denotes a degenerate distribution at the point β ∗ .1 In our update derivations below,
+we use ϕjw to denote the shared ϕjn for all word tokens in document j of type w.
+
+Selection of an appropriate truncation strategy is crucial to the accuracy of variational methods for
+nonparametric models. Here, we truncate the topic indicator distributions by ﬁxing q(zjn = k) = 0
+for k > K , where K is a threshold which varies dynamically in our later algorithms. With this
+assumption, the topic distributions with indices greater than K are conditionally independent of
+the observed data; we may thus ignore them and tractably update the remaining parameters with
+respect to the true, inﬁnite model. A similar truncation has been previously used in the context of an
+otherwise more complex collapsed variational method [3]. Desirably, this truncation is nested such
+that increasing K always gives potentially improved bounds, but does not require the computation
+of inﬁnite sums, as in [16]. In contrast, approximations based on truncations of the stick-breaking
+topic frequency prior [2, 4] are not nested, and their artifactual placement of extra mass on the ﬁnal
+topic K is less suitable for our split-merge online variational inference.
+
+Via standard convexity arguments [14], we lower bound the marginal log likelihood of the observed
+data using the expected complete-data log likelihood and the entropy of the variational distribution,
+L(q) def= Eq [log p(φ, β , π , z, w | α, γ , η)] − Eq [log q(φ, π , z | λ, θ , ϕ)]
+= Eq [log p(w | z, φ)] + Eq [log p(z | π )] + Eq [log p(π | αβ )] + Eq [log p(φ | η)]
++ Eq [log p(β | γ )] − Eq [log q(z | ϕ)] − Eq [log q(π | θ )] − Eq [log q(φ | λ)]
+
+=
+
+D
+X
+j=1
+
+nEq [log p(wj | zj , φ)] + Eq [log p(zj | πj )] + Eq [log p(πj | αβ )] − Eq [log q(zj | ϕj )]
+
+− Eq [log q(πj | θj )] +
+
+1
+D (cid:16)Eq [log p(φ | η)] + Eq [log p(β | γ )] − Eq [log q(φ | λ)](cid:17)o,
+and maximize this quantity by coordinate ascent on the variational parameters. The expectations
+are with respect to the variational distribution. Each expectation is dependent on only a subset
+of the variational parameters; we leave off particular subscripts for notational clarity. Note that
+the expansion of the variational lower bound in (2) contains all terms inside a summation over
+documents. This is the key observation that allowed [5] to develop an online inference algorithm
+for LDA. A full expansion of the variational objective is given in the supplemental material. Taking
+derivatives of L(q) with respect to each of the variational parameters yields the following updates:
+
+(2)
+
+(3)
+
+ϕjwk ∝ exp {Eq [log φkw ] + Eq [log πjk ]}
+θjk ← αβk + PW
+w=1 nw(j)ϕjwk
+λkw ← η + PD
+j=1 nw(j)ϕjwk ,
+Here, nw(j) is the number of times word w appears in document j . The expectations in (3) are
+Eq [log πjk ] = Ψ(θjk ) − Ψ(Pi θj i ),
+Eq [log φkw ] = Ψ(λkw ) − Ψ(Pi λki ),
+where Ψ(x) is the digamma function, the ﬁrst derivative of the log of the gamma function.
+In evaluating our objective, we represent β ∗ as a (K + 1)-dim. vector containing the probabilities
+of the ﬁrst K topics, and the total mass of all other topics. While β ∗ cannot be optimized in closed
+form, it can be updated via gradient-based methods; we use a variant of L-BFGS. Drawing a par-
+allel between variational inference and the expectation maximization (EM) algorithm, we label the
+document-speciﬁc updates of (ϕj , θj ) the E-step, and the corpus-wide updates of (λ, β ) the M-step.
+
+(4)
+
+(5)
+
+1We expect β to have small posterior variance in large datasets, and using a point estimate β ∗ simpliﬁes
+variational derivations for our direct assignment formulation. As empirically explored for the HDP-PCFG [15],
+updates to the global topic weights have much less predictive impact than improvements to topic distributions.
+
+3
+
+2.3 Online Variational Inference
+
+Batch variational inference requires a full pass through the data at each iteration, making it compu-
+tationally infeasible for large datasets and impossible for streaming data. To remedy this, we adapt
+and improve recent work on online variational inference algorithms [4, 5].
+
+The form of the lower bound in (2), as a scaled expectation with respect to the document collec-
+tion, suggests an online learning algorithm. Given a learning rate ρt satisfying P∞
+t=0 ρt = ∞ and
+P∞
+t=0 ρ2
+t < ∞, we can optimize the variational objective stochastically. Each update begins by
+sampling a “mini-batch” of documents S , of size |S |. After updating the mini-batch of document-
+speciﬁc parameters (ϕj , θj ) by iterating (3,4), we update the corpus-wide parameters as
+λkw ← (1 − ρt )λkw + ρt ˆλkw ,
+k + ρt ˆβk ,
+β ∗
+k ← (1 − ρt )β ∗
+where ˆλkw is a set of sufﬁcient statistics for topic k , computed from a noisy estimate of (5):
+D
+|S | X
+j∈S
+
+ˆλkw = η +
+
+nw(j)ϕjwk .
+
+(6)
+
+(7)
+
+(8)
+
+The candidate topic weights ˆβ are found via gradient-based optimization on S . The resulting infer-
+ence algorithm is similar to conventional batch methods, but is applicable to streaming, big data.
+
+3 Split-Merge Updates for Online Variational Inference
+
+We develop a data-driven split-merge algorithm for online variational inference for the HDP, re-
+ferred to as oHDP-SM. The algorithm dynamically expands and contracts the truncation level K by
+splitting and merging topics during specialized moves which are interleaved with standard online
+variational updates. The resulting model truly allows the number of topics to grow with the data. As
+such, we do not have to employ the technique of [4, 3] and other truncated variational approaches of
+setting K above the expected number of topics and relying on the inference to infer a smaller num-
+ber. Instead, we initialize with small K and let the inference discover new topics as it progresses,
+similar to the approach used in [17]. One can see how this property would be desirable in an online
+setting, as documents seen after many inference steps may still create new topics.
+
+3.1 Split: Creation of New Topics
+
+Given the result of analyzing one mini-batch q∗ = (cid:8)(ϕj , θj )|S |
+j=1 , λ, β ∗ (cid:9), and the corresponding
+value of the lower bound L(q∗ ), we consider splitting topic k into two topics k ′ , k ′′ .2 The split
+procedure proceeds as follows: (1) initialize all variational posteriors to break symmetry between
+the new topics, using information from the data; (2) reﬁne the new variational posteriors using a
+restricted iteration; (3) accept or reject the split via the change in variational objective value.
+
+Initialize new variational posteriors To break symmetry, we initialize the new topic posteriors
+(λk′ , λk′′ ), and topic weights (β ∗
+k′ , β ∗
+k′′ ), using sufﬁcient statistics from the previous iteration:
+λk′′ = ρt ˆλk ,
+λk′ = (1 − ρt )λk ,
+k′′ = ρt ˆβk .
+β ∗
+β ∗
+k′ = (1 − ρt )β ∗
+k ,
+Intuitively, we expect the sufﬁcient statistics to provide insight into how a topic was actually used
+during the E-step. The minibatch-speciﬁc parameters {ϕj , θj }|S |
+j=1 are then initialized as follows,
+
+ϕjwk′ = ωkϕjwk ,
+θjk′ = ωk θjk ,
+
+ϕjwk′′ = (1 − ωk )ϕjwk ,
+θjk′′ = (1 − ωk )θjk ,
+
+with the weights deﬁned as ωk = βk′ /(βk′ + βk′′ ).
+
+2Technically, we replace topic k with topic k ′ and add k ′′ as a new topic. In practice, we found that the
+order of topics in the global stick-breaking distribution had little effect on overall algorithm performance.
+
+4
+
+Algorithm 1 Restricted iteration
+1: initialize (λℓ , βℓ ) for ℓ ∈ {k ′ , k ′′}
+2: for j ∈ S do
+initialize (ϕj , θj ) for ℓ ∈ {k ′ , k ′′}
+3:
+while not converged do
+4:
+update (ϕj , θj ) for ℓ ∈ {k ′ , k ′′} using (3, 4)
+5:
+end while
+6:
+update (λℓ , βℓ ) for ℓ ∈ {k ′ , k ′′} using (6, 7)
+7:
+8: end for
+
+Restricted iteration After initializing the variational parameters for the new topics, we update
+them through a restricted iteration of online variational inference. The restricted iteration consists
+of restricted analogues to both the E-step and the M-step, where all parameters except those for the
+new topics are held constant. This procedure is similar to, and inspired by, the “partial E-step” for
+split-merge EM [10] and restricted Gibbs updates for split-merge MCMC methods [7].
+
+All values of ϕjwℓ and θjℓ , ℓ /∈ {k ′ , k ′′}, remain unchanged. It is important to note that even though
+these values are not updated, they are still used in the calculations for both the variational expectation
+of πj and the normalization of ϕ. In particular,
+
+ϕjwk′ =
+
+exp {Eq [log φk′w ] + Eq [log πjk′ ]}
+Pℓ∈T exp {Eq [log φℓw ] + Eq [log πjℓ ]}
+Eq [log πjk′ ] = Ψ(θjk′ ) − Ψ(Pk∈T θjk ),
+where T is the original set of topics, minus k , plus k ′ and k ′′ . The expected log word probabilities
+Eq [log φk′ w ] and Eq [log φk′′ w ] are computed using the newly updated λ values.
+
+,
+
+Evaluate Split Quality Let ϕsplit for minibatch S be ϕ as deﬁned above, but with ϕjwk replaced
+by the ϕjwk′ and ϕjwk′′ learned in the restricted E-step. Let θ split , λsplit and β ∗
+split be deﬁned similarly.
+Now we have a new model state q split(k) = (cid:8)(ϕsplit , θ split )|S |
+j=1 , λsplit , β ∗
+split(cid:9). We calculate L(cid:0)q split(k) (cid:1),
+and if L(cid:0)q split(k) (cid:1) > L(q∗ ), we update the new model state q∗ ← q split(k) , accepting the split. If
+L(cid:0)q split(k) (cid:1) < L(q∗ ), then we go back and test another split, until all splits are tested. In practice we
+limit the maximum number of allowed splits each iteration to a small constant. If we wish to allow
+the model to expand the number of topics more quickly, we can increase this number. Finally, it is
+important to note that all aspects of the split procedure are driven by the data — the new topics are
+initialized using data-driven proposals, reﬁned by re-running the variational E-step, and accepted
+based on an unbiased estimate of the change in the variational objective.
+
+3.2 Merge: Removal of Redundant Topics
+
+Consider a candidate merge of two topics, k ′ and k ′′ , into a new topic k . For batch variational meth-
+ods, it is straightforward to determine whether such a merge will increase or decrease the variational
+objective by combining all parameters for all documents,
+
+ϕjwk = ϕjwk′ + ϕjwk′′ ,
+
+θjk = θjk′ + θjk′′ ,
+
+βk = βk′ + βk′′ ,
+
+λk = λk′ + λk′′ ,
+
+and computing the difference in the variational objective before and after the merge. Because many
+terms cancel, computing this bound change is fairly computationally inexpensive, but it can still be
+computationally infeasible to consider all pairs of topics for large K . Instead, we identify potential
+merge candidates by looking at the sample covariance of the θj vectors across the corpus (or mini-
+batch). Topics with positive covariance above a certain threshold have the quantitative effects of
+their merge evaluated. Intuitively, if there are two copies of a topic or a topic is split into two pieces,
+they should tend to be used together, and therefore have positive covariance. For consistency in
+notation, we call the model state with topics k ′ and k ′′ merged qmerge(k′ ,k′′ ) .
+
+Combining this merge procedure with the previous split proposals leads to the online variational
+method of Algorithm 2. In an online setting, we can only compute unbiased noisy estimates of the
+true difference in the variational objective; split or merge moves that increase the expected varia-
+tional objective are not guaranteed to do so for the objective evaluated over the entire corpus. The
+
+5
+
+Algorithm 2 Online variational inference for the HDP + split-merge
+1: initialize (λ, β ∗ )
+2: for t = 1, 2, . . . do
+for j ∈ minibatch S do
+3:
+initialize (ϕj , θj )
+4:
+while not converged do
+5:
+update (ϕj , θj ) using (3, 4)
+6:
+end while
+7:
+end for
+8:
+for pairs of topics {k ′ , k ′′} ∈ K × K with Cov(θjk′ , θjk′′ ) > 0 do
+9:
+if L(cid:0)qmerge(k′ ,k′′ ) (cid:1) > L(q) then
+q ← qmerge(k′ ,k′′ )
+end if
+end for
+update (λ, β ∗ ) using (6, 7)
+for k = 1, 2, . . . , K do
+compute L(cid:0)q split(k) (cid:1) via restricted iteration
+if L(cid:0)q split(k) (cid:1) > L(q) then
+q ← q split(k)
+18:
+end if
+19:
+end for
+20:
+21: end for
+
+11:
+12:
+13:
+14:
+15:
+16:
+
+10:
+
+17:
+
+uncertainty associated with the online method can be mitigated to some extent by using large mini-
+batches. Conﬁdence intervals for the expected change in the variational objective can be computed,
+and might be useful in a more sophisticated acceptance rule. Note that our usage of a nested family
+of variational bounds is key to the accuracy and stability of our split-merge acceptance rules.
+
+4 Experimental Results
+
+To demonstrate the effectiveness of our split-merge moves, we compare three algorithms: batch
+variational inference (bHDP), online variational inference without split-merge (oHDP), and online
+variational inference with split-merge (oHDP-SM). On the NIPS corpus we also compare these
+three methods to collapsed Gibbs sampling (CGS) and the CRF-style oHDP model (oHDP-CRF)
+proposed by [4].3 We test the models on one synthetic and two real datasets:
+Bars A 20-topic bars dataset of the type introduced in [18], where topics can be viewed as bars on
+a 10 × 10 grid. The vocabulary size is 100, with a training set of 2000 documents and a test set of
+200 documents, 250 words per document.
+NIPS 1,740 documents from the Neural Information Processing Systems conference proceedings,
+1988-2000. The vocabulary size is 13,649, and there are 2.3 million tokens in total. We randomly
+divide the corpus into a 1,392-document training set and a 348-document test set.
+New York Times The New York Times Annotated Corpus4 consists of over 1.8 million articles
+appearing in the New York Times between 1987 and 2007. The vocabulary is pruned to 8,000 words.
+We hold out a randomly selected subset of 5,000 test documents, and use the remainder for training.
+
+All values of K given for oHDP-SM models are initial values — the actual truncation levels ﬂuctuate
+during inference. While the truncation level K is different from the actual number of topics assigned
+non-negligible mass, the split-merge model tends to merge away unused topics, so these numbers
+are usually fairly close. Hyperparameters are initialized to consistent values across all algorithms
+and datasets, and learned via Newton-Raphson updates (or in the case of CGS, resampled). We use
+a constant learning rate across all online algorithms. As suggested by [4], we set ρt = (τ + t)−κ
+where τ = 1, κ = 0.5. Empirically, we found that slower learning rates could result in greatly
+reduced performance, across all models and datasets.
+
+3For CGS we use the code available at http://www.gatsby.ucl.ac.uk/∼ywteh/research/npbayes/npbayes-
+r21.tgz, and for oHDP-CRF we use the code at http://www.cs.princeton.edu/∼chongw/software/onlinehdp.tar.gz.
+4 http://www.ldc.upenn.edu/Catalog/catalogEntry.jsp?catalogId=LDC2008T19
+
+6
+
+To compare algorithm performance, we use per-word heldout likelihood, similarly to the metrics
+of [3, 19, 4]. We randomly split each test document in D test into 80%-20% pieces, wj1 and wj2 .
+Then, using ¯φ as the variational expectation of the topics from training, we learn ¯πj on wj1 and
+approximate the probability of wj2 as Qw∈wj2 Pk ¯πjk ¯φkw . The overall test metric is then
+E = Pj∈D test Pw∈wj2 log (cid:0)Pk ¯πjk ¯φkw (cid:1)
+Pj∈D test |wj2 |
+
+4.1 Bars
+
+For the bars data, we initialize eight oHDP-SM runs with K = {2, 5, 10, 20, 40, 50, 80, 100}, eight
+runs of oHDP with K = 20, and eight runs with K = 50. As seen in Figure 2(a), the oHDP
+algorithm converges to local optima, while the oHDP-SM runs all converge to the global optimum.
+More importantly, all split-merge methods converge to the correct number of topics, while oHDP
+uses either too few or too many topics. Note that the data-driven split-merge procedure allows
+splitting and merging of topics to mostly cease once the inference has converged (Figure 2(d)).
+
+4.2 NIPS
+
+We compare oHDP-SM, oHDP, bHDP, oHDP-CRF, and CGS in Figure 2. Shown are two runs of
+oHDP-SM with K = {100, 300}, two runs each of oHDP and bHDP with K = {300, 1000}, and
+one run each of oHDP-CRF and CGS with K = 300. All the runs displayed are the best runs from a
+larger sample of trials. Since oHDP and bHDP will use only a subset of topics under the truncation,
+setting K much higher results in comparable numbers of topics as oHDP-SM. We set |S | = 200 for
+the online algorithms, and run all methods for approximately 40 hours of CPU time.
+
+The non split-merge methods reach poor local optima relatively quickly, while the split-merge al-
+gorithms continue to improve. Notably, both oHDP-CRF and CGS perform much worse than any
+of our methods. It appears that the CRF model performs very poorly for small datasets, and CGS
+reaches a mode quickly but does not mix between modes. Even though the split-merge algorithms
+improve in part by adding topics, they are using their topics much more effectively (Figure 2(h)).
+We speculate that for the NIPS corpus especially, the reason that models achieve better predictive
+likelihoods with more topics is due to the bursty properties of text data [20]. Figure 3 illustrates the
+topic reﬁnement and specialization which occurs in successful split proposals.
+
+4.3 New York Times
+
+As batch variational methods and samplers are not feasible for such a large dataset, we compare
+two runs of oHDP with K = {300, 500} to a run of oHDP-SM with K = 200 initial topics. We
+also use a larger minibatch size of |S | = 10,000; split-merge acceptance decisions can sometimes
+be unstable with overly small minibatches. Figure 2(c) shows an inherent problem with oHDP for
+very large datasets — when truncated to K = 500, the algorithms uses all of its available topics and
+exhibits overﬁtting. For the oHDP-SM, however, predictive likelihood improves over a substantially
+longer period and overﬁtting is greatly reduced.
+
+5 Discussion
+
+We have developed a novel split-merge online variational algorithm for the hierarchical DP. This
+approach leads to more accurate models and better predictive performance, as well as a model that
+is able to adapt the number of topics more freely than conventional approximations based on ﬁxed
+truncations. Our moves are similar in spirit to split-merge samplers, but by evaluating their quality
+stochastically using streaming data, we can rapidly adapt model structure to large-scale datasets.
+
+While many papers have tried to improve conventional mean ﬁeld methods via higher-order vari-
+ational expansions [21], local optima can make the resulting algorithms compare unfavorably to
+Monte Carlo methods [3]. Here we pursue the complementary goal of more robust, scalable op-
+timization of simple variational objectives. Generalization of our approach to more complex hier-
+archies of DPs, or basic DP mixtures, is feasible. We believe similar online learning methods will
+prove effective for the combinatorial structures of other Bayesian nonparametric models.
+
+Acknowledgments We thank Dae Il Kim for his assistance with the experimental results.
+
+7
+
+−2.5
+
+−3
+
+−3.5
+
+−4
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+l
+ 
+d
+r
+o
+w
+−
+r
+e
+p
+
+Bars
+
+ 
+
+oHDP−SM
+oHDP, K=50
+oHDP, K=20
+
+−7.4
+
+−7.5
+
+−7.6
+
+−7.7
+
+−7.8
+
+−7.9
+
+−8
+
+−8.1
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+l
+ 
+d
+r
+o
+w
+−
+r
+e
+p
+
+NIPS
+
+ 
+
+ 
+
+New York Times
+
+−7.56
+
+−7.58
+
+−7.6
+
+−7.62
+
+−7.64
+
+−7.66
+
+−7.68
+
+−7.7
+
+−7.72
+
+−7.74
+
+−7.76
+
+−7.78
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+l
+ 
+d
+r
+o
+w
+−
+r
+e
+p
+
+oHDP−SM, K=100
+oHDP−SM, K=300
+oHDP, K=300
+oHDP, K=1000
+bHDP, K=300
+bHDP, K=1000
+oHDP−CRF, K=300
+CGS, K=300
+
+oHDP, K=300
+oHDP, K=500
+oHDP−SM, K=200
+
+−4.5
+ 
+0
+
+50
+
+100
+
+150
+
+200
+iteration
+
+(a)
+
+250
+
+300
+
+350
+
+400
+
+ 
+0
+
+2.5
+
+5
+
+7.5
+documents seen
+
+10
+
+12.5
+
+15
+5
+x 10
+
+−7.8
+ 
+0
+
+0.5
+
+1
+
+1.5
+2.5
+2
+documents seen
+
+3
+
+3.5
+
+4
+6
+x 10
+
+(b)
+
+(c)
+
+80
+
+70
+
+60
+
+50
+
+40
+
+30
+
+20
+
+10
+
+d
+e
+s
+u
+ 
+s
+c
+i
+p
+o
+t
+ 
+#
+
+oHDP−SM, K=2,100
+oHDP, K=50
+oHDP, K=20
+
+ 
+
+600
+
+d
+e
+s
+u
+ 
+s
+c
+i
+p
+o
+t
+ 
+#
+
+500
+
+400
+
+300
+
+200
+
+100
+
+550
+
+500
+
+450
+
+400
+
+350
+
+300
+
+250
+
+200
+
+d
+e
+s
+u
+ 
+s
+c
+i
+p
+o
+t
+ 
+#
+
+0
+ 
+0
+
+50
+
+100
+iteration
+
+(d)
+
+150
+
+200
+
+0
+0
+
+2.5
+
+5
+
+7.5
+documents seen
+
+10
+
+12.5
+
+15
+5
+x 10
+
+150
+0
+
+0.5
+
+1
+
+1.5
+2.5
+2
+documents seen
+
+3
+
+3.5
+
+4
+6
+x 10
+
+(e)
+
+(f)
+
+−2.5
+
+−3
+
+−3.5
+
+−4
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+l
+ 
+d
+r
+o
+w
+−
+r
+e
+p
+
+−7.4
+
+−7.5
+
+−7.6
+
+−7.7
+
+−7.8
+
+−7.9
+
+−8
+
+−8.1
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+l
+ 
+d
+r
+o
+w
+−
+r
+e
+p
+
+−7.56
+
+−7.58
+
+−7.6
+
+−7.62
+
+−7.64
+
+−7.66
+
+−7.68
+
+−7.7
+
+−7.72
+
+−7.74
+
+−7.76
+
+−7.78
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+l
+ 
+d
+r
+o
+w
+−
+r
+e
+p
+
+−4.5
+0
+
+10
+
+20
+
+30
+
+40
+# topics used
+
+50
+
+60
+
+70
+
+80
+
+0
+
+100
+
+200
+
+300
+# topics used
+
+400
+
+500
+
+600
+
+−7.8
+150
+
+200
+
+250
+
+300
+400
+350
+# topics used
+
+450
+
+500
+
+550
+
+(g)
+(h)
+(i)
+Figure 2: Trace plots of heldout likelihood and number of topics used. Across all datasets, common color
+indicates common algorithm, while for NIPS and New York Times, line type indicates different initializations.
+Top: Test log likelihood for each dataset. Middle: Number of topics used per iteration. Bottom: A plot of
+per-word log likelihood against number of topics used. Note particularly plot (h), where for every cardinality
+of used topics shown, there is a split-merge method outperforming a conventional method.
+
+Original topic
+
+patterns
+pattern
+cortex
+neurons
+neuronal
+single
+responses
+inputs
+type
+activation
+
+40,000
+patterns
+pattern
+cortex
+neurons
+neuronal
+responses
+single
+inputs
+temporal
+activation
+patterns
+neuronal
+pattern
+neurons
+cortex
+inputs
+activation
+type
+preferred
+peak
+
+80,000
+patterns
+pattern
+cortex
+neurons
+neuronal
+responses
+single
+temporal
+inputs
+type
+neuronal
+patterns
+pattern
+neurons
+cortex
+activation
+dendrite
+inputs
+peak
+preferred
+
+120,000
+patterns
+pattern
+cortex
+neurons
+responses
+neuronal
+single
+type
+number
+temporal
+neuronal
+neurons
+activation
+cortex
+dendrite
+preferred
+patterns
+peak
+pyramidal
+inputs
+
+160,000
+patterns
+pattern
+cortex
+neurons
+responses
+type
+behavioral
+types
+neuronal
+single
+neuronal
+dendritic
+peak
+activation
+cortex
+pyramidal
+msec
+ﬁre
+dendrites
+inputs
+
+200,000
+patterns
+pattern
+cortex
+neurons
+responses
+type
+behavioral
+types
+form
+neuronal
+neuronal
+dendritic
+ﬁre
+peak
+activation
+msec
+pyramidal
+cortex
+postsynaptic
+inputs
+
+240,000
+patterns
+pattern
+cortex
+responses
+types
+type
+behavioral
+form
+neurons
+areas
+neuronal
+dendritic
+postsynaptic
+ﬁre
+cortex
+activation
+peak
+msec
+pyramidal
+inputs
+
+Figure 3: The evolution of a split topic. The left column shows the topic directly prior to the split. After
+240,000 more documents have been analyzed, subtle differences become apparent: the top topic covers terms
+relating to general neuronal behavior, while the bottom topic deals more speciﬁcally with neuron ﬁring.
+
+8
+
+References
+
+[1] Y.W. Teh, M. Jordan, and M. Beal. Hierarchical Dirichlet processes. JASA, 2006.
+
+[2] D. Blei and M. Jordan. Variational methods for Dirichlet process mixtures. Bayesian Analysis, 1:121–144,
+2005.
+
+[3] Y.W. Teh, K. Kurihara, and M. Welling. Collapsed variational inference for HDP. NIPS, 2008.
+
+[4] C. Wang, J. Paisley, and D. Blei. Online variational inference for the hierarchical Dirichlet process.
+AISTATS, 2011.
+
+[5] M. Hoffman, D. Blei, and F. Bach. Online learning for latent Dirichlet allocation. NIPS, 2010.
+
+[6] D. Blei, A. Ng, and M. Jordan. Latent Dirichlet allocation. JMLR, 2003.
+
+[7] S. Jain and R. Neal. A split-merge Markov chain Monte Carlo procedure for the Dirichlet process mixture
+model. Journal of Computational and Graphical Statistics, 13:158–182, 2004.
+
+[8] D.B. Dahl. Sequentially-allocated merge-split sampler for conjugate and nonconjugate Dirichlet process
+mixture models. Technical report, Texas A&M University, 2005.
+
+[9] C. Wang and D. Blei. A split-merge MCMC algorithm for the hierarchical Dirichlet process. ArXiv
+e-prints, January 2012.
+
+[10] N. Ueda, R. Nakano, Z. Ghahramani, and G. Hinton. SMEM algorithm for mixture models. Neural
+Computation, 2000.
+
+[11] K. Kurihara and M. Welling. Bayesian K-means as a ’Maximization-Expectation’ algorithm. SIAM
+conference on data mining SDM06, 2006.
+
+[12] N. Ueda and Z. Ghahramani. Bayesian model search for mixture models based on optimizing variational
+bounds. Neural Networks, 15, 2002.
+
+[13] Z. Ghahramani and M. Beal. Variational inference for Bayesian mixtures of factor analysers. NIPS, 2000.
+
+[14] M. Jordan, Z. Ghahramani, T. Jaakkola, and L. Saul. Introduction to variational methods for graphical
+models. Machine Learning, 1999.
+
+[15] P. Liang, S. Petrov, D. Klein, and M. Jordan. The inﬁnite PCFG using hierarchical Dirichlet processes.
+Empirical Methods in Natural Language Processing, 2007.
+
+[16] K. Kurihara, M. Welling, and N. Vlassis. Accelerated variational Dirichlet process mixtures. NIPS, 2007.
+
+[17] D. Blei and C. Wang. Variational inference for the nested Chinese restaurant process. NIPS, 2009.
+
+[18] T. L. Grifﬁths and M. Steyvers. Finding scientiﬁc topics. PNAS, 101:5228–5235, 2004.
+
+[19] A. Asuncion, M. Welling, P. Smyth, and Y.W. Teh. On smoothing and inference for topic models. UAI,
+2009.
+
+[20] G. Doyle and C. Elkan. Accounting for word burstiness in topic models. ICML, 2009.
+
+[21] M. J. Wainwright and M. I. Jordan. Graphical models, exponential families, and variational inference.
+Foundations and Trends in Machine Learning, 1:1–305, 2008.
+
+9
+
+

@@ -1,0 +1,785 @@
+Adaptive Stratiﬁed Sampling for Monte-Carlo
+integration of Differentiable functions
+
+Alexandra Carpentier
+Statistical Laboratory, CMS
+Wilberforce Road, Cambridge
+CB3 0WB UK
+a.carpentier@statslab.cam.ac.uk
+
+R ´emi Munos
+INRIA Lille - Nord Europe
+40, avenue Halley
+59000 Villeneuve d’ascq, France
+remi.munos@inria.fr
+
+Abstract
+
+We consider the problem of adaptive stratiﬁed sampling for Monte Carlo integra-
+tion of a differentiable function given a ﬁnite number of evaluations to the func-
+tion. We construct a sampling scheme that samples more often in regions where
+the function oscillates more, while allocating the samples such that they are well
+spread on the domain (this notion shares similitude with low discrepancy). We
+prove that the estimate returned by the algorithm is almost similarly accurate as
+the estimate that an optimal oracle strategy (that would know the variations of the
+function everywhere) would return, and provide a ﬁnite-sample analysis.
+
+1
+Introduction
+In this paper we consider the problem of numerical integration of a differentiable function f :
+[0, 1]d → R given a ﬁnite budget n of evaluations to the function that can be allocated sequentially.
+A usual technique for reducing the mean squared error (w.r.t. the integral of f ) of a Monte-Carlo es-
+timate is the so-called stratiﬁed Monte Carlo sampling, which considers sampling into a set of strata,
+or regions of the domain, that form a partition, i.e. a stratiﬁcation, of the domain (see [10][Subsection
+5.5] or [6]). It is efﬁcient (up to rounding issues) to stratify the domain, since when allocating to
+each stratum a number of samples proportional to its measure, the mean squared error of the result-
+ing estimate is always smaller or equal to the one of the crude Monte-Carlo estimate (that samples
+uniformly the domain).
+Since the considered functions are differentiable, if the domain is stratiﬁed in K hyper-cubic strata of
+same measure and if one assigns uniformly at random n/K samples per stratum, the mean squared
+error of the resulting stratiﬁed estimate is in O(n−1K −2/d ). We deduce that if the stratiﬁcation
+is built independently of the samples (before collecting the samples), and if n is known from the
+beginning (which is assumed here), the minimax-optimal choice for the stratiﬁcation is to build n
+strata of same measure and minimal diameter, and to assign only one sample per stratum uniformly
+at random. We refer to this sampling technique as Uniform stratiﬁed Monte-Carlo. The resulting
+estimate has a mean squared error of order O(n−(1+2/d) ). The arguments that advocate for strati-
+fying in strata of same measure and minimal diameter are closely linked to the reasons why quasi
+Monte-Carlo methods, or low discrepancy sampling schemes are efﬁcient techniques for integrating
+smooth functions. See [9] for a survey on these techniques.
+It is minimax-optimal to stratify the domain in n strata and sample one point per stratum, but it
+would also be interesting to adapt the stratiﬁcation of the space with respect to the function f . For
+example, if the function has larger variations in a region of the domain, we would like to discretize
+the domain in smaller strata in this region, so that more samples are assigned to this region. Since
+f is initially unknown, it is not possible to design a good stratiﬁcation before sampling. However
+an efﬁcient algorithm should allocate the samples in order to estimate online the variations of the
+
+1
+
+function in each region of the domain while, at the same time, allocating more samples in regions
+where f has larger local variations.
+The papers [5, 7, 3] provide algorithms for solving a similar trade-off when the stratiﬁcation is ﬁxed:
+these algorithms allocate more samples to strata in which the function has larger variations. It is,
+however, clear that the larger the number of strata, the more difﬁcult it is to allocate the samples
+almost optimally in the strata.
+Contributions: We propose a new algorithm, Lipschitz Monte-Carlo Upper Conﬁdence Bound
+(LMC-UCB), for tackling this problem. It is a two-layered algorithm. It ﬁrst stratiﬁes the domain
+in K � n strata, and then allocates uniformly to each stratum an initial small amount of samples
+in order to estimate roughly the variations of the function per stratum. Then our algorithm sub-
+stratiﬁes each of the K strata according to the estimated local variations, so that there are in total
+approximately n sub-strata, and allocates one point per sub-stratum. In that way, our algorithm
+discretizes the domain into more reﬁned strata in regions where the function has higher variations.
+It cumulates the advantages of quasi Monte-Carlo and adaptive strategies.
+More precisely, our contributions are the following:
+• We prove an asymptotic lower bound on the mean squared error of the estimate returned by
+an optimal oracle strategy that has access to the variations of the function f everywhere and
+would use the best stratiﬁcation of the domain with hyper-cubes (possibly of heterogeneous
+sizes). This quantity, since this is a lower-bound on any oracle strategies, is smaller than
+the mean squared error of the estimate provided by Uniform stratiﬁed Monte-Carlo (which
+is the non-adaptive minimax-optimal strategy on the class of differentiable functions), and
+also smaller than crude Monte-Carlo.
+• We introduce the algorithm LMC-UCB, that sub-stratiﬁes the K strata in hyper-cubic sub-
+strata, and samples one point per sub-stratum. The number of sub-strata per stratum is
+linked to the variations of the function in the stratum. We prove that algorithm LMC-UCB
+is asymptotically as efﬁcient as the optimal oracle strategy. We also provide ﬁnite-time
+results when f admits a Taylor expansion of order 2 in every point. By tuning the number
+of strata K wisely, it is possible to build an algorithm that is almost as efﬁcient as the
+optimal oracle strategy.
+
+The paper is organized as follows. Section 2 deﬁnes the notations used throughout the paper. Sec-
+tion 3 states the asymptotic lower bound on the mean squared error of the optimal oracle strategy.
+In this Section, we also provide an intuition on how the number of samples into each stratum should
+be linked to the variation of the function in the stratum in order for the mean squared error of the
+estimate to be small. Section 4 presents the algorithm LMC-UCB and the ﬁrst Lemma on how many
+sub-strata are built in the initial strata. Section 5 ﬁnally states that the algorithm LMC-UCB is al-
+most as efﬁcient as the optimal oracle strategy. We ﬁnally conclude the paper. Due to the lack of
+space, we also provide experiments and proofs in the Supplementary Material (see also [2]).
+
+2 Setting
+We consider a function f : [0, 1]d → R. We want to estimate as accurately as possible its integral
+according to the Lebesgue measure, i.e. �[0,1]d f (x)dx. In order to do that, we consider algorithms
+that stratify the domain in two layers of strata, one more reﬁned than the other. The strata of the
+reﬁned layer are referred to as sub-strata, and we sample in the sub-strata. We will compare the
+performances of the algorithms we construct, with the performances of the optimal oracle algorithm
+that has access to the variations ||∇f (x)||2 of the function f everywhere in the domain, and is
+allowed to sample the domain where it wishes.
+The ﬁrst step is to partition the domain [0, 1]d in K measurable strata. In this paper, we assume
+that K 1/d is an integer1 . This enables us to partition, in a natural way, the domain in K hyper-cubic
+strata (Ωk )k≤K of same measure wk = 1
+K . Each of these strata is a region of the domain [0, 1]d ,
+wk �Ωk
+f (x)dx the mean and
+and the K strata form a partition of the domain. We write µk = 1
+wk �Ωk �f (x) − µk �2
+dx the variance of a sample of the function f when sampling f at a point
+k = 1
+σ2
+chosen at random according to the Lebesgue measure conditioned to stratum Ωk .
+1This is not restrictive in small dimension, but it may become more constraining for large d.
+
+2
+
+We possess a budget of n samples (which is assumed to be known in advance), which means that
+we can sample n times the function at any point of [0, 1]d . We denote by A an algorithm that
+sequentially allocates the budget by sampling at round t in the stratum indexed by kt ∈ {1, . . . , K },
+and returns after all n samples have been used an estimate ˆµn of the integral of the function f .
+We consider strategies that sub-partition each stratum Ωk in hyper-cubes of same measure in Ωk , but
+of heterogeneous measure among the Ωk . In this way, the number of sub-strata in each stratum Ωk
+can adapt to the variations f within Ωk . The algorithms that we consider return a sub-partition of
+each stratum Ωk in Sk sub-strata. We call Nk = (Ωk,i )i≤Sk the sub-partition of stratum Ωk . In each
+of these sub-strata, the algorithm allocates at least one point2 . We write Xk,i the ﬁrst point sampled
+uniformly at random in sub-stratum Ωk,i . We write wk,i the measure of the sub-stratum Ωk,i . Let us
+wk,i �Ωk,i �f (x) − µk,i �2
+wk,i �Ωk,i
+f (x)dx the mean and σ2
+dx the variance of a
+write µk,i = 1
+k,i = 1
+sample of f in sub-stratum Ωk,i (e.g. of Xk,i = f (Uk,i ) where Uk,i ∼ UΩk,i ).
+This class of 2−layered sampling strategies is rather large. In fact it contains strategies that are
+similar to low discrepancy strategies, and also to any stratiﬁed Monte-Carlo strategy. For example,
+consider that all K strata are hyper-cubes of same measure 1
+K and that each stratum Ωk is partitioned
+into Sk hyper-rectangles Ωk,i of minimal diameter and same measure
+. If the algorithm allocates
+1
+K Sk
+one point per sub-stratum, its sampling scheme shares similarities with quasi Monte-Carlo sampling
+schemes, since the points at which the function is sampled are well spread.
+Let us now consider an algorithm that ﬁrst chooses the sub-partition (Nk )k and then allocates de-
+terministically 1 sample uniformly at random in each sub-stratum Ωk,i . We consider the stratiﬁed
+estimate ˆµn = �K
+k=1 �Sk
+wk,i
+Xk,i of µ. We have
+i=1
+Sk
+Sk�i=1 �Ωk,i
+f (x)dx = �[0,1]d
+Sk�i=1
+K�k=1
+µk,i = �k≤K
+wk,i
+E( ˆµn ) =
+Sk
+Sk�i=1
+Sk�i=1
+)2E(Xk,i − µk,i )2 = �k≤K
+V( ˆµn ) = �k≤K
+w2
+wk,i
+k,i
+σ2
+(
+k,i .
+S 2
+Sk
+k
+For a given algorithm A that builds for each stratum k a sub-partition Nk = (Ωk,i )i≤Sk , we call
+pseudo-risk the quantity
+Sk�i=1
+Ln (A) = �k≤K
+w2
+k,i
+σ2
+(1)
+k,i .
+S 2
+k
+Some further insight on this quantity is provided in the paper [4].
+Consider now the uniform strategy, i.e. a strategy that divides the domain in K = n hyper-cubic
+strata. This strategy is a fairly natural, minimax-optimal static strategy, on the class of differentiable
+function deﬁned on [0, 1]d , when no information on f is available. We will prove in the next Section
+that its asymptotic mean squared error is equal to
+12 � �[0,1]d ||∇f (x)||2
+2dx� 1
+1
+n1+ 2
+d
+This quantity is of order n−1−2/d , which is smaller, as expected, than 1/n: this strategy is more
+efﬁcient than crude Monte-Carlo.
+We will also prove in the next Section that the minimum asymptotic mean squared error of an
+optimal oracle strategy (we call it “oracle” because it builds the stratiﬁcation using the information
+about the variations ||∇f (x)||2 of f in every point x), is larger than
+12 � �[0,1]d
+d+1 dx�2 (d+1)
+1
+1
+d
+d
+(||∇f (x)||2 )
+n1+ 2
+d
+This quantity is always smaller than the asymptotic mean squared error of the Uniform stratiﬁed
+Monte-Carlo strategy, which makes sense since this strategy assumes the knowledge of the variations
+of f everywhere, and can thus adapt accordingly the number of samples in each region. We deﬁne
+12 � �[0,1]d
+d+1 dx�2 (d+1)
+1
+d
+d
+
+(||∇f (x)||2 )
+
+f (x)dx = µ,
+
+.
+
+(2)
+
+Σ =
+2This implies that �k Sk ≤ n.
+
+3
+
+and also
+
+.
+
+Given this minimum asymptotic mean squared error of an optimal oracle strategy, we deﬁne the
+pseudo-regret of an algorithm A as
+1
+Rn (A) = Ln (A) − Σ
+n1+ 2
+d
+This pseudo-regret is the difference between the pseudo-risk of the estimate provided by algorithm
+A, and the lower-bound on the optimal oracle mean squared error. In other words, this pseudo-regret
+is the price an adaptive strategy pays for not knowing in advance the function f , and thus not having
+access to its variations. An efﬁcient adaptive strategy should aim at minimizing this gap coming
+from the lack of informations.
+
+(3)
+
+.
+
+3 Discussion on the optimal asymptotic mean squared error
+3.1 Asymptotic lower bound on the mean squared error, and comparison with the Uniform
+stratiﬁed Monte-Carlo
+A ﬁrst part of the analysis of the exposed problem consists in ﬁnding a good point of comparison
+for the pseudo-risk. The following Lemma states an asymptotic lower bound on the mean squared
+error of the optimal oracle sampling strategy.
+2dx < ∞. Let �(Ωn
+k )k≤n �n
+Lemma 1 Assume that f is such that ∇f is continuous and � ||∇f (x)||2
+be an arbitrary sequence of partitions of [0, 1]d in n strata such that all the strata are hyper-cubes,
+and such that the maximum diameter of each stratum goes to 0 as n → +∞ (but the strata are
+allowed to have heterogeneous measures).Let ˆµn be the stratiﬁed estimate of the function for the
+partition (Ωn
+k )k≤n when there is one point pulled at random per stratum. Then
+n1+2/dV( ˆµn ) ≥ Σ.
+lim inf
+n→∞
+The full proof of this Lemma is in the Supplementary Material, Appendix B (see also [2]).
+We have also the following equality for the asymptotic mean squared error of the uniform strategy.
+Lemma 2 Assume that f is such that ∇f is continuous and � ||∇f (x)||2
+2dx < ∞. For any n = ld
+such that l is an integer (and thus such that it is possible to partition the domain in n hyper-cubic
+strata of same measure), deﬁne �(Ωn
+k )k≤n �n as the sequence of partitions in hyper-cubic strata of
+same measure 1/n. Let ˆµn be the stratiﬁed estimate of the function for the partition (Ωn
+k )k≤n when
+there is one point pulled at random per stratum. Then
+12 � �[0,1]d ||∇f (x)||2
+2dx�.
+1
+n1+2/dV( ˆµn ) =
+lim inf
+n→∞
+The proof of this Lemma is substantially similar to the proof of Lemma 1 in the Supplementary
+Material, Appendix B (see also [2]). The only difference is that the measure of each stratum Ωn
+k
+is 1/n and that in Step 2, instead of Fatou’s Lemma, the Theorem of dominated convergence is
+required.
+The optimal rate for the mean squared error, which is also the rate of the Uniform stratiﬁed Monte-
+Carlo in Lemma 2, is n−1−2/d and is attained with ideas of low discrepancy sampling. The constant
+can however be improved (with respect to the constant in Lemma 2), by adapting to the speciﬁc
+shape of each function.
+In Lemma 1, we exhibit a lower bound for this constant (and without
+2dx� ≥ Σ). Our aim is to build an adaptive sampling scheme, also
+12 � �[0,1]d ||∇f (x)||2
+surprises, 1
+sharing ideas with low discrepancy sampling, that attains this lower-bound.
+k )k≤n �n
+There is one main restriction in both Lemma: we impose that the sequence of partitions �(Ωn
+is composed only with strata that have the shape of an hyper-cube. This assumption is in fact
+reasonable: indeed, if the shape of the strata could be arbitrary, one could take the level sets (or
+approximate level sets as the number of strata is limited by n) as strata, and this would lead to
+limn→∞ inf Ω n1+2/dV( ˆµn,Ω ) = 0. But this is not a fair competition, as the function is unknown,
+and determining these level sets is actually a much harder problem than integrating the function.
+The fact that the strata are hyper-cubes appears, in fact, in the bound. If we had chosen other shapes,
+12 in front of the bounds in both Lemma would change3 . It is however not
+e.g. l2 balls, the constant 1
+3The 1
+12 comes from computing the variance of an uniform random variable on [0, 1].
+
+4
+
+possible to make a ﬁnite partition in l2 balls of [0, 1]d , and we chose hyper-cubes since it is quite
+easy to stratify [0, 1]d in hyper-cubic strata.
+
+The proof of Lemma 1 makes the quantity s∗ (x) =
+
+d
+(||∇f (x)||2 )
+d+1
+�[0,1]d (||∇f (u)||2 )
+d
+d+1 du
+proposed as “asymptotic optimal allocation”, i.e. the asymptotically optimal number of sub-strata
+one would ideally create in any small sub-stratum centered in x. This is however not very useful for
+building an algorithm. The next Subsection provides an intuition on this matter.
+
+appear. This quantity is
+
+||θk ||2
+2
+12
+
+3.2 An intuition of a good allocation: Piecewise linear functions
+In this Subsection, we (i) provide an example where the asymptotic optimal mean squared error is
+also the optimal mean squared error at ﬁnite distance and (ii) provide explicitly what is, in that case,
+a good allocation. We do that in order to give an intuition for the algorithm that we introduce in the
+next Section.
+We consider a partition in K hyper-cubic strata Ωk . Let us assume that the function f is afﬁne on all
+strata Ωk , i.e. on stratum Ωk , we have f (x) = ��θk , x� + ρk �I {x ∈ Ωk }. In that case µk = f (ak )
+where ak is the center of the stratum Ωk . We then have:
+wk �Ωk
+wk �Ωk ��θk , (x − ak )��2
+� = ||θk ||2
+wk � ||θk ||2
+1
+1
+1
+w2/d
+w1+2/d
+(f (x) − f (ak ))2 dx =
+σ2
+2
+2
+dx =
+k =
+.
+k
+k
+12
+12
+We consider also a sub-partition of Ωk in Sk hyper-cubes of same size (we assume that S 1/d
+is
+k
+an integer), and we assume that in each sub-stratum Ωk,i , we sample one point. We also have
+12 � wk
+Sk �2/d for sub-stratum Ωk,i .
+k,i = ||θk ||2
+σ2
+2
+For a given k and a given Sk , all the σk,i are equals. The pseudo-risk of an algorithm A that divides
+each stratum Ωk in Sk sub-strata is thus
+w2+2/d
+= �k≤K
+Ln (A) = �k≤K �i≤Sk
+= �k≤K
+12 � wk
+Sk �2/d
+||θk ||2
+w2
+w2
+2
+k
+k
+k
+S 2
+S 1+2/d
+S 1+2/d
+k
+k
+k
+If an unadaptive algorithm A∗ has access to the variances σ2
+k in the strata, it can choose to allocate
+the budget in order to minimize the pseudo-risk. After solving the simple optimization problem
+of minimizing Ln (A) with respect to (Sk )k , we deduce that an optimal oracle strategy on this
+d
+d+1
+stratiﬁcation would divide each stratum k in S ∗k = (wk σk )
+n sub-strata4 . The pseudo-risk
+�i≤K (wi σi )
+d
+d+1
+for this strategy is then
+d+1 �2 (d+1)
+Ln,K (A∗ ) = � �k≤K (wk σk )
+d
+d
+2 (d+1)
+Σ
+d
+K
+n1+2/d ,
+n1+2/d
+where we write ΣK = �i≤K (wiσi )
+d
+d+1 . We will call in the paper optimal proportions the quantities
+d
+(wk σk )
+d+1
+λK,k =
+.
+�i≤K (wiσi )
+d
+d+1
+In the speciﬁc case of functions that are piecewise linear, we have ΣK = �k≤K (wk σk )
+d+1 = �[0,1]d
+�k≤K (wk ||θk ||2
+d
+d
+w1/d
+(||∇f (x)||2 )
+d+1
+dx. We thus have
+)
+2√3
+k
+d
+2(d+1)
+12
+1
+Ln,K (A∗ ) = Σ
+.
+n1+ 2
+d
+This optimal oracle strategy attains the lower bound in Lemma 1. We will thus construct, in the next
+Section, an algorithm that learns and adapts to the optimal proportions deﬁned in Equation 5.
+4We deliberately forget about rounding issues in this Subsection. The allocation we provide might not be
+realizable (e.g. if S ∗k is not an integer), but plugging it in the bound provides a lower bound on any realizable
+performance.
+
+d
+d+1 =
+
+σ2
+k .
+
+=
+
+(4)
+
+(5)
+
+(6)
+
+5
+
+(7)
+
+(8)
+
+.
+
+hyper-
+
+4 The Algorithm LMC-UCB
+4.1 Algorithm LMC-UCB
+We present the algorithm Lipschitz Monte Carlo Upper Conﬁdence Bound (LM C − U CB ). It takes
+as parameter a partition (Ωk )k≤K in K ≤ n hyper-cubic strata of same measure 1/K (it is possible
+since we assume that ∃l ∈ N/ld = K ). It also takes as parameter an uniform upper bound L on
+2 , and δ , a (small) probability. The aim of algorithm LM C − U CB is to sub-stratify each
+||∇f (x)||2
+d
+d+1
+stratum Ωk in λK,k = (wk σk )
+n hyper-cubic sub-strata of same measure and sample one
+�K
+d
+d+1
+i=1 (wi σi )
+point per sub-stratum. An intuition on why this target is relevant was provided in Section 3.
+Algorithm LMC-UCB starts by sub-stratifying each stratum Ωk in ¯S = ��� n
+d+1 �1/d�d
+K � d
+cubic strata of same measure. It is possible to do that since by deﬁnition, ¯S 1/d is an integer. We
+write this ﬁrst sub-stratiﬁcation N �k = (Ω�k,i )i≤ ¯S . It then pulls one sample per sub-stratum in N �k for
+each Ωk .
+It then sub-stratiﬁes again each stratum Ωk using the informations collected. It sub-stratiﬁes each
+stratum Ωk in
+¯S )1/d� 1
+k � ˆσk,K ¯S + A( wk
+¯S � d
+(n − K ¯S )�1/d�d
+, ¯S�
+Sk = max ��� w
+d
+d+1
+d+1
+¯S )1/d� 1
+¯S � d
+� ˆσi,K ¯S + A( wi
+�K
+d
+d+1
+d+1
+i=1 w
+i
+hyper-cubic strata of same measure (see Figure 1 for a deﬁnition of A). It is possible to do that
+because by deﬁnition, S 1/d
+is an integer. We call this sub-stratiﬁcation of stratum Ωk stratiﬁcation
+k
+Nk = (Ωk,i )i≤Sk . In the last Equation, we compute the empirical standard deviation in stratum Ωk
+at time K ¯S as
+ˆσk,K ¯S = ���� 1
+¯S�j=1
+¯S�i=1 �Xk,i −
+Xk,j �2
+¯S − 1
+Algorithm LMC-UCB then samples in each sub-stratum Ωk,i one point. It is possible to do that
+since, by deﬁnition of Sk , �k Sk + K ¯S ≤ n
+The algorithm outputs an estimate ˆµn of the integral of f , computed with the ﬁrst point in each
+sub-stratum of partition Nk . We present in Figure 1 the pseudo-code of algorithm LMC-UCB.
+Input: Partition (Ωk )k≤K , L, δ , set A = 2L√d�log(2K/δ)
+Initialize: ∀k ≤ K , sample 1 point in each stratum of partition N �k
+Main algorithm:
+Compute Sk for each k ≤ K
+Create partition Nk for each k ≤ K
+Sample a point in Ωk,i ∈ Nk for i ≤ Sk
+Output: Return the estimate ˆµn computed when taking the ﬁrst point Xk,i in each sub-stratum Ωk,i of
+k=1 wk �Sk
+Nk , that is to say ˆµn = �K
+Xk,i
+i=1
+Sk
+Figure 1: Pseudo-code of LMC-UCB. The deﬁnition of N �k , ¯S , Nk , Ωk,i and Sk are in the main text.
+4.2 High probability lower bound on the number of sub-strata of stratum Ωk
+We ﬁrst state an assumption on the function f .
+Assumption 1 The function f is such that ∇f exists and ∀x ∈ [0, 1]d , ||∇f (x)||2
+2 ≤ L.
+The next Lemma states that with high probability, the number Sk of sub-strata of stratum Ωk , in
+which there is at least one point, adjusts “almost” to the unknown optimal proportions.
+Lemma 3 Let Assumption 1 be satisﬁed and (Ωk )k≤K be a partition in K hyper-cubic strata of
+same measure. If n ≥ 4K , then with probability at least 1 − δ , ∀k , the number of sub-strata satisﬁes
+Sk ≥ max �λK,k �n − 7(L + 1)d3/2�log(K/δ)(1 +
+d+1 �, ¯S�.
+1
+d
+1
+)K
+d+1 n
+ΣK
+The proof of this result is in the Supplementary Material (Appendix C) (see also [2]).
+6
+
+1
+¯S
+
+4.3 Remarks
+A sampling scheme that shares ideas with quasi Monte-Carlo methods: Algorithm LM C −
+U CB almost manages to divide each stratum Ωk in λK,k n hyper-cubic strata of same measure, each
+one of them containing at least one sample. It is thus possible to build a learning procedure that, at
+the same time, estimates the empirical proportions λK,k , and allocates the samples proportionally to
+them.
+The error terms: There are two reasons why we are not able to divide exactly each stratum Ωk
+in λK,k n hyper-cubic strata of same measure. The ﬁrst reason is that the true proportions λK,k are
+unknown, and that it is thus necessary to estimate them. The second reason is that we want to build
+strata that are hyper-cubes of same measure. The number of strata Sk needs thus to be such that
+S 1/d
+is an integer. We thus also loose efﬁciency because of rounding issues.
+k
+5 Main results
+5.1 Asymptotic convergence of algorithm LMC-UCB
+By just combining the result of Lemma 1 with the result of Lemma 3, it is possible to show that
+algorithm LMC-UCB is asymptotically (when K goes to +∞ and n ≥ K ) as efﬁcient as the optimal
+oracle strategy of Lemma 1.
+Theorem 1 Assume that ∇f is continuous, and that Assumption 1 is satisﬁed. Let (Ωn
+k )n,k≤Kn be
+an arbitrary sequence of partitions such that all the strata are hyper-cubes, such that 4Kn ≤ n, such
+n �Kn � log(Knn2 )� d+1
+2 � = 0.
+that the diameter of each strata goes to 0, and such that limn→+∞
+1
+n2 on this sequence of partition, where for sequence
+The regret of LMC-UCB with parameter δn = 1
+k )n,k≤Kn it disposes of n points, is such that
+(Ωn
+n1+2/dRn (ALM C−U CB ) = 0.
+lim
+n→∞
+The proof of this result is in the Supplementary Material (Appendix D) (see also [2]).
+
+5.2 Under a slightly stronger Assumption
+We introduce the following Assumption, that is to say that f admits a Taylor expansion of order 2.
+Assumption 2 f admits a Taylor expansion at the second order in any point a ∈ [0, 1]d and this
+expansion is such that ∀x, |f (x) − f (a) − �∇f , (x − a)�| ≤ M ||x − a||2
+2 where M is a constant.
+This is a slightly stronger assumption than Assumption 1, since it imposes, additional to Assump-
+tion 1, that the variations of ∇f (x) are uniformly bounded for any x ∈ [0, 1]d . Assumption 2 im-
+plies Assumption 1 since ��||∇f (x)||2 − ||∇f (0)||2 �� ≤ M ||x − 0||2 , which implies that ||∇f (x)||2 ≤
+||∇f (0)||2 + M √d. This implies in particular that we can consider L = ||∇f (0)||2 + M √d. We
+however do not need M to tune the algorithm LMC-UCB, as long as we have access to L (although
+M appears in the bound of next Theorem).
+We can now prove a bound on the pseudo-regret.
+Theorem 2 Under Assumptions 1 and 2, if n ≥ 4K , the estimate returned by algorithm LM C −
+U CB is such that, with probability 1 − δ , we have
+Σ �4�650d3/2�log(K/δ)K
+d �M (L + 1)4�1 +
+d+1 ��.
+d+1 + 25d� 1
+K � 1
+3M d
+1
+d+1 n− 1
+1
+Rn (ALM C−U CB ) ≤
+d+2
+A proof of this result is in the Supplementary Material (Appendix E) (see also [2]).
+Now we can choose optimally the number of strata so that we minimize the regret.
+Theorem 3 Under Assumptions 1 and 2,
+the algorithm LM C − U CB launched on Kn =
+�(√n)1/d�d
+hyper-cubic strata is such that, with probability 1 − δ , we have
+Σ �4�log(n/δ )�.
+2(d+1) �700M (L + 1)4d3/2�1 +
+1
+3M d
+Rn (ALM C−U CB ) ≤
+n1+ 2
+d + 1
+7
+
+n
+
+5.3 Discussion
+Convergence of the algorithm LMC-UCB to the optimal oracle strategy: When the number
+n �Kn � log(Knn2 )� d+1
+2 � = 0, the pseudo-
+of strata Kn grows to inﬁnity, but such that limn→+∞
+1
+regret of algorithm LMC-UCB converges to 0. It means that this strategy is asymptotically as efﬁ-
+cient as (the lower bound on) the optimal oracle strategy. When f admits a Taylor expansion at the
+ﬁrst order in every point, it is also possible to obtain a ﬁnite-time bound on the pseudo-regret.
+A new sampling scheme: The algorithm LM C − U CB samples the points in a way that takes
+advantage of both stratiﬁed sampling and quasi Monte-Carlo. Indeed, LMC-UCB is designed to
+cumulate (i) the advantages of quasi Monte-Carlo by spreading the samples in the domain and (ii) the
+advantages of stratiﬁed, adaptive sampling by allocating more samples where the function has larger
+variations. For these reasons, this technique is efﬁcient on differentiable functions. We illustrate this
+assertion by numerical experiments in the Supplementary Material (Appendix A) (see also [2]).
+In high dimension: The bound on the pseudo-regret in Theorem 3 is of order n−1− 2
+d ×
+poly(d)n− 1
+In order for the pseudo-regret to be negligible when compared to the opti-
+2(d+1) .
+mal oracle mean squared error of the estimate (which is of order n−1− 2
+d ) it is necessary that
+poly(d)n− 1
+2(d+1) is negligible compared to 1. In particular, this says that n should scale exponen-
+tially with the dimension d. This is unavoidable, since stratiﬁed sampling shrinks the approximation
+error to the asymptotic oracle only if the diameter of each stratum is small, i.e. if the space is stratiﬁed
+in every direction (and thus if n is exponential with d). However Uniform stratiﬁed Monte-Carlo,
+also for the same reasons, shares this problem5 .
+We emphasize however the fact that a (slightly modiﬁed) version of our algorithm is more efﬁcient
+than crude Monte-Carlo, up to a negligible term that depends only of poly(log(d)). The bound in
+Lemma 3 depends of poly(d) only because of rounding issues, coming from the fact that we aim
+at dividing each stratum Ωk in hyper-cubic sub-strata. The whole budget is thus not completely
+used, and only �k Sk + K ¯S samples are collected. By modifying LMC-UCB so that it allocates
+the remaining budget uniformly at random on the domain, it is possible to prove that the (modiﬁed)
+algorithm is always at least as efﬁcient as crude Monte-Carlo.
+Conclusion
+This work provides an adaptive method for estimating the integral of a differentiable function f .
+We ﬁrst proposed a benchmark for measuring efﬁciency: we proved that the asymptotic mean
+squared error of the estimate outputted by the optimal oracle strategy is lower bounded by Σ 1
+n1+2/d .
+We then proposed an algorithm called LMC-UCB, which manages to learn the amplitude of the vari-
+ations of f , to sample more points where theses variations are larger, and to spread these points in a
+way that is related to quasi Monte-Carlo sampling schemes. We proved that algorithm LMC-UCB
+is asymptotically as efﬁcient as the optimal, oracle strategy. Under the assumption that f admits a
+Taylor expansion in each point, we provide also a ﬁnite time bound for the pseudo-regret of algo-
+rithm LMC-UCB. We summarize in Table 1 the rates and ﬁnite-time bounds for crude Monte-Carlo,
+Uniform stratiﬁed Monte-Carlo and LMC-UCB. An interesting extension of this work would be to
+Pseudo-Risk:
+Asymptotic constant
+�[0,1]d �f (x) − �[0,1]d f (u)du�2
+2dx�
+12 � �[0,1]d ||∇f (x)||2
+1
+d
+n1+ 2
+d
+d+1 dx�2 (d+1)
+12 � �[0,1]d (||∇f (x)||2 )
+11
+d
+d
+1
+1
+d
+2
++ 1
+n1+ 2
+1+ 2
+d
+d
+2(d+1)
+n
+Table 1: Rate of convergence plus ﬁnite time bounds for Crude Monte-Carlo, Uniform stratiﬁed
+Monte Carlo (see Lemma 2) and LMC-UCB (see Theorems 1 and 3).
+adapt it to α−H ¨older functions that admit a Riemann-Liouville derivative of order α. We believe
+that similar results could be obtained, with an optimal constant and a rate of order n1+2α/d .
+Acknowledgements This research was partially supported by Nord-Pas-de-Calais Regional Coun-
+cil, French ANR EXPLO-RA (ANR-08-COSI-004), the European Communitys Seventh Framework
+Programme (FP7/2007-2013) under grant agreement 270327 (project CompLACS), and by Pascal-2.
+5When d is very large and n is not exponential in d, then second order terms, depending on the dimension,
+take over the bound in Lemma 2 (which is an asymptotic bound) and poly(d) appears in these negligible terms.
+
+Sampling schemes
+Crude MC
+Uniform stratiﬁed MC
+
++ Finite-time bound
++0
+
+Rate
+1
+n
+1
+n1+ 2
+d
+
++O(
+
+)
+
++ 1
+2d
+
+dx
+
+LMC-UCB
+
++O(
+
+)
+
+8
+
+References
+[1] J.Y. Audibert, R. Munos, and Cs. Szepesv ´ari. Exploration-exploitation tradeoff using variance
+estimates in multi-armed bandits. Theoretical Computer Science, 410(19):1876–1902, 2009.
+[2] A. Carpentier and R. Munos. Adaptive Stratiﬁed Sampling for Monte-Carlo integration of Dif-
+ferentiable functions. Technical report, arXiv:0575985, 2012.
+[3] A. Carpentier and R. Munos. Finite-time analysis of stratiﬁed sampling for monte carlo. In In
+Neural Information Processing Systems (NIPS), 2011a.
+[4] A. Carpentier and R. Munos. Finite-time analysis of stratiﬁed sampling for monte carlo. Tech-
+nical report, INRIA-00636924, 2011b.
+[5] Pierre Etor ´e and Benjamin Jourdain. Adaptive optimal allocation in stratiﬁed sampling methods.
+Methodol. Comput. Appl. Probab., 12(3):335–360, September 2010.
+[6] P. Glasserman. Monte Carlo methods in ﬁnancial engineering. Springer Verlag, 2004. ISBN
+0387004513.
+[7] V. Grover. Active learning and its application to heteroscedastic problems. Department of
+Computing Science, Univ. of Alberta, MSc thesis, 2009.
+[8] A. Maurer and M. Pontil. Empirical bernstein bounds and sample-variance penalization.
+In
+Proceedings of the Twenty-Second Annual Conference on Learning Theory, pages 115–124,
+2009.
+[9] H. Niederreiter. Quasi-monte carlo methods and pseudo-random numbers. Bull. Amer. Math.
+Soc, 84(6):957–1041, 1978.
+[10] R.Y. Rubinstein and D.P. Kroese. Simulation and the Monte Carlo method. Wiley-interscience,
+2008. ISBN 0470177942.
+
+9
+
+

@@ -1,0 +1,552 @@
+Location-based Activity Recognition
+
+Lin Liao, Dieter Fox, and Henry Kautz
+Computer Science & Engineering
+University of Washington
+Seattle, WA 98195
+
+Abstract
+
+Learning patterns of human behavior from sensor data is extremely im-
+portant for high-level activity inference. We show how to extract and
+label a person’s activities and signiﬁcant places from traces of GPS data.
+In contrast to existing techniques, our approach simultaneously detects
+and classiﬁes the signiﬁcant locations of a person and takes the high-
+level context into account. Our system uses relational Markov networks
+to represent the hierarchical activity model that encodes the complex re-
+lations among GPS readings, activities and signiﬁcant places. We apply
+FFT-based message passing to perform efﬁcient summation over large
+numbers of nodes in the networks. We present experiments that show
+signi ﬁcant improvements over existing techniques.
+
+1
+
+Introduction
+
+The problem of learning patterns of human behavior from sensor data arises in many areas
+and applications of computer science, including intelligent environments, surveillance, and
+assistive technology for the disabled. A focus of recent interest is the use of data from wear-
+able sensors, and in particular, GPS (global positioning system) location data. Such data is
+used to recognize the high-level activities in which a person is engaged and to determine
+the relationship between activities and locations that are important to the user [1, 6, 8, 3].
+Our goal is to segment the user’s day into everyday activities such as “working,”
+“visiting,”
+“travel,” and to recognize and label signiﬁcant locations that are associated with one or
+more activity, such as “work place,”
+“friend’s house,”
+“user’s bus stop.” Such activity logs
+can be used, for instance, for automated diaries or long-term health monitoring. Previous
+approaches to location-based activity recognition suffer from design decisions that limit
+their accuracy and ﬂexibility:
+
+First, previous work decoupled the subproblem of determining whether or not a geographic
+location is signi ﬁcant and should be assigned a label, from that of labeling places and
+activities. The ﬁrst problem was handled by simply assuming that a location is signiﬁcant
+if and only if the user spends at least N minutes there, for some ﬁxed threshold N [1, 6,
+8, 3]. Some way of restricting the enormous set of all locations recorded for the user to
+a meaningful subset is clearly necessary. However, in practice, any ﬁxed threshold leads
+to many errors. Some signiﬁcant locations, for example, the place where the user drops
+off his children at school, may be visited only brie ﬂy, and so would be excluded by a high
+threshold. A lower threshold, however, would include too many insigniﬁcant locations, for
+example, a place where the user brieﬂy waited at a trafﬁc light. The inevitable errors cannot
+
+be resolved because information cannot ﬂow from the label assignment process back to the
+one that determines the domain to be labeled.
+Second, concerns for computational efﬁciency prevented previous approaches from tack-
+ling the problem of activity and place labeling in full generality. [1] does not distinguish
+between places and activities; although [8] does, the implementation limited places to a sin-
+gle activity. Neither approaches model or label the user’s activities when moving between
+places. [6] and [3] learn transportation patterns, but not place labels.
+The third problem is one of the underlying causes of the other limitations. The represen-
+tations and algorithms used in previous work make it difﬁcult to learn and reason with the
+kinds of non-local features that are useful in disambiguating human activity. For a simple
+example, if a system could learn that a person rarely went to a restaurant more than once a
+day, then it could correctly give a low probability to an interpretation of a day’s data under
+which the user went to three restaurants. Our previous work [8] used clique templates in
+relational Markov networks for concisely expressing global features, but the MCMC infer-
+ence algorithm we used made it costly to reason with aggregate features, such as statistics
+on the number of times a given activity occurs. The ability to efﬁciently leverage global
+features of the data stream could enhance the scope and accuracy of activity recognition.
+This paper presents a uniﬁed approach to automated activity and place labeling which over-
+comes these limitations. Contributions of this work include the following:
+• We show how to simultaneously solve the tasks of identifying signiﬁcant locations
+and labeling both places and activities from raw GPS data, all in a conditionally
+trained relational Markov network. Our approach is notable in that nodes repre-
+senting signiﬁcant places are dynamically added to the graph during inference.
+No arbitrary thresholds regarding the time spent at a location or the number of
+signi ﬁcant places are employed.
+• Our model creates a complete interpretation of the log of a user’s data, including
+transportation activities as well as activities performed at particular places.
+It
+allows different kinds of activities to be performed at the same location.
+• We extend our work on using clique templates for global features to support efﬁ-
+cient inference by belief propagation. We introduce, in particular, specialized Fast
+Fourier Transform (FFT) templates for belief propagation over aggregate (count-
+ing) features, which reduce computation time by an exponential amount. Al-
+though [9] introduced the use of the FFT to compute probability distributions over
+summations, our work appears to be the ﬁrst to employ it for full bi-directional
+belief propagation.
+This paper is organized as follows. We begin with a discussion of relational Markov net-
+works and a description of an FFT belief propagation algorithm for aggregate statistical
+features. Then we explain how to apply RMNs to the problem of location-based activity
+recognition. Finally, we present experimental results on real-world data that demonstrate
+signi ﬁcant improvement in coverage and accuracy over previous work.
+
+2 Relational Markov Networks and Aggregate Features
+
+2.1 Preliminaries
+
+Relational Markov Networks (RMNs) [10] are extensions of Conditional Random Fields
+(CRFs), which are undirected graphical models that were developed for labeling sequence
+data [5]. CRFs have been shown to produce excellent results in areas such as natural
+language processing [5] and computer vision [4]. RMNs extend CRFs by providing a
+relational language for describing clique structures and enforcing parameter sharing at the
+template level. Thereby RMNs provide a very ﬂexible and concise framework for deﬁning
+the features we use in our activity recognition context.
+
+A key concept of RMNs are relational clique templates, which specify the structure of a
+CRF in a concise way. In a nutshell, a clique template C ∈ C is similar to a database query
+(e.g., SQL) in that it selects tuples of nodes from a CRF and connects them into cliques.
+Each clique template C is additionally associated with a potential function φC (vC ) that
+maps values of variables to a non-negative real number. Using a log-linear combination
+of feature functions, we get φC (vC ) = exp{wT
+C · fC (vC )}, where fC () de ﬁnes a feature
+vector for C and wT
+C is the transpose of the corresponding weight vector.
+An RMN deﬁnes a conditional distribution p(y|x) over labels y given observations x. To
+compute such a conditional distribution, the RMN generates a CRF with the cliques spec-
+Y
+Y
+iﬁed by the clique templates. All cliques that originate from the same template must share
+the same weight vector wC . The resulting cliques factorize the conditional distribution as
+1
+p(y | x) =
+exp{wT
+C · fC (vC )},
+(1)
+Z (x)
+C∈C
+vC ∈C
+where Z (x) is the normalizing partition function.
+The weights w of an RMN can be learned discriminatively by maximizing the log-
+likelihood of labeled training data [10, 8]. This requires running an inference procedure
+L(w) ≡ nX
+at each iteration of the optimization and can be very expensive. To overcome this problem,
+we instead maximize the pseudo-log-likelihood of the training data:
+log p(yi | MB(yi ), w) − wT w
+2σ2
+i=1
+where MB(yi ) is the Markov Blanket of variable yi . The rightmost term avoids overﬁtting
+by imposing a zero-mean, Gaussian shrinkage prior on each component of the weights [10].
+In the context of place labeling, [8] showed how to use non-zero mean priors in order to
+transfer weights learned for one person to another person. In our experiments, learning the
+weights using pseudo-log-likelihood is very efﬁcient and performs well in our tests.
+
+(2)
+
+In our previous work [8] we used MCMC for inference. While this approach performed
+well for the models considered in [8], it does not scale to more complex activity models
+such as the one described here. Taskar and colleagues [10] relied on belief propagation
+(BP) for inference. The BP (sum-product) algorithm converts a CRF to a pairwise repre-
+mij (yj ) = X
+φ(yi )φ(yi , yj ) Y
+sentation and performs message passing, where the message from node i to its neighbor j
+is computed as
+k∈n(i)\j
+yi
+where φ(yi ) is a local potential, φ(yi , yj ) is a pairwise potential, and {n(i) \ j } denotes i’s
+neighbors other than j . All messages are updated iteratively until they (possibly) converge.
+However, our model takes into account aggregate features, such as summation. Performing
+aggregation would require the generation of cliques that contain all nodes over which the
+aggregation is performed. Since the complexity of standard BP is exponential in the number
+of nodes in the largest clique, aggregation can easily make BP intractable.
+
+mki (yi ) ,
+
+(3)
+
+2.2 Efﬁcient summation templates
+
+In our model, we address the inference of aggregate cliques at the template level within
+the framework of BP. Each type of aggregation function is associated with a computation
+template that speci ﬁes how to propagate messages through the clique. In this section, we
+discuss an efﬁcient computation template for summation.
+
+To handle summation cliques with potentially large numbers of addends, our summation
+template dynamically builds a summation tree, which is a pairwise Markov network as
+shown in Fig. 1(a).
+In a summation tree, the leaves are the original addends and each
+
+(a)
+
+(b)
+
+Figure 1: (a) Summation tree that represents ysum = P8
+i=1 yi , where the Si ’s are auxiliary nodes
+to ensure the summation relation. (b) CRF for labeling activities and places. Each activity node ai is
+connected to E observed local evidence nodes e1
+i to eE
+i . Place nodes pi are generated based on the
+inferred activities and each place is connected to all activity nodes that are within a certain distance.
+internal node yjk represents the sum of its two children yj and yk , and this sum relation
+summation tree guarantees that the root represents ysum = Pn
+is encoded by an auxiliary node Sjk and its potential. The state space of Sjk consists of
+the joint (cross-product) state of its neighbors yj , yk , and yjk . It is easy to see that the
+i=1 yi , where y1 to yn are
+the leaves of the tree. To deﬁne the BP protocol for summation trees, we need to specify two
+types of messages: an upward message from an auxiliary node to its parent (e.g., mS12 y12 ),
+and a downward message from an auxiliary node to one of its two children (e.g., mS12 y1 ).
+mSij yij (yij ) = X
+Upward message update: Starting with Equation (3), we can update an upward message
+mSij yij as follows.
+= X
+φS (yi , yj , yij ) myi Sij (yi ) myj Sij (yj )
+yi ,yj
+myi Sij (yi ) myj Sij (yij − yi )
+= F −1 (cid:0)F (myi Sij (yi )) · F (myj Sij (yj ))(cid:1)
+yi
+(5)
+where φS (yi , yj , yij ) is the local potential of Sij encoding the equality yij = yi + yj . (4)
+follows because all terms not satisfying the equality disappear. Therefore, message mSij yij
+is the convolution of myi Sij and myj Sij . (5) follows from the convolution theorem, which
+states that the Fourier transform of a convolution is the point-wise product of Fourier trans-
+forms [2], where F and F −1 represent the Fourier transform and its inverse, respectively.
+When the messages are discrete functions, the Fourier transform and its inverse can be
+computed efﬁciently using the Fast Fourier Transform (FFT) [2, 9]. The computational
+complexity of one summation using FFT is O(k log k), where k is the maximum number
+of states in yi and yj .
+Downward message update: We also allow messages to pass from sum variables down-
+ward to its children. This is necessary if we want to use the belief on sum variables (e.g.,
+mSij yi (yi ) = X
+knowledge on the number of homes) to change the distribution of individual variables (e.g.,
+place labels). From Equation (3) we get the downward message mSij yi as
+= X
+φS (yi , yj , yij )myj Sij (yj )myij Sij (yij )
+yj ,yij
+= F −1 (cid:0)F (myj Sij (yj )) · F (myij Sij (yij ))(cid:1)
+myj Sij (yj )myij Sij (yi + yj )
+yj
+(7)
+where (6) again follows from the sum relation. Note that the downward message mSij yi
+turns out to be the correlation of messages myj Sij and myij Sij . (7) follows from the corre-
+lation theorem [2], which is similar to the convolution theorem except, for correlation, we
+must compute the complex conjugate of the ﬁrst Fourier transform, denoted as F . Again,
+for discrete messages, (7) can be evaluated efﬁciently using FFT.
+
+(6)
+
+(4)
+
+aN−2aN−1aN....a1....2ap1p2pKActivityPlaceLocal evidencee11e1Ee1NeNE........At each level of a summation tree, the number of messages (nodes) is reduced by half and
+the size of each message is doubled. Suppose the tree has n upward messages at the bottom
+and the maximum size of a message is k . For large summation trees where n (cid:29) k , the
+!
+ 
+log nX
+log nX
+2i · O (cid:0)2i−1k log 2i−1k(cid:1) = O
+total complexity of updating the upward messages at all the log n levels follows now as
+log 2i−1
+n
+i=1
+i=1
+Similar reasoning shows that the complexity of the downward pass is O(n log2 n) as well.
+Therefore, updating all messages in a summation clique takes O(n log2 n) instead of time
+exponential in n, as would be the case for a non-specialized implementation of aggregation.
+
+= O(n log2 n)
+
+n
+2
+
+(8)
+
+3 Location-based Activity Model
+
+3.1 Overview
+To recognize activities and places, we ﬁrst segment raw GPS traces by grouping consecu-
+tive GPS readings based on their spatial relationship. This segmentation can be performed
+by simply combining all consecutive readings that are within a certain distance from each
+other (10m in our implementation). However, it might be desirable to associate GPS traces
+to a street map, for example, in order to relate locations to addresses in the map. To jointly
+estimate the GPS to street association and trace segmentation, we construct an RMN that
+takes into account the spatial relationship and temporal consistency between the measure-
+ments and their associations (see [7] for more details). In this section, we focus on inferring
+activities and types of signiﬁcant places after segmentation. To do so, we construct a hier-
+archical RMN that explicitly encodes the relations between activities and places. A CRF
+instantiated from the RMN is shown in Fig. 1(b). At the lower level of the hierarchy, each
+activity node is connected to various features, summarizing information resulting from the
+GPS segmentation. These features include:
+• Temporal information such as time of day, day of week, and duration of the stay;
+• Average speed through a segment, for discriminating transportation modes;
+• Information extracted from geographic databases, such as whether a location is
+close to a bus route or bus stop, and whether it is near a restaurant or store;
+• Additionally, each activity node is connected to its neighbors. These features mea-
+sure compatibility between types of activities at neighboring nodes in the trace.
+Our model also aims at determining those places that play a signiﬁcant role in the activities
+of a person, such as home, work place, friend’s home, grocery stores, restaurants, and bus
+stops. Such signi ﬁcant places comprise the upper level of the CRF shown in Fig. 1(b).
+However, since these places are not known a priori, we must additionally detect a person’s
+signi ﬁcant places. To incorporate place detection into our system, we use an iterative al-
+gorithm that re-estimates activities and places. Before we describe this algorithm, let us
+ﬁrst look at the features that are used to determine the types of signiﬁcant places under the
+assumption that the locations and number of these places are known.
+• The activities that occur at a place strongly indicate the type of the place. For
+example, at a friends’ home people either visit or pick up / drop off someone. Our
+features consider the frequencies of the different activities at a place. This is done
+by generating a clique for each place that contains all activity nodes in its vicinity.
+For example, the nodes p1 , a1 , and aN −2 in Fig. 1(b) form such a clique.
+• A person usually has only a limited number of different homes or work places. We
+add two additional summation cliques that count the number of homes and work
+places. These counts provide soft constraints that bias the system to generate
+interpretations with reasonable numbers of homes and work places.
+
+2. (cid:0)ha1 , . . . , aN i, he1
+1 , . . .i(cid:1) := trace segmentation (hg1 , g2 , . . . , gT i)
+Input: GPS trace hg1 , g2 , . . . , gT i and iteration counter i := 0
+1.
+1 , . . .i(cid:1)
+CRF0 := instantiate crf(cid:0)h i, ha1 , . . . , aN i, he1
+1 , . . . , eE
+3.
+// Generate CRF containing activity and local evidence (lower two levels in Fig. 1(b))
+1 , . . . , eE
+4. a∗
+0 := BP inference( CRF0 ) // infer sequence of activities
+5. do
+1 , . . .i(cid:1)
+CRFi := instantiate crf(cid:0)hp1 , . . . , pK ii , ha1 , . . . , aN i, he1
+i := i + 1
+6.
+hp1 , . . . , pK ii := generate places(a∗
+i−1 ) // Instantiate places
+7.
+1 , . . . , eE
+8.
+i i := BP inference( CRFi ) // inference in complete CRF
+ha∗
+i , p∗
+9
+10. until a∗
+i = a∗
+i−1
+return ha∗
+i i
+i , p∗
+11.
+Table 1: Algorithm for extracting and labeling activities and signiﬁcant places.
+
+Note that the above two types of aggregation features can generate large cliques in the CRF,
+which could make standard inference intractable. In our inference, we use the optimized
+summation templates discussed in Section 2.2.
+
+3.2 Place Detection and Labeling Algorithm
+Table 1 summarizes our algorithm for efﬁciently constructing a CRF that jointly estimates
+a person’s activities and the types of his signiﬁcant places. The algorithm takes as input
+a GPS trace.
+In Step 2 and 3, this trace is segmented into activities ai and their local
+evidence ej
+i , which are then used to generate CRF0 without signiﬁcant places . BP inference
+is ﬁrst performed in this CRF so as to determine the activity estimate a∗
+0 , which consists
+of a sequence of locations and the most likely activity performed at that location (Step
+4). Within each iteration of the loop starting at Step 5, such an activity estimate is used
+to extract a set of signi ﬁcant places. This is done by classifying individual activities in the
+sequence according to whether or not they belong to a signiﬁcant place. For instance, while
+walking, driving a car, or riding a bus are not associated with signiﬁcant places, working
+or getting on or off the bus indicate a signiﬁcant place. All instances at which a signiﬁcant
+activity occurs generate a place node. Because a place can be visited multiple times within
+a sequence, we perform clustering and merge duplicate places into the same place node.
+This classiﬁcation and clustering is performed by the algorithm generate places() in Step
+7. These places are added to the model and BP is performed in this complete CRF. Since a
+CRFi can have a different structure than the previous CRFi−1 , it might generate a different
+activity sequence. If this is the case, the algorithm returns to Step 5 and re-generates the set
+of places using the improved activity sequence. This process is repeated until the activity
+sequence does not change. In our experiments we observed that this algorithm converges
+very quickly, typically after three or four iterations.
+
+4 Experimental Results
+In our experiments, we collected GPS data traces from four different persons, approxi-
+mately seven days of data per person. The data from each person consisted of roughly
+40,000 GPS measurements, resulting in about 10,000 10m segments. We used leave-
+one-out cross-validation for evaluation. Learning from three persons’ data took about one
+minute and BP inference on the last person’s data converged within one minute.
+
+Extracting signiﬁcant places
+We compare our model with a widely-used approach that uses a time threshold to determine
+whether or not a location is signiﬁcant [1, 6, 8, 3]. We use four different thresholds from
+
+(b)
+(a)
+Figure 2: (a) Accuracy of extracting places. (b) Computation times for summation cliques.
+Inferred labels
+FN
+Other
+Pickup On/off car
+Visit
+Leisure
+Sleep
+Work
+Truth
+0
+1
+0
+0
+0
+0 / 1
+0
+12 / 11
+Work
+0
+0
+0
+0
+2
+1
+21
+0
+Sleep
+0
+3
+1 / 4
+0
+0
+20 / 17
+0
+2
+Leisure
+0
+2
+0
+0
+7 / 5
+0 / 2
+0
+0
+Visiting
+2
+0
+0
+1
+0
+0
+0
+0
+Pickup
+2 / 3
+0
+13 / 12
+1
+0
+0
+0
+0
+On/Off car
+0
+0
+0
+0
+0
+0
+Other
+1
+37
+-
+3
+2
+2
+0
+0
+0
+0
+FP
+Table 2: Activity confusion matrix of cross-validation data with (left values) and without (right
+values) considering places for activity inference (FN and FP are false negatives and false positives).
+
+1 minute to 10 minutes, and we measure the false positive and false negative locations ex-
+tracted from the GPS traces. As shown in Fig. 2(a), any ﬁxed threshold is not satisfactory:
+low thresholds have many false positives, and high thresholds result in many false nega-
+tives. In contrast, our model performs much better: it only generates 4 false positives and 3
+false negative. This experiment shows that using high-level context information drastically
+improves the extraction of signi ﬁcant places.
+
+Labeling places and activities
+In our system the labels of activities generate instances of places, which then help to better
+estimate the activities occurring in their spatial area. The confusion matrix given in Table 2
+summarizes the activity estimation results achieved with our system on the cross-validation
+data. The results are given with and without taking the detected places into account. More
+speciﬁcally, without places are results achieved by CRF 0 generated by Step 4 of the al-
+gorithm in Table 1, and results with places are those achieved after model convergence.
+When the results of both approaches are identical, only one number is given, otherwise, the
+ﬁrst number gives the result achieved with the complete model. The table shows two main
+results. First, the accuracy of our approach is quite high, especially when considering that
+the system was evaluated on only one week of data and was trained on only three weeks
+of data collected by different persons. Second, performing joint inference over activities
+and places increases the quality of inference. The reason for this is that a place node con-
+nects all the activities occurring in its spatial area so that these activities can be labeled in
+a more consistent way. A further evaluation of the detected places showed that our system
+achieved 90.6% accuracy in place detection and labeling (see [7] for more results).
+
+Efﬁciency of inference
+We compared our optimized BP algorithm using FFT summation cliques with inference
+based on MCMC and regular BP, using the model and data from [8]. Note that a naive im-
+plementation of BP is exponential in the number of nodes in a clique. In our experiments,
+the test accuracies resulting from using the different algorithms are almost identical. There-
+fore, we only focus on comparing the efﬁciency and scalability of summation aggregations.
+The running times for the different algorithms are shown in Fig. 2(b). As can be seen, naive
+
+0102030400246810False negativeFalse positive1 min3 min5 min10 minThreshold methodOur model10  100 10000       1000    2000    3000    Number of nodesRunning Time [s]Naive BPMCMCOptimized BPBP becomes extremely slow for only 20 nodes, MCMC only works for up to 500 nodes,
+while our algorithm can perform summation for 2, 000 variables within a few minutes.
+
+5 Conclusions
+We provided a novel approach to performing location-based activity recognition. In con-
+trast to existing techniques, our approach uses one consistent framework for both low-level
+inference and the extraction of a person’s signiﬁcant places. Thereby, our model is able
+to take high-level context into account in order to detect the signiﬁcant locations of a per-
+son. Furthermore, once these locations are determined, they help to better detect low-level
+activities occurring in their vicinity.
+
+Summation cliques are extremely important to introduce long-term, soft constraints into
+activity recognition. We show how to incorporate such cliques into belief propagation using
+bi-directional FFT computations. The clique templates of RMNs are well suited to specify
+such clique-speciﬁc inference mechanisms and we are developing additional techniques,
+including clique-speciﬁc MCMC and local dynamic programming.
+
+Our experiments based on traces of GPS data show that our system signiﬁcantly outper-
+forms existing approaches. We demonstrate that the model can be trained from a group of
+persons and then applied successfully to a different person, achieving more than 85% accu-
+racy in determining low-level activities and above 90% accuracy in detecting and labeling
+signi ﬁcant places. In future work, we will add more sensor data, including accelerometers,
+audio signals, and barometric pressure. Using the additional information provided by these
+sensors, we will be able to perform more ﬁne-grained activity recognition.
+
+Acknowledgments
+The authors would like to thank Jeff Bilmes for useful comments. This work has partly been sup-
+ported by DARPA’s ASSIST and CALO Programme (contract numbers: NBCH-C-05-0137, SRI
+subcontract 27-000968) and by the NSF under grant number IIS-0093406.
+
+References
+[1] D. Ashbrook and T. Starner. Using GPS to learn signiﬁcant locations and predict movement
+across multiple users. Personal and Ubiquitous Computing, 7(5), 2003.
+[2] E. Oran Brigham. Fast Fourier Transform and Its Applications. Prentice Hall, 1988.
+[3] V. Gogate, R. Dechter, C. Rindt, and J. Marca. Modeling transportation routines using hybrid
+dynamic mixed networks. In Proc. of the Conference on Uncertainty in Artiﬁcial Intelligence ,
+2005.
+[4] S. Kumar and M. Hebert. Discriminative random ﬁelds: A discriminative framework for contex-
+tual interaction in classiﬁcation. In Proc. of the International Conference on Computer Vision,
+2003.
+[5] J. Lafferty, A. McCallum, and F. Pereira. Conditional random ﬁelds: Probabilistic models for
+segmenting and labeling sequence data. In Proc. of the International Conference on Machine
+Learning, 2001.
+[6] L. Liao, D. Fox, and H. Kautz. Learning and inferring transportation routines. In Proc. of the
+National Conference on Artiﬁcial Intelligence , 2004.
+[7] L. Liao, D. Fox, and H. Kautz. Hierarchical conditional random ﬁelds for GPS-based activity
+recognition. In Proc. of the 12th International Symposium of Robotics Research (ISRR), 2005.
+[8] L. Liao, D. Fox, and H. Kautz. Location-based activity recognition using relational Markov
+networks. In Proc. of the International Joint Conference on Artiﬁcial Intelligence , 2005.
+[9] Yongyi Mao, Frank R. Kschischang, and Brendan J. Frey. Convolutional factor graphs as prob-
+abilistic models. In Proc. of the Conference on Uncertainty in Artiﬁcial Intelligence , 2004.
+[10] B. Taskar, P. Abbeel, and D. Koller. Discriminative probabilistic models for relational data. In
+Proc. of the Conference on Uncertainty in Artiﬁcial Intelligence , 2002.
+
+

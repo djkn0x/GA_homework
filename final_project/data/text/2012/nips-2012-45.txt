@@ -1,0 +1,1141 @@
+The variational hierarchical EM algorithm for
+clustering hidden Markov models
+
+Emanuele Coviello
+ECE Dept., UC San Diego
+ecoviell@ucsd.edu
+
+Antoni B. Chan
+CS Dept., CityU of Hong Kong
+abchan@cityu.edu.hk
+
+Gert R.G. Lanckriet
+ECE Dept., UC San Diego
+gert@ece.ucsd.edu
+
+Abstract
+
+In this paper, we derive a novel algorithm to cluster hidden Markov models
+(HMMs) according to their probability distributions. We propose a variational
+hierarchical EM algorithm that i) clusters a given collection of HMMs into groups
+of HMMs that are similar, in terms of the distributions they represent, and ii) char-
+acterizes each group by a “cluster center”, i.e., a novel HMM that is representative
+for the group. We illustrate the beneﬁts of the proposed algorithm on hierarchical
+clustering of motion capture sequences as well as on automatic music tagging.
+
+1
+
+Introduction
+
+The hidden Markov model (HMM) [1] is a probabilistic model that assumes a signal is generated
+by a double embedded stochastic process. A discrete-time hidden state process, which evolves as a
+Markov chain, encodes the dynamics of the signal, and an observation process, at each time condi-
+tioned on the current state, encodes the appearance of the signal. HMMs have successfully served
+a variety of applications, including speech recognition [1], music analysis [2] and identiﬁcation [3],
+and clustering of time series data [4, 5].
+This paper is about clustering HMMs. More precisely, we are interested in an algorithm that, given
+a collection of HMMs, partitions them into K clusters of “similar” HMMs, while also learning a
+representative HMM “cluster center” that concisely and appropriately represents each cluster. This
+is similar to standard k-means clustering, except that the data points are HMMs now instead of
+vectors in Rd . Various applications motivate the design of HMM clustering algorithms, ranging from
+hierarchical clustering of sequential data (e.g., speech or motion sequences modeled by HMMs [4]),
+over hierarchical indexing for fast retrieval, to reducing the computational complexity of estimating
+mixtures of HMMs from large datasets (e.g., semantic annotation models for music and video) —
+by clustering HMMs, efﬁciently estimated from many small subsets of the data, into a more compact
+mixture model of all data. However, there has been relatively little work on HMM clustering and,
+therefore, its applications.
+Existing approaches to clustering HMMs operate directly on the HMM parameter space, by group-
+ing HMMs according to a suitable pairwise distance deﬁned in terms of the HMM parameters.
+However, as HMM parameters lie on a non-linear manifold, a simple application of the k-means al-
+gorithm will not succeed in the task, since it assumes real vectors in a Euclidean space. In addition,
+such an approach would have the additional complication that HMM parameters for a particular
+generative model are not unique, i.e., a permutation of the states leads to the same generative model.
+One solution, proposed in [4], ﬁrst constructs an appropriate similarity matrix between all HMMs
+that are to be clustered (e.g., based on the Bhattacharyya afﬁnity, which depends non-linearly on the
+HMM parameters [6]), and then applies spectral clustering. While this approach has proven success-
+ful to group HMMs into similar clusters [4], it does not allow to generate novel HMMs as cluster
+centers. Each cluster can still be represented by choosing one of the given HMMs, e.g., the HMM
+which the spectral clustering procedure maps the closest to each spectral clustering center. However,
+this may be suboptimal for various applications of HMM clustering, e.g., in hierarchical estimation
+
+1
+
+of HMM mixtures. Spectral clustering can be based on other afﬁnity scores between HMMs distri-
+butions than Bhattacharyya afﬁnity, such as KL divergence approximated with sampling [7].
+Instead, in this paper we propose to cluster HMMs directly with respect to the probability distri-
+butions they represent. We derive a hierarchical expectation maximization (HEM) algorithm that,
+starting from a group of HMMs, estimates a smaller mixture model that concisely represents and
+clusters the input HMMs (i.e., the input HMM distributions guide the estimation of the output mix-
+ture distribution). Historically, the ﬁrst HEM algorithm was designed to cluster Gaussian probability
+distributions [8]. This algorithm starts from a Gaussian mixture model (GMM) and reduces it to an-
+other GMM with fewer components, where each of the mixture components of the reduced GMM
+represents, i.e., clusters, a group of the original Gaussian mixture components. More recently, Chan
+et al. [9] derived an HEM algorithm to cluster dynamic texture (DT) models (i.e., linear dynamical
+systems, LDSs) through their probability distributions. HEM has been applied successfully to many
+machine learning tasks for images [10], video [9] and music [11, 12]. The HEM algorithm is simi-
+lar in spirit to Bregman-clustering [13], which is based on assigning points to cluster centers using
+KL-divergence.
+To extend the HEM framework for GMMs to hidden Markov mixture models (H3Ms), additional
+marginalization of the hidden-state processes is required, as for DTMs. However, while Gaussians
+and DTs allow tractable inference in the E-step of HEM, this is no longer the case for HMMs.
+Therefore, in this work, we derive a variational formulation of the HEM algorithm (VHEM), and
+then leverage a variational approximation derived in [14] (which has not been used in a learning con-
+text so far) to make the inference in the E-step tractable. The proposed VHEM algorithm for H3Ms
+(VHEM-H3M) allows to cluster hidden Markov models, while also learning novel HMM centers that
+are representative of each cluster, in a way that is consistent with the underlying generative model
+of the input HMMs. The resulting VHEM algorithm can be generalized to handle other classes of
+graphical models, for which exact computation of the E-step in standard HEM would be intractable,
+by leveraging similar variational approximations. The efﬁcacy of the VHEM-H3M algorithm is
+demonstrated on hierarchical motion clustering and semantic music annotation and retrieval.
+The remainder of the paper is organized as follows. We review the hidden Markov model (HMM)
+and the hidden Markov mixture model (H3M) in Section 2. We present the derivation of the VHEM-
+H3M algorithm in Section 3, discussion and an experimental evaluation in Section 4.
+2 The hidden Markov (mixture) model
+A hidden Markov model (HMM) M assumes a sequence of τ observations y1:τ is generated by
+a double embedded stochastic process. The hidden state process x1:τ is a ﬁrst order Markov
+chain on S states, with transition matrix A whose entries are aβ ,γ = P (xt+1 = γ |xt = β ),
+and initial state distribution π = [π1 , . . . , πS ], where πβ = P (x1 = β |M). Each state β gen-
+erates observations according to an emission probability density function p(y |x = β , M) which
+p(y |x = β , M) = (cid:80)M
+here we assume time-invariant and modeled as a Gaussian mixture with M components, i.e.,
+m=1 cβ ,mp(y |ζ = m, M), where ζ ∼ multinomial(cβ ,1 , . . . , cβ ,M ) is the
+hidden variable that selects the mixture component, cβ ,m the mixture weight of the mth Gaussian
+component, and p(y |ζ = m, M) = N (y ; µβ ,m , Σβ ,m ) is the probability density function of a mul-
+tivariate Gaussian distribution with mean µβ ,m and covariance matrix Σβ ,m . The HMM is speciﬁed
+m=1 }S
+β=1} which can be efﬁciently learned
+by the parameters M = {π , A, {{cβ ,m , µβ ,m , Σβ ,m }M
+from an observation sequence y1:τ with the Baum-Welch algorithm [1].
+A hidden Markov mixture model (H3M) models a set of observation sequences as samples
+from a group of K hidden Markov models, each associated to a speciﬁc sub-behavior [5].
+For a given sequence, an assignment variable z ∼ multinomial(ω1 , · · · ωK ) selects the pa-
+is parametrized by Mz =
+rameters of one of the K HMMs.
+Each mixture component
+m=1 }S
+β=1} and the H3M is parametrized by M = {ωz , Mz }K
+{πz , Az , {{cz
+β ,m }M
+z=1 .
+β ,m , µz
+β ,m , Σz
+The likelihood of a random sequence y1:τ ∼ M is
+K(cid:88)
+i=1
+where p(y1:τ |z = i, M) is the likelihood of y1:τ under the ith HMM component. To reduce clutter,
+here we assume that all the HMMs have the same number S of hidden states and that all emission
+probabilities have M mixture components, though our derivation could be easily extended to the
+more general case, and in the remainder of the paper we use the notation in Table 1.
+
+ωip(y1:τ |z = i, M),
+
+p(y1:τ |M) =
+
+(1)
+
+2
+
+variables
+(b)
+index for HMM comp.
+i
+HMM states
+β
+β1:τ = {β1 · · ·βτ }
+HMM state sequence
+index for comp. of GMM m
+models
+
+H3M
+HMM component
+GMM emission
+component of GMM
+
+Table 1: Notation. (b) base model, (r) reduced model.
+notation
+probability distributions
+(r)
+p(x1:τ=β1:τ |z (b)=i, M(b))
+HMM state seq. (b)
+j
+p(x1:τ=ρ1:τ |z (r)=j, M(r))
+HMM state seq. (r)
+ρ
+p(y1:τ |z (r) = j, M(r) )
+ρ1:τ = {ρ1 · · ·ρτ } HMM obs. likelihood (r)
+p(yt |xt = ρ, M(r)
+GMM emit likelihood (r)
+(cid:96)
+j )
+p(yt |ζt = (cid:96), xt = ρ, M(r)
+Gaussian likelihood (r)
+j )
+expectations
+Ey1:τ |z (b)=i,M(b) [·]
+HMM obs. seq.
+[·]
+GMM emission
+Eyt |xt=β ,M(b)
+i
+Gaussian component
+Eyt |ζt=m,xt=β ,M(b)
+i
+
+M(r)
+M(r)
+j
+M(r)
+j,ρ
+M(r)
+j,ρ,(cid:96)
+
+[·]
+
+M(b)
+M(b)
+i
+M(b)
+i,β
+M(b)
+i,β ,m
+
+short-hand
+π (b),i
+β1:τ
+π (r),j
+ρ1:τ
+p(y1:τ |M(r)
+j )
+p(yt |M(r)
+j,ρ )
+p(yt |M(r)
+j,ρ,(cid:96) )
+[·]
+[·]
+
+EM(b)
+i
+EM(b)
+i,β
+EM(b)
+i,β ,m
+
+[·]
+
+3 Clustering hidden Markov models
+
+We now derive the variational hierarchical EM algorithm for clustering HMMs (VHEM-H3M). Let
+M(b) = {ω (b)
+, M(b)
+i }K (b)
+i=1 be a base hidden Markov mixture model (H3M) with K (b) components.
+i
+The goal of the VHEM-H3M algorithm is to ﬁnd a reduced hidden Markov mixture model M(r) =
+{ω (r)
+, M(r)
+j }K (r)
+j=1 with fewer components (i.e., K (r) < K (b) ), that represents M(b) well. At a high
+j
+level, the VHEM-H3M algorithm estimates the reduced H3M model M(r) from virtual samples
+distributed according to the base H3M model M(b) . From this estimation procedure, the VHEM
+algorithm provides: (i) a (soft) clustering of the original K (b) HMMs into K (r) groups, encoded
+in assignment variables ˆzi,j , and (ii) novel HMM cluster centers, i.e., the HMM components of
+M(r) , each of them representing a group of the original HMMs of M(b) . Finally, because we take
+the expectation over the virtual samples, the estimation is carried out in an efﬁcient manner that
+requires only knowledge of the parameters of the base model without the need of generating actual
+virtual samples.
+
+3.1 Parameter estimation
+We consider a set Y of N virtual samples distributed accordingly to the base model M(b) , such that
+samples Yi = {y (i,m)
+1:τ }Ni
+1:τ ∼ M(b)
+the Ni = N ω (b)
+m=1 are from the ith component (i.e., y (i,m)
+). We
+i
+i
+denote the entire set of samples as Y = {Yi }K (b)
+i=1 , and, in order to obtain a consistent clustering of the
+input HMMs M(b)
+, we assume the entirety of samples Yi is assigned to the same component of the
+i
+reduced model [8]. Note that, in this formulation, we are not using virtual samples {x(i,m)
+1:τ }
+, y (i,m)
+1:τ
+for each base component, according to its joint distribution p(x1:τ , y1:τ |M(b)
+i ), but we treat Xi =
+{x(i,m)
+1:τ }Ni
+m=1 as “missing” information, and estimate them in the E-step. The reason is that a basis
+i will cause problems when the parameters of M(r)
+mismatch between components of M(b)
+are
+j
+computed from virtual samples of the hidden states of {M(b)
+i }K (b)
+i=1 .
+log p(Y |M(r) ) = (cid:80)K (b)
+The original formulation of HEM [8] maximizes log-likelihood of the virtual samples,
+i.e.,
+i=1 log p(Yi |M(r) ), with respect to M(r) , and uses the law of large num-
+bers to turn the virtual samples into an expectation over the base model components M(b)
+. In this
+i
+paper, we will start with a slightly different objective function to derive the VHEM algorithm. To
+estimate M(r) , we will maximize the expected log-likelihood of the virtual samples,
+(cid:104)
+(cid:105)
+(cid:104)
+(cid:105)
+K (b)(cid:88)
+log p(Y |M(r) )
+EM(b)
+i
+i=1
+where the expectation is over the base model components M(b)
+.
+i
+A general framework for maximum likelihood estimation in the presence of hidden variables (which
+is the case for H3Ms) is the EM algorithm [15]. In this work, we take a variational perspective [16,
+17, 18], which views both E- and M-step as a maximization step. The variational E-step ﬁrst obtains
+a family of lower bounds to the log-likelihood (i.e., to equation 2), indexed by variational parameters,
+and then optimizes over the variational parameters to ﬁnd the tightest bound. The corresponding
+M-step then maximizes the lower bound (with the variational parameters ﬁxed) with respect to the
+
+J (M(r) ) = EM(b)
+
+log p(Yi |M(r) )
+
+(2)
+
+=
+
+,
+
+3
+
+model parameters. One advantage of the variational formulation is that it allows to replace a difﬁcult
+inference in the E-step with a variational approximation, by restricting the maximization to a smaller
+domain for which the lower bound is tractable.
+
+3.1.1 Lower bound to an expected log-likelihood
+
+(3)
+
+q(H ) log
+
+Before proceeding with the derivation of VHEM for H3Ms, we ﬁrst need to derive a lower-bound to
+an expected log-likelihood term (e.g., (2)). We will ﬁrst consider the lower bound to a log-likelihood.
+of the observations, and p(O) = (cid:80)
+In all generality, let {O , H } be the observation and hidden variables of a probabilistic model, respec-
+tively, where p(H ) is the distribution of the hidden variables, p(O|H ) is the conditional likelihood
+H p(O|H )p(H ) is the observation likelihood. We can deﬁne a
+(cid:88)
+variational lower bound to the observation log-likelihood [18, 19]:
+p(H )p(O|H )
+log p(O) ≥ log p(O) − D(q(H )||p(H |O)) =
+q(H )
+distribution (i.e., (cid:80)
+H
+where p(H |O) is the posterior distribution of H given observation O , and q(H ) is the variational
+(cid:82) p(y) log p(y)
+H q(H ) = 1 and qi (H ) ≥ 0) or approximate posterior distribution. D(p(cid:107)q) =
+q(y) dy is the Kullback-Leibler (KL) divergence between two distributions, p and q . When
+the variational distribution equals the true posterior, q(H ) = P (H |O), then the KL divergence
+is zero, and hence the lower-bound reaches log p(O). When the true posterior is not possible to
+calculate, then typically q is restricted to some set of approximate posterior distributions that are
+(cid:88)
+tractable, and the best lower-bound is obtained by maximizing over q ,
+p(H )p(O|H )
+log p(O) ≥ max
+q∈Q
+q(H )
+H
+Using the lower bound in (4), we can now derive a lower bound to an expected log-likelihood
+expression. Let Eb [·] be the expectation of O with respect to a distribution pb (O). Since pb (O) is
+(cid:35)
+(cid:34)(cid:88)
+(cid:35)
+(cid:34)
+(cid:88)
+non-negative, taking the expectation on both sides of (4) yields,
+p(H )p(O|H )
+≥ max
+(cid:26)
+(cid:27)
+(cid:88)
+Eb
+q(H ) log
+max
+q∈Q
+q∈Q
+q(H )
+H
+H
++ Eb [log p(O|H )]
+p(H )
+= max
+q∈Q
+q(H )
+H
+where (5) follows from Jensen’s inequality (i.e., f (E[x]) ≤ E[f (x)] when f is convex), and the
+convexity of the max function.
+
+p(H )p(O|H )
+q(H )
+
+Eb [log p(O)] ≥ Eb
+
+q(H ) log
+
+q(H ) log
+
+q(H )
+
+log
+
+(4)
+
+(5)
+
+(6)
+
+,
+
+3.1.2 Variational lower bound
+
+We now derive the lower bound of the expected log-likelihood cost function in (2). The derivation
+proceeds by successively applying the lower bound from (6) on each arising expected log-likelihood
+term, which results in a set of nested lower bounds. We ﬁrst deﬁne the following three lower bounds:
+
+(7)
+
+[log p(Yi |M(r) )] ≥ Li
+EM(b)
+H 3M ,
+i
+j )] ≥ Li,j
+[log p(y1:τ |M(r)
+EM(b)
+HMM ,
+i
+)] ≥ L(i,βt ),(j,ρt )
+[log p(yt |M(r)
+EM(b)
+j,ρt
+GMM
+i,βt
+The ﬁrst lower bound, Li
+H 3M , is on the expected log-likelihood between an HMM and an H3M.
+The second lower bound, Li,j
+HMM , is on the expected log-likelihood of an HMM M(r)
+, marginal-
+j
+ized over observation sequences from a different HMM M(b)
+. Although the data log-likelihood
+i
+log p(y1:τ |M(r)
+j ) can be computed exactly using the forward algorithm [1], calculating its expecta-
+tion is not analytically tractable since y1:τ ∼ M(r)
+is essentially an observation from a mixture with
+j
+and M(r)
+O(S τ ) components. The third lower bound is between GMM emission densities M(b)
+.
+j,ρt
+i,βt
+
+(8)
+
+(9)
+
+.
+
+4
+
+EM(b)
+i
+
+π (b),i
+β1:τ
+
+log
+
+qi (zi = j )
+
+log
+
+qi (zi = j )
+
+(cid:44) Li
+H 3M .
+
+(10)
+
++ NiEM(b)
+i
+
+π (b),i
+β1:τ
+
+max
+qi,j
+
++ NiLi,j
+HMM
+
+q i,j (ρ1:τ |β1:τ )
+
+H3M lower bound - Looking at an individual term in (2), p(Yi |M(r) ) is a mixture of HMMs, and
+thus the observation variable is Yi and the hidden variable is zi (the assignment of Yi to a component
+(cid:26)
+(cid:27)
+(cid:104)
+(cid:105) ≥ max
+M(r)
+(cid:88)
+). Hence, introducing the variational distribution qi (zi ) and applying (6), we have
+j
+[log p(y1:τ |M(r)
+log p(Yi |M(r) )
+p(zi = j )
+(cid:27)
+(cid:26)
+j )]
+(cid:88)
+qi (zi = j )
+qi
+j
+≥ max
+p(zi = j )
+log
+qi (zi = j )
+qi
+j
+where we use the fact that Yi is a set of Ni i.i.d. samples, and we use the lower bound (8) for
+the expectation of log p(y1:τ |M(r)
+j ), which is the observation log-likelihood of an HMM and hence
+distributions to the form qi (zi = j ) = zij for all i, where (cid:80)K (r)
+its expectation cannot be calculated directly. To compute Li
+H 3M , we will restrict the variational
+j=1 zij = 1, and zij ≥ 0 ∀j .
+HMM lower bound - For the HMM likelihood p(y1:τ |M(r)
+j ), the observation variable is y1:τ and
+(cid:88)
+the hidden variable is its state sequence ρ1:τ . Hence, for the lower bound Li,j
+HMM we get
+[log p(y1:τ |M(r)
+[log p(y1:τ |M(r)
+(cid:41)
+(cid:40)
+π (b),i
+EM(b)
+EM(b)
+j )] =
+j )]
+|β1:τ
+(cid:88)
+(cid:88)
+≥ (cid:88)
+β1:τ
+i
+i
+β1 :τ
+p(ρ1:τ |M(r)
+j )
+q i,j (ρ1:τ |β1:τ )
+(cid:40)
+q i,j (ρ1:τ |β1:τ )
+)]
+log
+(cid:88)
+≥ (cid:88)
+(cid:88)
+t
+ρ1:τ
+β1 :τ
+p(ρ1:τ |M(r)
+j )
+q i,j (ρ1:τ |β1:τ )
+max
+qi,j
+ρ1:τ
+t
+β1 :τ
+where in (11) we ﬁrst rewrite the expectation EM(b)
+to explicitly marginalize over the HMM state
+i
+sequence β1:τ from M(b)
+, in (12) we introduce a variational distribution q i,j
+(ρ1:τ ) on the state
+i
+β1:τ
+sequence ρ1:τ , which depends on the particular sequence β1:τ , and apply (6) , and in the last line we
+use the lower bound, deﬁned in (9), on each expectation.
+τ(cid:89)
+To compute Li,j
+HMM we will restrict the variational distributions to the form of a Markov chain [14],
+(ρt |ρt−1 ),
+q i,j (ρ1:τ |β1:τ ) = φi,j (ρ1:τ |β1:τ ) = φi,j (ρ1 |β1 )
+where (cid:80)S
+(ρ1 ) = 1 for each value of β1 , and (cid:80)S
+φi,j
+(14)
+βt
+t=2
+(ρt |ρt−1 ) = 1 for each value
+ρ1=1 φi,j
+ρt=1 φi,j
+β1
+βt
+(ρ1:τ ) assigns state sequences β1:τ ∼ M(b)
+of βt and ρt−1 . The variational distribution q i,j
+to
+i
+β1:τ
+, based on how well (in expectation) the state sequence ρ1:τ ∼ M(r)
+state sequences ρ1:τ ∼ M(r)
+j
+j
+can explain an observation sequence generated by HMM M(b)
+evolving through state sequence
+i
+β1:τ ∼ M(b)
+, i.e., by p(y1:τ |M(b)
+, β1:τ ).
+i
+i
+GMM lower bound - In [20] we derive the lower bound (9), by marginalizing EM(b)
+over GMM
+, where (cid:80)M
+i,βt
+β ,ρ (ζ = l|m), and applying (6). We will
+assignment m, introducing the variational distributions q i,j
+=1 ∀m,
+β ,ρ (ζ = l|m) = η (i,β ),(j,ρ)
+(cid:96)=1 η (i,βt ),(j,ρt )
+restrict the variational distributions to q i,j
+(cid:96)|m
+(cid:96)|m
+≥0 ∀(cid:96),m. Intuitively, η (i,βt ),(j,ρt ) is the responsibility matrix between Gaussian ob-
+and η (i,βt ),(j,ρt )
+(cid:96)|m
+and state ρt in M(r)
+servation components for state βt in M(b)
+, where η (i,βt ),(j,ρt )
+is the probability
+(cid:96)|m
+i
+j
+corresponds to component (cid:96) of M(r)
+that an observation from component m of M(b)
+.
+j,ρt
+i,βt
+
+[log p(yt |M(r)
+(cid:41)
+j,ρt
+
+L(i,βt ),(j,ρt )
+GMM
+
+(cid:44) Li,j
+HMM
+
+(11)
+
+(12)
+
+(13)
+
+EM(b)
+i,βt
+
++
+
++
+
+3.2 Variational HEM algorithm
+
+(cid:105) ≥ K (b)(cid:88)
+(cid:104)
+Finally, the variational lower bound of the expected log-likelihood of the virtual samples in (2) is
+log p(Y |M(r) )
+J (M(r) ) = EM(b)
+i=1
+
+Li
+H 3M ,
+
+(15)
+
+5
+
+(cid:48)
+
+(cid:48)
+
+(16)
+
+ξ i,j
+t (ρ, ρ
+
+, β ).
+
+ˆξ i,j (ρ, ρ
+
+) =
+
+ˆν i,j
+1 (σ) =
+
+ν i,j
+t (σ, β ),
+
+ˆν i,j (σ, β ) =
+
+which is composed of three nested lower bounds, corresponding to different model elements (the
+H3M, the component HMMs, and the emission GMMs). The VHEM algorithm for HMMs consists
+in coordinate ascent on the right hand side of (15).
+(ρ1 ) (cid:81)τ
+E-step - The variational E-step (see [20] for details) calculates the variational parameters zij ,
+φi,j (ρ1:τ |β1:τ ) = φi,j
+(ρt |ρt−1 ), and η (i,β ),(j,ρ) for the lower bounds in (9) (13)
+t=2 φi,j
+β1
+βt
+(10).
+In particular, given the nesting of the lower bounds, we proceed by ﬁrst maximizing the
+for each (i, j, βt , ρt ). Next, the HMM lower bound Li,j
+GMM lower bound L(i,βt ),(j,ρt )
+HMM is
+maximized for each (i, j ), which is followed by maximizing Li
+GMM
+H 3M for each i. The latter gives
+ˆzij ∝ w(r)
+exp(NiLi,j
+(cid:16)(cid:80)S
+(cid:17) ˆφi,j
+HMM ), which is similar to the formula derived in [8, 9], but the expecta-
+j
+tion is now replaced with its lower bound. We then collect the summary statistics: ν i,j
+1 (ρ1 , β1 ) =
+t (ρt , βt ) = (cid:80)S
+1 (ρ1 |β1 ),
+t (ρt |ρt−1 , βt ),
+π (b),i
+t−1 (ρt−1 , βt−1 )a(b),i
+ˆφi,j
+ξ i,j
+βt−1=1ν i,j
+t (ρt−1 , ρt , βt ) =
+ρ1
+βt−1 ,γt−1
+and ν i,j
+ρt−1=1 ξ i,j
+t (ρt−1 , ρt , βt ), the last two for t = 2, . . . , τ , and their aggregates
+S(cid:88)
+τ(cid:88)
+τ(cid:88)
+S(cid:88)
+which are necessary for the M-step:
+ν i,j
+1 (σ, β ),
+t=2
+t=1
+β=1
+β=1
+1 (ρ) is the expected number of times that the HMM M(r)
+The statistic ˆν i,j
+starts from state ρ, when
+j
+modeling sequences generated by M(b)
+. The quantity ˆν i,j (ρ, β ) is the expected number of times that
+i
+the HMM M(r)
+is in state ρ when the HMM M(b)
+is in state β , when both are modeling sequences
+j
+i
+generated by M(b)
+. Similarly, the quantity ˆξ i,j (ρ, ρ(cid:48) ) is the expected number of transitions from
+i
+, when modeling sequences generated by M(b)
+state ρ to state ρ(cid:48) of M(r)
+.
+j
+i
+β=1 ˆν i,j (ρ, β ) (cid:80)M
+weighted sum operator Ωj,ρ,(cid:96) (x(i, β , m)) = (cid:80)K (b)
+(cid:80)S
+M-step - The lower bound (15) is maximized with respect to the parameters M(r) . Deﬁned a
+β ,m x(i, β , m), the
+m=1 c(b),i
+i=1 ˆzi,j ω (b)
+i
+parameters M(r) are updated according to (derivation in [20]):
+(cid:80)K (b)
+(cid:80)K (b)
+(cid:80)K (b)
+(cid:80)S
+(cid:80)K (b)
+(cid:80)S
+(cid:80)K (b)
+ˆξi,j (ρ, ρ(cid:48) )
+i=1 ˆzi,j ω(b)
+i=1 ˆzi,j ω(b)
+∗
+∗
+i ˆν i,j
+∗
+1 (ρ)
+i=1 ˆzi,j
+, π(r),j
+i
+(cid:17)
+(cid:16)
+(cid:17)
+(cid:16)
+=
+=
+ρ
+1 (ρ(cid:48) ))
+K (b)
+i=1 ˆzi,j ω(b)
+i=1 ˆzi,j ω(b)
+ˆξi,j (ρ, σ)
+i ˆν i,j
+ρ(cid:48)=1
+σ=1
+i
+(cid:17)
+(cid:17) , µ(r),j
+(cid:16)
+(cid:16)
+(cid:80)M
+µ(b),i
+η(i,β),(j,ρ)
+ˆη(i,β),(j,ρ)
+Ωj,ρ,(cid:96)
+∗
+(cid:96)|m
+(cid:96)|m
+β ,m
+(cid:104)
+(cid:16)
+(cid:16)
+ρ,(cid:96) )t (cid:105)(cid:17)
+(cid:17)
+ρ,(cid:96)
+ˆη(i,β),(j,ρ)
+ˆη(i,β),(j,ρ)
+(cid:96)(cid:48)=1 Ωj,ρ,(cid:96)(cid:48)
+(cid:96)(cid:48) |m
+Ωj,ρ,(cid:96)
+(cid:96)|m
+β ,m − µ(r),j
+β ,m − µ(r),j
+Σ(r),j
+ˆη(i,β),(j,ρ)
+Σ(b),i
+β ,m + (µ(b),i
+ρ,(cid:96) ) (µ(b),i
+ˆη(i,β),(j,ρ)
+(18)
+= Ωj,ρ,(cid:96)
+/Ωj,ρ,(cid:96)
+.
+(cid:96)|m
+(cid:96)|m
+ρ,(cid:96)
+Equations (17) and (18) are all weighted averages over all base models, model states, and Gaussian
+components. The covariance matrices of the reduced models (18) are never smaller in magnitude
+than the covariance matrices of the base models, due to the outer-product term. This regularization
+effect derives from the E-step, which averages all possible observations from the base model.
+4 Discussion, Experiments and Conclusions
+Jebara et al. [4] cluster a collection of HMMs by applying spectral clustering to a probability product
+kernel (PPK) matrix between HMMs. While this has been proven successful in grouping HMMs
+into similar clusters, it cannot learn novel HMM cluster centers and therefore is suboptimal for
+hierarchical estimation of mixture models (see Section 4.2). A second limitation is that the cost of
+building the PPK matrix is quadratic in the number K (b) of input HMMs. Note that we extended the
+algorithm in [4] to support GMM observations instead of only Gaussians.
+The VHEM-H3M algorithm clusters a collection of HMMs directly through the distributions they
+represent, by estimating a smaller mixture of novel HMMs that concisely models the distribution
+represented by the input HMMs. This is achieved by maximizing the log-likelihood of “virtual”
+samples generated from the input HMMs. As a result, the VHEM cluster centers are consistent
+with the underlying generative probabilistic framework. As a ﬁrst advantage, since VHEM-H3M
+estimates novel HMM cluster centers, we expect the learned cluster centers to retain more informa-
+tion on the clusters’ structure and VHEM-H3M to produce better hierarchical clusterings than [4],
+which suffers out-of-sample limitations. A second advantage is that VHEM does not build a kernel
+embedding as in [4], an is therefore expected to be more efﬁcient, especially for large K (b) .
+
+ω(r)
+j
+
+=
+
+c(r),j
+ρ,(cid:96)
+
+=
+
+Ωj,ρ,(cid:96)
+
+=
+
+,
+
+(17)
+
+, a(r),j
+ρ,ρ(cid:48)
+
+∗
+
+∗
+
+,
+
+6
+
+In addition, VHEM-H3M allows for efﬁcient estimation of HMM mixtures from large datasets using
+a hierarchical estimation procedure. In particular, in a ﬁrst stage intermediate HMM mixtures are
+estimated in parallel by running standard EM on small independent portions of the dataset, and the
+ﬁnal model is estimated from the intermediate models using the VHEM algorithm. Relative to direct
+EM estimation on the entire data, VHEM-H3M is more time- and memory-efﬁcient. First, it does
+not need to evaluate the likelihood of all the samples at each iteration, and converges to effective
+estimates in shorter times. Second, it no longer requires storing in memory the entire data set during
+parameter estimation. Another advantage is that the intermediate models implicitly provide more
+“samples” (virtual variations of each time-series) to the ﬁnal VHEM stage. This acts as a form of
+regularization that prevents over-ﬁtting and improves robustness of the learned models. Therefore,
+we expect models learned using the hierarchical estimation procedure to perform better than those
+learned with EM directly on the entire data. Note that in the second stage we could use the spectral
+clustering algorithm in [4] instead of VHEM — run spectral clustering over intermediate models
+pooled together, and form the ﬁnal H3M with the HMMs mapped the closest to the K cluster centers.
+VHEM, however, is expected to do better since it learns novel cluster centers. As an alternative to
+VHEM, we tested a version of HEM that, instead of marginalizing over virtual samples, uses actual
+sampling and the EM algorithm [5] to learn the reduced H3M. Despite its simplicity, the algorithm
+requires a large number of samples for learning accurate models, and has longer learning times
+(since it evaluates the likelihood of all samples at each iteration).
+4.1 Experiment on hierarchical motion clustering
+
+Table 2: Hierarchical clustering on Motion Capture data,
+using various algorithms. The Rand-index is the probabil-
+ity that any pair of motion sequences are correctly clustered
+with respect to each other. Results are averages of 10 trials.
+log-likelihood (×106)
+Rand-index
+4
+3
+2
+2
+4
+3
+Level
+(#samples)
+30.97
+0.937 0.811 0.518 -5.361
+-5.682
+-5.866
+VHEM-H3M
+0.956 0.740 0.393 -5.399
+37.69
+-6.068
+-5.845
+PPK-SC
+SHEM-H3M (560)
+0.714 0.359 0.234 -13.632 -69.746 -275.650 843.89
+SHEM-H3M (2800) 0.782 0.685 0.480 -14.645 -30.086 -52.227 3849.72
+667.97
+0.831 0.430 0.340 -5.713 -202.55 -168.90
+EM-H3M
+HEM-DTM
+0.897 0.661 0.412 -7.125
+-8.163
+-8.532
+121.32
+
+time (s)
+
+Table 3: Annotation and retrieval on CAL500, for VHEM-
+H3M, PPK-SC, EM-H3M, HEM-DTM and HEM-GMM,
+averaged over the 97 tags with at least 30 examples in
+CAL500, and result of 5 fold-cross validation.
+
+Figure 1: Hierarchical clus-
+tering of Motion Capture data
+(qualitative). Best in color.
+
+retrieval
+annotation
+time (h)
+P@10
+MAP
+F
+R
+P
+678
+0.451
+0.440
+0.260
+0.211
+VHEM-H3M 0.446
+1860
+0.422
+0.423
+0.248
+0.214
+0.415
+EM-H3M
+1033
+0.347
+0.340
+0.151
+0.159
+PPK-SC
+0.299
+HEM-DTM 0.430
+426
+0.453
+0.439
+0.252
+0.202
+HEM-GMM 0.374
+5
+0.417
+0.425
+0.213
+0.205
+We tested the VHEM algorithm on hierarchical motion clustering, where each of the input HMMs
+to be clustered is estimated on a sequence of motion capture data from the Motion Capture dataset
+(http://mocap.cs.cmu.edu/ ). In particular, we start from K1 = 56 motion examples from 8 different
+classes (“jump”, “run”, ‘jog‘”, “walk 1” and “walk 2” which are from two different subjects, “bas-
+ket”, “soccer”, “sit”), and learn a HMM for each of them, forming the ﬁrst level of the hierarchy.
+A tree-structure is formed by successively clustering HMMs with the VHEM algorithm, and using
+the learned cluster centers as the representative HMMs at the new level. Level 2, 3, and 4 of the
+hierarchy correspond to K2 = 8, K3 = 4 and K4 = 2 clusters.
+The hierarchical clustering obtained with VHEM is illustrated in Figure 1 (top). In the ﬁrst level,
+each vertical bar represents a motion sequence, and different colors indicate different ground-truth
+classes. At Level 2, the 8 HMM clusters are shown with vertical bars, with the colors indicating the
+proportions of the motion classes in the cluster. At Level 2, VHEM produces clusters with examples
+from a single motion class (e.g., “run”, “jog”, “jump”), but mixes some “soccer” examples with
+“basket”, possibly because both actions consists in a sequence of movement-shot-pause. Moving up
+the hierarchy, VHEM clusters similar motions classes together (as indicated by the arrows), and at
+Level 4 it creates a dichotomy between “sit” and the other (more dynamic) motion classes. On the
+
+7
+
+1020304050Level 1  walk 1basketjumpsoccerrunwalk 2jogsit12Level 41234Level 312345678Level 2PPK-SC12Level 4Level 3Level 2123412345678VHEM-H3M algorithm1020304050Level 1  bottom, in Figure 1, the same experiment is repeated using spectral clustering in tandem with PPK
+similarity (PPK-SC). PPK-SC clusters motion sequences properly, however, at Level 2 it incorrectly
+aggregates “sit” and “soccer” that have quite different dynamics, and Level 4 is not as interpretable
+as the one by VHEM. Table 2 provides a quantitative comparison. While VHEM has lower Rand-
+index than PPK-SC at Level 2 (0.937 vs. 0.956), it has higher Rand-index at Level 3 (0.811 vs.
+0.740) and Level 4 (0.518 vs. 0.393). In addition, VHEM-H3M has higher data log-likelihood
+than PPK-SC at each level, and is more efﬁcient. This suggests that the novel HMM cluster centers
+learned by VHEM-H3M retain more information on the clusters’ structure than the spectral cluster
+centers, which is increasingly visible moving up the hierarchy. Finally, VHEM-H3M performs better
+and is more efﬁcient than the HEM version based on actual sampling (SHEM-H3M), the EM applied
+directly on the motion sequences, and the HEM-DTM algorithm [9].
+4.2 Experiment on automatic music tagging
+We evaluated VHEM-H3M on content-based music auto-tagging on the CAL500 [11], a collection
+of 502 songs annotated with respect to a vocabulary V of 149 tags. For each song, we extract a
+time series Y = {y1 , . . . , yT } of 13 Mel frequency cepstral coefﬁcients (MFCC) [1] over half-
+overlapping windows of 46ms, with ﬁrst and second instantaneous derivatives. We formulate music
+auto-tagging as supervised multi-class labeling [10], where each class is a tag from V and is modeled
+as a H3M probability distribution estimated from audio-sequences (of T = 125 audio features, i.e.,
+approximately 3s of audio) extracted from the relevant songs in the database, using the VHEM-
+H3M algorithm. First, for each song the EM algorithm is used to learn a H3Ms with K (s) = 6
+components (as many as the structural parts of most pop songs). Then, for each tag, the relevant
+song-level H3Ms are pooled together and the VHEM-H3M algorithm is used to learn the ﬁnal H3M
+tag model with K = 3 components.
+We compare the proposed VHEM-H3M algorithm to PPK-SC,1 direct EM-estimation (EM-H3M)
+[5] from the relevant songs’ audio sequences, HEM-DTM [12] and HEM-GMM [11]. The last two
+use an efﬁcient HEM algorithm for learning, and are state-of-the-art baselines for music tagging.
+We were not able to successfully estimate tag-H3Ms with the sampling version of HEM-H3M.
+Annotation (precision P, recall R, and f-score F) and retrieval (mean average precision MAP, and
+top-10 precision P@10) are reported in Table 3. VHEM-H3M is the most efﬁcient algorithm for
+learning H3Ms as it requires only 36% of the time of EM-H3M, and 65% of the time of PPK-
+SC. VHEM-H3M capitalizes on the song-level H3Ms learned in the ﬁrst stage (about one third of
+the total time), by efﬁciently using them to learn the ﬁnal tag models. The gain in computational
+efﬁciency does not negatively affect the quality of the resulting models. On the contrary, VHEM-
+H3M achieves better performance than EM-H3M (differences are statistically signiﬁcant based on
+a paired t-test with 95% conﬁdence), since it has the beneﬁt of regularization, and outperforms
+PPK-SC. Designed for clustering HMMs, PPK-SC does not produce accurate annotation models,
+since it discards information on the clusters’ structure by approximating it with one of the original
+HMMs. Instead, VHEM-H3M generates novel HMM cluster centers that effectively summarizes
+each cluster. VHEM-H3M outperforms HEM-GMM, which does not model temporal information
+in the audio signal. Finally, HEM-DTM, based on LDSs (a continuous-state model), can model only
+stationary time-series in a linear subspace. In contrast, VHEM-H3M uses HMMs with discrete states
+and GMM emissions, and can also adapt to non-stationary time-series on a non-linear manifold.
+Hence, VHEM-H3M outperforms HEM-DTM on the human MoCap data (see Table (2)), which has
+non-linear dynamics, while the two perform similarly on the music data (difference were statistically
+signiﬁcant only on annotation P), where the audio features are stationary over short time frames.
+4.3 Conclusion
+We presented a variational HEM algorithm for clustering HMMs through their distributions and gen-
+erates novel HMM cluster centers. The efﬁcacy of the algorithm was demonstrated on hierarchical
+motion clustering and automatic music tagging, with improvement over current methods.
+Acknowledgments
+
+The authors acknowledge support from Google, Inc. E.C. and G.R.G.L. acknowledge support from
+Qualcomm, Inc., Yahoo!
+Inc., and the National Science Foundation (grants CCF-083053, IIS-
+1054960 and EIA-0303622). A.B.C. acknowledges support from the Research Grants Council of
+the Hong Kong SAR, China (CityU 110610). G.R.G.L. acknowledges support from the Alfred P.
+Sloan Foundation.
+1 It was necessary to implement PPK-SC with song-level H3Ms with K (s)=1. K (s)=2 took about quadruple
+the time with no improvement in performance. Larger K (s) would determine impractical learning times.
+
+8
+
+References
+[1] L. Rabiner and B. H. Juang. Fundamentals of Speech Recognition. Prentice Hall, Upper Saddle
+River (NJ, USA), 1993.
+[2] Y. Qi, J.W. Paisley, and L. Carin. Music analysis using hidden markov mixture models. Signal
+Processing, IEEE Transactions on, 55(11):5209–5224, 2007.
+[3] E. Batlle, J. Masip, and E. Guaus. Automatic song identiﬁcation in noisy broadcast audio. In
+IASTED International Conference on Signal and Image Processing. Citeseer, 2002.
+[4] T. Jebara, Y. Song, and K. Thadani. Spectral clustering and embedding with hidden markov
+models. Machine Learning: ECML 2007, pages 164–175, 2007.
+[5] P. Smyth. Clustering sequences with hidden markov models. In Advances in neural information
+processing systems, 1997.
+[6] T. Jebara, R. Kondor, and A. Howard. Probability product kernels. The Journal of Machine
+Learning Research, 5:819–844, 2004.
+[7] B. H. Juang and L. R. Rabiner. A probabilistic distance measure for hidden Markov models.
+AT&T Technical Journal, 64(2):391–408, February 1985.
+[8] N. Vasconcelos and A. Lippman. Learning mixture hierarchies. In Advances in Neural Infor-
+mation Processing Systems, 1998.
+[9] A.B. Chan, E. Coviello, and G.R.G. Lanckriet. Clustering dynamic textures with the hierar-
+chical em algorithm. In Intl. Conference on Computer Vision and Pattern Recognition, 2010.
+[10] G. Carneiro, A.B. Chan, P.J. Moreno, and N. Vasconcelos. Supervised learning of semantic
+classes for image annotation and retrieval. IEEE Transactions on Pattern Analysis and Machine
+Intelligence, 29(3):394–410, 2007.
+[11] D. Turnbull, L. Barrington, D. Torres, and G. Lanckriet. Semantic annotation and retrieval
+of music and sound effects. IEEE Transactions on Audio, Speech and Language Processing,
+16(2):467–476, February 2008.
+[12] E. Coviello, A. Chan, and G. Lanckriet. Time series models for semantic music annotation.
+Audio, Speech, and Language Processing, IEEE Transactions on, 5(19):1343–1359, 2011.
+[13] A. Banerjee, S. Merugu, I.S. Dhillon, and J. Ghosh. Clustering with bregman divergences. The
+Journal of Machine Learning Research, 6:1705–1749, 2005.
+[14] J.R. Hershey, P.A. Olsen, and S.J. Rennie. Variational Kullback-Leibler divergence for hid-
+den Markov models. In Automatic Speech Recognition & Understanding, 2007. ASRU. IEEE
+Workshop on, pages 323–328. IEEE, 2008.
+[15] A. P. Dempster, N. M. Laird, and D. B. Rubin. Maximum likelihood from incomplete data via
+the EM algorithm. Journal of the Royal Statistical Society B, 39:1–38, 1977.
+[16] R.M. Neal and G.E. Hinton. A view of the em algorithm that justiﬁes incremental, sparse, and
+other variants. NATO ASI SERIES D BEHAVIOURAL AND SOCIAL SCIENCES, 89:355–370,
+1998.
+[17] I. Csisz, G. Tusn ´ady, et al. Information geometry and alternating minimization procedures.
+Statistics and decisions, 1984.
+[18] M.I. Jordan, Z. Ghahramani, T.S. Jaakkola, and L.K. Saul. An introduction to variational
+methods for graphical models. Machine learning, 37(2):183–233, 1999.
+[19] Tommi S. Jaakkola. Tutorial on Variational Approximation Methods. In In Advanced Mean
+Field Methods: Theory and Practice, pages 129–159. MIT Press, 2000.
+[20] Anonymous. Derivation of the Variational HEM Algorithm for Hidden Markov Mixture Mod-
+els. Technical report, Anonymous, 2012.
+
+9
+
+

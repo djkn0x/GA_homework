@@ -1,0 +1,471 @@
+Active Preference Learning with Discrete Choice Data
+
+Eric Brochu, Nando de Freitas and Abhijeet Ghosh
+Department of Computer Science
+University of British Columbia
+Vancouver, BC, Canada
+{ebrochu, nando, ghosh}@cs.ubc.ca
+
+Abstract
+
+We propose an active learning algorithm that learns a continuous valuation model
+from discrete preferences. The algorithm automatically decides what items are
+best presented to an individual in order to ﬁnd the item that they value highly in
+as few trials as possible, and exploits quirks of human psychology to minimize
+time and cognitive burden. To do this, our algorithm maximizes the expected
+improvement at each query without accurately modelling the entire valuation sur-
+face, which would be needlessly expensive. The problem is particularly difﬁcult
+because the space of choices is inﬁnite. We demonstrate the effectiveness of the
+new algorithm compared to related active learning methods. We also embed the
+algorithm within a decision making tool for assisting digital artists in rendering
+materials. The tool ﬁnds the best parameters while minimizing the number of
+queries.
+
+1
+
+Introduction
+
+A computer graphics artist sits down to use a simple renderer to ﬁnd appropriate surfaces for a
+typical reﬂectance model. It has a series of parameters that must be set to control the simulation:
+“specularity”, “Fresnel reﬂectance coefﬁcient”, and other, less-comprehensible ones. The parame-
+ters interact in ways difﬁcult to discern. The artist knows in his mind’s eye what he wants, but he’s
+not a mathematician or a physicist — no course he took during his MFA covered Fresnel reﬂectance
+models. Even if it had, would it help? He moves the specularity slider and waits for the image
+to be generated. The surface is too shiny. He moves the slider back a bit and runs the simulation
+again. Better. The surface is now appropriately dull, but too dark. He moves a slider down. Now
+it’s the right colour, but the specularity doesn’t look quite right any more. He repeatedly bumps the
+specularity back up, rerunning the renderer at each attempt until it looks right. Good. Now, how to
+make it look metallic...?
+Problems in simulation, animation, rendering and other areas often take such a form, where the
+desired end result is identiﬁable by the user, but parameters must be tuned in a tedious trial-and-
+error process. This is particularly apparent in psychoperceptual models, where continual tuning is
+required to make something “look right”. Using the animation of character walking motion as an
+example, for decades, animators and scientists have tried to develop objective functions based on
+kinematics, dynamics and motion capture data [Cooper et al., 2007]. However, even when expen-
+sive mocap is available, we simply have to watch an animated ﬁlm to be convinced of how far we
+still are from solving the gait animation problem. Unfortunately, it is not at all easy to ﬁnd a mapping
+from parameterized animation to psychoperceptual plausibility. The perceptual objective function is
+simply unknown. Fortunately, however, it is fairly easy to judge the quality of a walk — in fact, it is
+trivial and almost instantaneous. The application of this principle to animation and other psychoper-
+ceptual tools is motivated by the observation that humans often seem to be forming a mental model
+of the objective function. This model enables them to exploit feasible regions of the parameter space
+where the valuation is predicted to be high and to explore regions of high uncertainty. It is our the-
+
+1
+
+Figure 1: An illustrative example of the difference between models learned for regression vesus optimization.
+The regression model ﬁts the true function better overall, but doesn’t ﬁt at the maximum better than anywhere
+else in the function. The optimization model is less accurate overall, but ﬁts the area of the maximum very
+well. When resources are limited, such as an active learning environment, it is far more useful to ﬁt the area
+of interest well, even at the cost of overall predictive performance. Getting a good ﬁt for the maximum will
+require many more samples using conventional regression.
+sis that the process of tweaking parameters to ﬁnd a result that looks “right” is akin to sampling a
+perceptual objective function, and that twiddling the parameters to ﬁnd the best result is, in essence,
+optimization. Our objective function is the psycho-perceptual process underlying judgement — how
+well a realization ﬁts what the user has in mind. Following the econometrics terminology, we refer
+to the objective as the valuation. In the case of a human being rating the suitability of a simulation,
+however, it is not possible to evaluate this function over the entire domain. In fact, it is in gen-
+eral impossible to even sample the function directly and get a consistent response! While it would
+theoretically be possible to ask the user to rate realizations with some numerical scale, such meth-
+ods often have problems with validity and reliability. Patterns of use and other factors can result
+in a drift effect, where the scale varies over time [Siegel and Castellan, 1988]. However, human
+beings do excel at comparing options and expressing a preference for one over others [Kingsley,
+2006]. This insight allows us to approach the optimization function in another way. By presenting
+two or more realizations to a user and requiring only that they indicate preference, we can get far
+more robust results with much less cognitive burden on the user [Kendall, 1975]. While this means
+we can’t get responses for a valuation function directly, we model the valuation as a latent func-
+tion, inferred from the preferences, which permits an active learning approach [Cohn et al., 1996;
+Tong and Koller, 2000].
+This motivates our second major insight — it is not necessary to accurately model the entire ob-
+jective function. The problem is actually one of optimization, not regression (Figure 1). We can’t
+directly maximize the valuation function, so we propose to use an expected improvement function
+(EIF) [Jones et al., 1998; Sasena, 2002]. The EIF produces an estimate of the utility of knowing the
+valuation at any point in the space. The result is a principled way of trading off exploration (showing
+the user examples unlike any they have seen) and exploitation (trying to show the user improvements
+on examples they have indicated preference for). Of course, regression-based learning can produce
+an accurate model of the entire valuation function, which would also allow us to ﬁnd the best valua-
+tion. However, this comes at the cost of asking the user to compare many, many examples that have
+no practical relation what she is looking for, as we demonstrate experimentally in Sections 3 and
+4. Our method tries instead to make the most efﬁcient possible use of the user’s time and cognitive
+effort.
+Our goal is to exploit the strengths of human psychology and perception to develop a novel frame-
+work of valuation optimization that uses active preference learning to ﬁnd the point in a parameter
+space that approximately maximizes valuation with the least effort to the human user. Our goal is
+to ofﬂoad the cognitive burden of estimating and exploring different sets of parameters, though we
+can incorporate “slider twiddling” into the framework easily. In Section 4, we present a simple, but
+practical application of our model in a material design gallery that allows artists to ﬁnd particular
+appearance rendering effects. Furthermore, the valuation function can be any psychoperceptual pro-
+cess that lends itself to sliders and preferences: the model can support an animator looking for a
+particular “cartoon physics” effect, an artist trying to capture a particular mood in the lighting of a
+scene, or an electronic musician looking for a speciﬁc sound or rhythm. Though we use animation
+and rendering as motivating domains, our work has a broad scope of application in music and other
+arts, as well as psychology, marketing and econometrics, and human-computer interfaces.
+
+2
+
+regression modeloptimization modelmodeltrue function1.1 Previous Work
+
+Probability models for learning from discrete choices have a long history in psychology and econo-
+metrics [Thurstone, 1927; Mosteller, 1951; Stern, 1990; McFadden, 2001]. They have been studied
+extensively for use in rating chess players, and the Elo system [ ´El ˝o, 1978] was adopted by the
+World Chess Federation FIDE to model the probability of one player defeating another. Glickman
+and Jensen [2005] use Bayesian optimal design for adaptively ﬁnding pairs for tournaments. These
+methods all differ from our work in that they are intended to predict the probability of a prefer-
+ence outcome over a ﬁnite set of possible pairs, whereas we work with inﬁnite sets and are only
+incidentally interested in modelling outcomes.
+In Section 4, we introduce a novel “preference gallery” application for designing simulated materials
+in graphics and animation to demonstrate the practical utility of our model. In the computer graphics
+ﬁeld, the Design Gallery [Marks et al., 1997] for animation and the gallery navigation interface for
+Bidirectional Reﬂectance Distribution Functions (BRDFs) [Ngan et al., 2006] are artist-assistance
+tools most like ours. They both uses non-adaptive heuristics to ﬁnd the set of input parameters to be
+used in the generation of the display. We depart from this heuristic treatment and instead present a
+principled probabilistic decision making approach to model the design process.
+Parts of our method are based on [Chu and Ghahramani, 2005b], which presents a prefer-
+ence learning method using probit models and Gaussian processes. They use a Thurstone-
+[Chu
+Mosteller model, but with an innovative nonparametric model of the valuation function.
+and Ghahramani, 2005a] adds active learning to the model, though the method presented there
+differs from ours in that realizations are selected from a ﬁnite pool to maximize informative-
+ness. More importantly, though, this work, like much other work in the ﬁeld [Seo et al., 2000;
+Guestrin et al., 2005], is concerned with learning the entire latent function. As our experiments
+show in Section 3, this is too expensive an approach for our setting, leading us to develop the new
+active learning criteria presented here.
+
+2 Active Preference Learning
+
+By querying the user with a paired comparison, one can estimate statistics of the valuation function
+at the query point, but only at considerable expense. Thus, we wish to make sure that the samples
+we do draw will generate the maximum possible improvement.
+Our method for achieving this goal iterates the following steps:
+
+1. Present the user with a new pair and record the choice: Augment the training set of paired choices
+with the new user data.
+2. Infer the valuation function: Here we use a Thurstone-Mosteller model with Gaussian processes.
+See Sections 2.1 and 2.2 for details. Note that we are not interested in predicting the value of the
+valuation function over the entire feasible domain, but rather in predicting it well near the optimum.
+3. Formulate a statistical measure for exploration-exploitation: We refer to this measure as the
+expected improvement function (EIF). Its maximum indicates where to sample next. EI is a function
+of the Gaussian process predictions over the feasible domain. See Section 2.3.
+4. Optimize the expected improvement function to obtain the next query point: Finding the maxi-
+mum of the EI corresponds to a constrained nonlinear programming problem. See Section 2.3.
+
+2.1 Preference Learning Model
+
+Assume we have shown the user M pairs of items. In each case, the user has chosen which item she
+likes best. The dataset therefore consists of the ranked pairs D = {rk (cid:31) ck ; k = 1, . . . , M }, where
+the symbol (cid:31) indicates that the user prefers r to c. We use x1:N = {x1 , x2 , . . . , xN }, xi ∈ X ⊆ Rd ,
+to denote the N elements in the training data. That is, rk and ck correspond to two elements of x1:N .
+Our goal is to compute the item x (not necessarily in the training data) with the highest user valuation
+in as few comparisons as possible. We model the valuation functions u(·) for r and c as follows:
+u(rk ) = f (rk ) + erk
+u(ck ) = f (ck ) + eck ,
+
+(1)
+
+3
+
+2 exp (cid:0)− 1
+2 f T K−1 f (cid:1),
+where the noise terms are Gaussian: erk ∼ N (0, σ2 ) and eck ∼ N (0, σ2 ). Following [Chu and
+Ghahramani, 2005b], we assign a nonparametric Gaussian process prior to the unknown mean valua-
+tion: f (·) ∼ GP (0, K (·, ·)). That is, at the N training points. p(f ) = |2πK|− 1
+where f = {f (x1 ), f (x2 ), . . . , f (xN )} and the symmetric positive deﬁnite covariance K has en-
+tries (kernels) Kij = k(xi , xj ). Initially we learned these parameters via maximum likelihood, but
+soon realized that this was unsound due to the scarcity of data. To remedy this, we elected to use
+subjective priors using simple heuristics, such as expected dataset spread. Although we use Gaus-
+sian processes as a principled method of modelling the valuation, other techniques, such as wavelets
+could also be adopted.
+Random utility models such as (1) have a long and inﬂuential history in psychology and the study
+of individual choice behaviour in economic markets. Daniel McFadden’s Nobel Prize speech [Mc-
+Fadden, 2001] provides a glimpse of this history. Many more comprehensive treatments appear in
+classical economics books on discrete choice theory.
+(cid:21)
+(cid:20) f (rk ) − f (ck )
+Under our Gaussian utility models, the probability that item r is preferred to item c is given by:
+√
+P (rk (cid:31) ck ) = P (u(rk ) > u(ck )) = P (eck − erk < f (rk ) − f (ck )) = Φ
+(cid:82) dk−∞ exp (cid:0)−a2 /2(cid:1) da is the cumulative function of the standard Normal dis-
+,
+2σ
+where Φ (dk ) = 1√
+2π
+tribution. This model, relating binary observations to a continuous latent function, is known as the
+Thurstone-Mosteller law of comparative judgement [Thurstone, 1927; Mosteller, 1951]. In statistics
+it goes by the name of binomial-probit regression. Note that one could also easily adopt a logis-
+tic (sigmoidal) link function ϕ (dk ) = (1 + exp (−dk ))−1 . In fact, such choice is known as the
+Bradley-Terry model [Stern, 1990]. If the user had more than two choices one could adopting a
+multinomial-probit model. This multi-category extension would, for example, enable the user to
+state no preference for any of the two items being presented.
+Inference
+2.2
+That is, we want to compute p(f |D) ∝ p(f ) (cid:81)M
+Our goal is to estimate the posterior distribution of the latent utility function given the discrete data.
+k=1 p(dk |f ), where dk = f (rk )−f (ck )
+√
+. Although
+2σ
+there exist sophisticated variational and Monte Carlo methods for approximating this distribution,
+we favor a simple strategy: Laplace approximation. Our motivation for doing this is the simplicity
+and computational efﬁciency of this technique. Moreover, given the amount of uncertainty in user
+valuations, we believe the choice of approximating technique plays a small role and hence we expect
+the simple Laplace approximation to perform reasonably in comparison to other techniques. The
+application of the Laplace approximation is fairly straightforward, and we refer the reader to [Chu
+and Ghahramani, 2005b] for details.
+straightforward convolution of two Gaussians: p(f (cid:63) |D) = (cid:82) p(f (cid:63) |f )p(f |D)df . One of the criticisms
+Finally, given an arbitrary test pair, the predicted utility f (cid:63) and f are jointly Gaussian. Hence, one
+can obtain the conditional p(f (cid:63) |f ) easily. Moreover, the predictive distribution p(f (cid:63) |D) follows by
+of Gaussian processes, the fact that they are slow with large data sets, is not a problem for us, since
+active learning is designed explicitly to minimize the number of training data.
+
+2.3 The Expected Improvement Function
+
+Now that we are armed with an expression for the predictive distribution, we can use it to decide
+what the next query should be. In loose terms, the predictive distribution will enable us to balance the
+tradeoff of exploiting and exploring. When exploring, we should choose points where the predicted
+variance is large. When exploiting, we should choose points where the predicted mean is large (high
+valuation).
+Let x(cid:63) be an arbitrary new instance. Its predictive distribution p(f (cid:63) (x(cid:63) )|D) has sufﬁcient statis-
+M AP )−1k(cid:63) }, where, now, k(cid:63)T =
+tics {µ(x(cid:63) ) = k(cid:63)T K−1 f M AP , s2 (x(cid:63) ) = k(cid:63)(cid:63) − k(cid:63)T (K + C−1
+[k(x(cid:63) , x1 ) · · · k(x(cid:63) , xN )] and k(cid:63)(cid:63) = k(x(cid:63) , x(cid:63) ). Also, let µmax denote the highest estimate of the
+predictive distribution thus far. That is, µmax is the highest valuation for the data provided by the
+individual.
+
+4
+
+Figure 2: The 2D test function (left), and the estimate of the function based on the results of a typical run of 12
+preference queries (right). The true function has eight local and one global maxima. The predictor identiﬁes the
+region of the global maximum correctly and that of the local maxima less well, but requires far fewer queries
+than learning the entire function.
+(cid:18) µmax − µ(x(cid:63) )
+(cid:19)
+The probability of improvement at a point x(cid:63) is simply given by a tail probability:
+p(f (cid:63) (x(cid:63) ) ≤ µmax ) = Φ
+,
+s(x(cid:63) )
+where f (cid:63) (x(cid:63) ) ∼ N (µ(x(cid:63) ), s2 (x(cid:63) )). This statistical measure of improvement has been widely used
+in the ﬁeld of experimental design and goes back many decades [Kushner, 1964]. However, it is
+known to be sensitive to the value of µmax . To overcome this problem, [Jones et al., 1998] deﬁned
+the improvement over the current best point as I (x(cid:63) ) = max{0, µ(x(cid:63) ) − µmax}, which resulted in
+(cid:26) (µmax − µ(x(cid:63) ))Φ(d) + s(x(cid:63) )φ(d)
+an expected improvement of
+0
+
+E I (x(cid:63) ) =
+where d = µmax−µ(x(cid:63) )
+s(x(cid:63) )
+To ﬁnd the point at which to sample, we still need to maximize the constrained objective E I (x(cid:63) )
+over x(cid:63) . Unlike the original unknown cost function, E I (·) can be cheaply sampled. Furthermore,
+for the purposes of our application, it is not necessary to guarantee that we ﬁnd the global maximum,
+merely that we can quickly locate a point that is likely to be as good as possible. The original EGO
+work used a branch-and-bound algorithm, but we found it was very difﬁcult to get good bounds
+over large regions. Instead we use DIRECT [Jones et al., 1993], a fast, approximate, derivative-
+free optimization algorithm, though we conjecture that for larger dimensional spaces, sequential
+quadratic programming with interior point methods might be a better alternative.
+
+if s > 0
+if s = 0
+
+.
+
+3 Experiments
+
+The goal of our algorithm is to ﬁnd a good approximation of the maximum of a latent function using
+preference queries. In order to measure our method’s effectiveness in achieving this goal, we create
+a function f for which the optimum is known. At each time step, a query is generated in which
+two points x1 and x2 are adaptively selected, and the preference is found, where f (x1 ) > f (x2 ) ⇔
+x1 (cid:31) x2 . After each preference, we measure the error, deﬁned as  = fmax − f (argmaxx f ∗ (x)),
+that is, the difference between the true maximum of f and the value of f at the point predicted to be
+the maximum. Note that by design, this does not penalize the algorithm for drawing samples from
+X that are far from argmaxx , or for predicting a latent function that differs from the true function.
+We are not trying to learn the entire valuation function, which would take many more queries – we
+seek only to maximize the valuation, which involves accurate modelling only in the areas of high
+valuation.
+We measured the performance of our method on three functions – 2D, 4D and 6D. By way of demon-
+stration, Figure 2 shows the actual 2D functions and the typical prediction after several queries. The
+test functions are deﬁned as:
+d(cid:88)
+f2d = max{0, sin(x1 ) + x1 /3 + sin(12x1 ) + sin(x2 ) + x2 /3 + sin(12x2 ) − 1}
+i=1
+
+sin(xi ) + xi/3 + sin(12xi )
+
+f4d,6d =
+
+5
+
+00.20.40.60.8100.20.40.60.8100.511.522.5300.20.40.60.8100.20.40.60.81−4−202468x 10−400.20.40.60.8100.20.40.60.8100.20.40.60.8100.20.40.60.81Figure 3: The evolution of error for the estimate of the optimum on the test functions. The plot shows the error
+evolution  against the number of queries. The solid line is our method; the dashed is a baseline comparison
+in which each query point is selected randomly. The performance is averaged over 20 runs, with the error bars
+showing the variance of .
+
+all deﬁned over the range [0, 1]d . We selected these equations because they seem both general and
+difﬁcult enough that we can safely assume that if our method works well on them, it should work on a
+large class of real-world problems — they have multiple local minima to get trapped in and varying
+landscapes and dimensionality. Unfortunately, there has been little work in the psychoperception
+literature to indicate what a good test function would be for our problem, so we have had to rely to
+an extent on our intuition to develop suitable test cases.
+The results of the experiments are shown in Figure 3. In all cases, we simulate 50 queries using our
+method (here called maxE I ). As a baseline, we compare against 50 queries using the maximum
+variance of the model (maxs ), which is a common criterion in active learning for regression [Seo
+et al., 2000; Chu and Ghahramani, 2005a]. We repeated each experiment 20 times and measured
+the mean and variance of the error evolution. We ﬁnd that it takes far fewer queries to ﬁnd a good
+result using maxE I in all cases.
+In the 2D case, for example, after 20 queries, maxE I already
+has better average performance than maxs achieves after 50, and in both the 2D and 4D scenarios,
+maxE I steadily improves until it ﬁnd the optima, while maxs soon reaches a plateau, improving only
+slightly, if at all, while it tries to improve the global ﬁt to the latent function. In the 6D scenario,
+neither algorithm succeeds well in ﬁnding the optimum, though maxE I clearly comes closer. We
+believe the problem is that in six dimensions, the space is too large to adequately explore with so few
+queries, and variance remains quite high throughout the space. We feels that requiring more than 50
+user queries in a real application would be unacceptable, so we are instead currently investigating
+extensions that will allow the user to direct the search in higher dimensions.
+
+4 Preference Gallery for Material Design
+
+Properly modeling the appearance of a material is a necessary component of realistic image syn-
+thesis. The appearance of a material is formalized by the notion of the Bidirectional Reﬂectance
+Distribution Function (BRDF). In computer graphics, BRDFs are most often speciﬁed using vari-
+ous analytical models observing the physical laws of reciprocity and energy conservation while also
+exhibiting shadowing, masking and Fresnel reﬂectance phenomenon. Realistic models are therefore
+fairly complex with many parameters that need to be adjusted by the designer. Unfortunately these
+parameters can interact in non-intuitive ways, and small adjustments to certain settings may result
+in non-uniform changes in appearance. This can make the material design process quite difﬁcult for
+the end user, who cannot expected to be an expert in the ﬁeld of appearance modeling.
+Our application is a solution to this problem, using a “preference gallery” approach, in which users
+are simply required to view two or more images rendered with different material properties and
+indicate which ones they prefer. To maximize the valuation, we use an implementation of the model
+described in Section 2. In practice, the ﬁrst few examples will be points of high variance, since little
+of the space is explored (that is, the model of user valuation is very uncertain). Later samples tend
+to be in regions of high valuation, as a model of the user’s interest is learned.
+We use our active preference learning model on an example gallery application for helping users
+ﬁnd a desired BRDF. For the purposes of this example, we limit ourselves to isotropic materials and
+ignore wavelength dependent effects in reﬂection. The gallery uses the Ashikhmin-Shirley Phong
+
+6
+
+102030400.01.02.03.04.04D functionǫ10203040102030400.00.20.40.60.81.02D function4.05.06.07.08.06D functionpreference queriesTable 1: Results of the user study
+trials n (mean ± std)
+algorithm
+18.40 ± 7.87
+50
+latin hypercubes
+17.87 ± 8.60
+maxs
+50
+8.56 ± 5.23
+maxE I
+50
+
+model [Ashikhmin and Shirley, 2000] for the BRDFs which was recently validated to be well suited
+for representing real materials [Ngan et al., 2005]. The BRDFs are rendered on a sphere under high
+frequency natural illumination as this has been shown to be the desired setting for human preception
+of reﬂectance [Fleming et al., 2001]. Our gallery demonstration presents the user with two BRDF
+images at a time. We start with four predetermined queries to “seed” the parameter space, and after
+that use the learned model to select gallery images. The GP model is updated after each preference
+is indicated. We use parameters of real measured materials from the MERL database [Ngan et al.,
+2005] for seeding the parameter space, but can draw arbitrary parameters after that.
+
+4.1 User Study
+
+To evaluate the performance of our application, we have run a simple user study in which the gen-
+erated images are restricted to a subset of 38 materials from the MERL database that we deemed to
+be representative of the appearance space of the measured materials. The user is given the task of
+ﬁnding a single randomly-selected image from that set by indicating preferences. Figure 4 shows a
+typical user run, where we ask the user to use the preference gallery to ﬁnd a provided target image.
+At each step, the user need only indicate the image they think looks most like the target. This would,
+of course, be an unrealistic scenario if we were to be evaluating the application from an HCI stance,
+but here we limit our attention to the model, where we are interested here in demonstrating that with
+human users maximizing valuation is preferable to learning the entire latent function.
+Using ﬁve subjects, we compared 50 trials using the EIF to select the images for the gallery (maxE I ),
+50 trials using maximum variance (maxs , the same criterion as in the experiments of Section 3), and
+50 trials using samples selected using a randomized Latin hypercube algorithm. In each case, one of
+the gallery images was the image with the highest predicted valuation and the other was selected by
+the algorithm. The algorithm type for each trial was randomly selected by the computer and neither
+the experimenter nor the subjects knew which of the three algorithms was selecting the images. The
+results are shown in Table 1. n is the number clicks required of the user to ﬁnd the target image.
+Clearly maxE I dominates, with a mean n less than half that of the competing algorithms. Interest-
+ingly, selecting images using maximum variance does not perform much better than random. We
+suspect that this is because maxs has a tendency to select images from the corners of the param-
+eter space, which adds limited information to the other images, whereas Latin hypercubes at least
+guarantees that the selected images ﬁll the space.
+Active learning is clearly a powerful tool for situations where human input is required for learning.
+With this paper, we have shown that understanding the task — and exploiting the quirks of human
+cognition — is also essential if we are to deploy real-world active learning applications. As peo-
+ple come to expect their machines to act intelligently and deal with more complex environments,
+machine learning systems that can collaborate with users and take on the tedious parts of users’
+cognitive burden has the potential to dramatically affect many creative ﬁelds, from business to the
+arts to science.
+
+References
+[Ashikhmin and Shirley, 2000] M. Ashikhmin and P. Shirley. An anisotropic phong BRDF model. J. Graph.
+Tools, 5(2):25–32, 2000.
+[Chu and Ghahramani, 2005a] W. Chu and Z. Ghahramani. Extensions of Gaussian processes for ranking:
+semi-supervised and active learning. In Learning to Rank workshop at NIPS-18, 2005.
+[Chu and Ghahramani, 2005b] W. Chu and Z. Ghahramani. Preference learning with Gaussian processes. In
+ICML, 2005.
+[Cohn et al., 1996] D. A. Cohn, Z. Ghahramani, and M. I. Jordan. Active learning with statistical models.
+Journal of Artiﬁcial Intelligence Research, 4:129–145, 1996.
+
+7
+
+T arget
+
+1.
+
+3.
+
+2.
+
+4.
+
+Figure 4: A shorter-than-average but otherwise typical run of the preference gallery tool. At each (numbered)
+iteration, the user is provided with two images generated with parameter instances and indicates the one they
+think most resembles the target image (top-left) they are looking for. The boxed images are the user’s selections
+at each iteration.
+
+[Cooper et al., 2007] S. Cooper, A. Hertzmann, and Z. Popovi ´c. Active learning for motion controllers. In
+SIGGRAPH, 2007.
+´A. ´El ˝o. The Rating of Chess Players: Past and Present. Arco Publishing, New York, 1978.
+[ ´El ˝o, 1978]
+[Fleming et al., 2001] R. Fleming, R. Dror, and E. Adelson. How do humans determine reﬂectance properties
+In CVPR Workshop on Identifying Objects Across Variations in Lighting,
+under unknown illumination?
+2001.
+[Glickman and Jensen, 2005] M. E. Glickman and S. T. Jensen. Adaptive paired comparison design. Journal
+of Statistical Planning and Inference, 127:279–293, 2005.
+[Guestrin et al., 2005] C. Guestrin, A. Krause, and A. P. Singh. Near-optimal sensor placements in Gaussian
+processes. In Proceedings of the 22nd International Conference on Machine Learning (ICML-05), 2005.
+[Jones et al., 1993] D. R. Jones, C. D. Perttunen, and B. E. Stuckman. Lipschitzian optimization without the
+Lipschitz constant. J. Optimization Theory and Apps, 79(1):157–181, 1993.
+[Jones et al., 1998] D. R. Jones, M. Schonlau, and W. J. Welch. Efﬁcient global optimization of expensive
+black-box functions. J. Global Optimization, 13(4):455–492, 1998.
+[Kendall, 1975] M. Kendall. Rank Correlation Methods. Grifﬁn Ltd, 1975.
+[Kingsley, 2006] D. C. Kingsley. Preference uncertainty, preference reﬁnement and paired comparison choice
+experiments. Dept. of Economics, University of Colorado, 2006.
+[Kushner, 1964] H. J. Kushner. A new method of locating the maximum of an arbitrary multipeak curve in the
+presence of noise. Journal of Basic Engineering, 86:97–106, 1964.
+[Marks et al., 1997] J. Marks, B. Andalman, P. A. Beardsley, W. Freeman, S. Gibson, J. Hodgins, T. Kang,
+B. Mirtich, H. Pﬁster, W. Ruml, K. Ryall, J. Seims, and S. Shieber. Design galleries: A general approach to
+setting parameters for computer graphics and animation. Computer Graphics, 31, 1997.
+[McFadden, 2001] D. McFadden. Economic choices. The American Economic Review, 91:351–378, 2001.
+[Mosteller, 1951] F. Mosteller. Remarks on the method of paired comparisons: I. the least squares solution
+assuming equal standard deviations and equal correlations. Psychometrika, 16:3–9, 1951.
+[Ngan et al., 2005] A. Ngan, F. Durand, and W. Matusik. Experimental analysis of BRDF models. In Pro-
+ceedings of the Eurographics Symposium on Rendering, pages 117–226, 2005.
+[Ngan et al., 2006] A. Ngan, F. Durand, and W. Matusik. Image-driven navigation of analytical BRDF models.
+In T. Akenine-M ¨oller and W. Heidrich, editors, Eurographics Symposium on Rendering, 2006.
+[Sasena, 2002] M. J. Sasena. Flexibility and Efﬁciency Enhancement for Constrained Global Design Opti-
+mization with Kriging Approximations. PhD thesis, University of Michigan, 2002.
+[Seo et al., 2000] S. Seo, M. Wallat, T. Graepel, and K. Obermayer. Gaussian process regression: active data
+selection and test point rejection. In Proceedings of IJCNN 2000, 2000.
+[Siegel and Castellan, 1988] S. Siegel and N. J. Castellan. Nonparametric Statistics for the Behavioral Sci-
+ences. McGraw-Hill, 1988.
+[Stern, 1990] H. Stern. A continuum of paired comparison models. Biometrika, 77:265–273, 1990.
+[Thurstone, 1927] L. Thurstone. A law of comparative judgement. Psychological Review, 34:273–286, 1927.
+[Tong and Koller, 2000] S. Tong and D. Koller. Support vector machine active learning with applications to
+text classiﬁcation. In Proc. ICML-00, 2000.
+
+8
+
+

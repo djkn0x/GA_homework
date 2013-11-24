@@ -1,0 +1,795 @@
+Ultrafast Monte Carlo for Kernel Estimators
+and Generalized Statistical Summations
+
+Michael P. Holmes, Alexander G. Gray, and Charles Lee Isbell, Jr.
+College Of Computing
+Georgia Institute of Technology
+Atlanta, GA 30327
+fmph, agray, isbellg@cc.gatech.edu
+
+Abstract
+
+Machine learning contains many computational bottlenecks in the form of nested
+summations over datasets. Kernel estimators and other methods are burdened
+by these expensive computations. Exact evaluation is typically O(n2 ) or higher,
+which severely limits application to large datasets. We present a multi-stage strat-
+i(cid:2)ed Monte Carlo method for approximating such summations with probabilistic
+relative error control. The essential idea is fast approximation by sampling in trees.
+This method differs from many previous scalability techniques (such as standard
+multi-tree methods) in that its error is stochastic, but we derive conditions for
+error control and demonstrate that they work. Further, we give a theoretical sam-
+ple complexity for the method that is independent of dataset size, and show that
+this appears to hold in experiments, where speedups reach as high as 1014 , many
+orders of magnitude beyond the previous state of the art.
+
+1 Introduction
+
+Many machine learning methods have computational bottlenecks in the form of nested summations
+that become intractable for large datasets. We are particularly motivated by the nonparametric kernel
+estimators (e.g. kernel density estimation), but a variety of other methods require computations of
+similar form. In this work we formalize the general class of nested summations and present a new
+multi-stage Monte Carlo method for approximating any problem in the class with rigorous relative
+error control. Key to the ef(cid:2)ciency of this method is the use of tree-based data strati(cid:2)cation, i.e.
+sampling in trees. We derive error guarantees and sample complexity bounds, with the intriguing
+result that runtime depends not on dataset size but on statistical features such as variance and kurto-
+sis, which can be controlled through strati(cid:2)cation. We also present experiments that validate these
+theoretical results and demonstrate tremendous speedup over the prior state of the art.
+Previous approaches to algorithmic acceleration of this kind fall into roughly two groups: 1) methods
+that run non-accelerated algorithms on subsets of the data, typically without error bounds, and 2)
+multi-tree methods with deterministic error bounds. The former are of less interest due to the lack
+of error control, while the latter are good when exact error control is required, but have built-in
+overconservatism that limits speedup, and are dif(cid:2)cult to extend to new problems. Our Monte Carlo
+approach offers much larger speedup and a generality that makes it simple to adapt to new problems,
+while retaining strong error control. While there are non-summative problems to which the standard
+multi-tree methodology is applicable and our Monte Carlo method is not, our method appears to
+give greater speedup by many orders of magnitude on problems where both methods can be used.
+In summary, this work makes the following contributions: formulation of the class of generalized
+nested data summations; derivation of recursive Monte Carlo algorithms with rigorous error guar-
+antees for this class of computation; derivation of sample complexity bounds showing no explicit
+
+1
+
+dependence on dataset size; variance-driven tree-based strati(cid:2)ed sampling of datasets, which allows
+Monte Carlo approximation to be effective with small sample sizes; application to kernel regres-
+sion and kernel conditional density estimation; empirical demonstration of speedups as high as 1014
+on datasets with points numbering in the millions. It is the combination of all these elements that
+enables our method to perform so far beyond the previous state of the art.
+
+2 Problem deﬁnition and previous work
+
+SKR =
+
+SKDE =
+
+SKCDE =
+
+We (cid:2)rst illustrate the problem class by giving expressions for the least-squares cross-validation
+scores used to optimize bandwidths in kernel regression (KR), kernel density estimation (KDE), and
+kernel conditional density estimation (KCDE):
+Pj 6=i Kh (jjxi (cid:0) xj jj) !2
+n Xi  yi (cid:0) Pj 6=i Kh (jjxi (cid:0) xj jj)yj
+1
+Kh (jjxi (cid:0) xj jj)(cid:19)
+n Xi (cid:18)
+(n (cid:0) 1)2 Xj 6=i Xk 6=i Z Kh (jjx (cid:0) xj jj)Kh (jjx (cid:0) xk jj)dx (cid:0)
+2
+1
+1
+(n (cid:0) 1) Xj 6=i
+n Xi (cid:18) Pj 6=i Pk 6=i Kh2 (jjxi (cid:0) xj jj)Kh2 (jjxi (cid:0) xk jj) R Kh1 (y (cid:0) yj )Kh1 (y (cid:0) yk )dy
+1
+Pj 6=i Pk 6=i Kh2 (jjxi (cid:0) xj jj)Kh2 (jjxi (cid:0) xk jj)
+(cid:0) 2 Pj 6=i Kh2 (jjxi (cid:0) xj jj)Kh1 (yi (cid:0) yj )
+(cid:19) :
+Pj 6=i Kh2 (jjxi (cid:0) xj jj)
+These nested sums have quadratic and cubic computation times that are intractable for large datasets.
+We would like a method for quickly approximating these and similar computations in a simple and
+general way. We begin by formulating an inductive generalization of the problem class:
+B (Xc ) ! X
+f (Xc ; Xi )
+i2I (Xc )
+G (Xc ) ! B (Xc ) j X
+i2I (Xc )
+B represents the base case, in which a tuple of constant arguments Xc may be speci(cid:2)ed and a tuple
+of variable arguments Xi is indexed by a set I , which may be a function of Xc . For instance, in
+the innermost leave-one-out summations of SKR , Xc is the single point xi while I (Xc ) indexes all
+single points other than xi . Note that jI j is the number of terms in a summation of type B , and
+therefore represents the base time complexity. Whenever I consists of all k-tuples or leave-one-out
+k-tuples, the base complexity is O(nk ), where n is the size of the dataset.
+The inductive case G is either: 1) the base case B , or 2) a sum where the arguments to the summand
+function are Xc and a series of nested instances of type G. In SKR the outermost summation is
+an example of this. The base complexity here is jI j multiplied by the maximum base complexity
+among the nested instances, e.g. if, as in SKR , I is all single points and the most expensive inner G
+is O(n), then the overall base complexity is O(n2 ).
+Previous work. Past efforts at scaling this class of computation have fallen into roughly two groups.
+First are methods where data is simply subsampled before running a non-accelerated algorithm.
+Stochastic gradient descent and its variants (e.g. [1]) are prototypical here. While these approaches
+can have asymptotic convergence, there are no error guarantees for (cid:2)nite sample sizes. This is not
+show-stopping in practice, but the lack of quality assurance is a critical shortcoming. Our approach
+also exploits the speedup that comes from sampling, but provides a rigorous relative error guarantee
+and is able to automatically determine the necessary sample size to provide that guarantee.
+The other main class of acceleration methods consists of those employing (cid:147)higher order divide and
+conquer(cid:148) or multi-tree techniques that give either exact answers or deterministic error bounds (e.g.
+[2, 3, 4]). These approaches apply to a broad class of (cid:147)generalized n-body problems(cid:148) (GNPs), and
+feature the use of multiple spatial partitioning structures such as kd-trees or ball trees to decompose
+and reuse portions of computational work. While the class of GNPs has yet to be formally de(cid:2)ned,
+the generalized summations we address are clearly related and have at least partial overlap.
+
+f (Xc ; G1 (Xc ; Xi ) ; G2 (Xc ; Xi ) ;
+
+(1)
+
+(2)
+
+: : : ) :
+
+2
+
+The standard multi-tree methodology has three signi(cid:2)cant drawbacks. First, although it gives deter-
+ministic error bounds, the bounds are usually quite loose, resulting in overconservatism that prevents
+aggressive approximation that could give greater speed. Second, creating a new multi-tree method
+to accelerate a given algorithm requires complex custom derivation of error bounds and pruning
+rules. Third, the standard multi-tree approach is conjectured to reduce O(np ) computations at best
+to O(nlog p ). This still leaves an intractable computation for p as small as 4.
+In [5], the (cid:2)rst of these concerns began to be addressed by employing sample-based bounds within
+a multi-tree error propagation framework. The present work builds on that idea by moving to a
+fully Monte Carlo scheme where multiple trees are used for variance-reducing strati(cid:2)cation. Error
+is rigorously controlled and driven by sample variance, allowing the Monte Carlo approach to make
+aggressive approximations and avoid the overconservatism of deterministic multi-tree methods. This
+yields greater speedups by many orders of magnitude. Further, our Monte Carlo approach handles
+the class of nested summations in full generality, making it easy to specialize to new problems.
+Lastly, the computational complexity of our method is not directly dependent on dataset size, which
+means it can address high degrees of nesting that would make the standard multi-tree approach
+intractable. The main tradeoff is that Monte Carlo error bounds are probabilistic, though the bound
+probability is a parameter to the algorithm. Thus, we believe the Monte Carlo approach is superior
+for all situations that can tolerate minor stochasticity in the approximated output.
+
+3 Single-stage Monte Carlo
+
+We (cid:2)rst derive a Monte Carlo approximation for the base case of a single-stage, (cid:3)at summation, i.e.
+Equation 1. The basic results for this simple case (up to and including Algorithm 1 and Theorem 1)
+mirror the standard development of Monte Carlo as in [6] or [7], with some modi(cid:2)cation to accom-
+modate our particular problem setup. We then move beyond to present novel sample complexity
+bounds and extend the single-stage results to the multi-stage and multi-stage strati(cid:2)ed cases. These
+extensions allow us to ef(cid:2)ciently bring Monte Carlo principles to bear on the entire class of gen-
+eralized summations, while yielding insights into the dependence of computational complexity on
+sample statistics and how tree-based methods can improve those statistics.
+To begin, note that the summation B (Xc ) can be written as nE [fi ] = n(cid:22)f , where n = jI j and the
+expectation is taken over a discrete distribution Pf that puts mass 1
+n on each term fi = f (Xc ; Xi ).
+Our goal is to produce an estimate ^B that has low relative error with high probability. More precisely,
+for a speci(cid:2)ed (cid:15) and (cid:11), we want j ^B (cid:0) B j (cid:20) (cid:15)jB j with probability at least 1 (cid:0) (cid:11). This is equivalent
+to estimating (cid:22)f by ^(cid:22)f such that j ^(cid:22)f (cid:0) (cid:22)f j (cid:20) (cid:15)j(cid:22)f j. Let ^(cid:22)f be the sample mean of m samples taken
+f =m), where ^(cid:27) 2
+from Pf . From the Central Limit Theorem, we have asymptotically ^(cid:22)f   N ((cid:22)f ; ^(cid:27)2
+f
+is the sample variance, from which we can construct the standard con(cid:2)dence interval: j ^(cid:22)f (cid:0) (cid:22)f j (cid:20)
+z(cid:11)=2 ^(cid:27)f =pm with probability 1 (cid:0) (cid:11). When ^(cid:22)f satis(cid:2)es this bound, our relative error condition is
+implied by z(cid:11)=2 ^(cid:27)f =pm (cid:20) (cid:15)j(cid:22)f j, and we also have j(cid:22)f j (cid:21) j ^(cid:22)f j (cid:0) z(cid:11)=2 ^(cid:27)f =pm. Combining these,
+we can ensure our target relative error by requiring that z(cid:11)=2 ^(cid:27)f =pm (cid:20) (cid:15)(j ^(cid:22)f j (cid:0) z(cid:11)=2 ^(cid:27)f =pm),
+which rearranges to:
+^(cid:27)2
+(1 + (cid:15))2
+f
+m (cid:21) z 2
+(cid:11)=2
+^(cid:22)2
+(cid:15)2
+f
+Equation 3 gives an empirically testable condition that guarantees the target relative error level
+with probability 1 (cid:0) (cid:11), given that ^(cid:22)f has reached its asymptotic distribution N ((cid:22)f ; ^(cid:27)2
+f =m). This
+suggests an iterative sampling procedure in which m starts at a value mmin chosen to make the
+normal approximation valid, and then is increased until the condition of Equation 3 is met. This
+procedure is summarized in Algorithm 1, and we state its error guarantee as a theorem.
+Theorem 1. Given mmin large enough to put ^(cid:22)f in its asymptotic normal regime, with probability
+at least 1 (cid:0) (cid:11) Algorithm 1 approximates the summation S with relative error no greater than (cid:15) .
+Proof. We have already established that Equation 3 is a suf(cid:2)cient condition for (cid:15) relative error with
+probability 1 (cid:0) (cid:11). Algorithm 1 simply increases the sample size until this condition is met.
+Sample Complexity. Because we are interested in fast approximations, Algorithm 1 is only useful if
+it terminates with m signi(cid:2)cantly smaller than the number of terms in the full summation. Equation 3
+
+(3)
+
+:
+
+3
+
+Algorithm 1 Iterative Monte Carlo approximation for (cid:3)at summations.
+MC-Approx(S; Xc ; (cid:15); (cid:11); mmin )
+addSamples(samples; mneeded ; S; Xc )
+samples   ;, mneeded   mmin
+for i = 1 to mneeded
+repeat
+Xi   rand(S:I )
+addS amples(samples; mneeded ; S; Xc )
+samples   samples [ S:f (Xc ; Xi )
+end for
+m; ^(cid:22)f ; ^(cid:27)2
+f   calcS tats(samples)
+mthresh   z 2
+(cid:11)=2 (1 + (cid:15))2 ^(cid:27)2
+f =(cid:15)2 ^(cid:22)2
+calcStats(samples)
+f
+mneeded   mthresh (cid:0) m
+m   count(samples)
+until m (cid:21) mthresh
+^(cid:22)f   avg(samples)
+return jS:I j ^(cid:22)f
+^(cid:27)2
+f   var(samples)
+return m; ^(cid:22)f ; ^(cid:27)2
+f
+
+gives an empirical test indicating when m is large enough for sampling to terminate; we now provide
+an upper bound, in terms of the distributional properties of the full set of f i , for the value of m at
+which Equation 3 will be satis(cid:2)ed.
+Theorem 2. Given mmin large enough to put ^(cid:22)f and ^(cid:27)f in their asymptotic normal regimes, with
+j(cid:22)f j q (cid:22)4f
+f (cid:0) 1(cid:1).
+probability at least 1 (cid:0) 2(cid:11) Algorithm 1 terminates with m (cid:20) O (cid:0) (cid:27)2
++ (cid:27)f
+f
+(cid:22)2
+(cid:27)4
+f
+Proof. The termination condition is driven by ^(cid:27) 2
+f , so we proceed by bounding this ratio.
+f = ^(cid:22)2
+First, with probability 1 (cid:0) (cid:11) we have a lower bound on the absolute value of the sample mean:
+j ^(cid:22)f j (cid:21) j(cid:22)f j (cid:0) z(cid:11)=2 ^(cid:27)f =pm. Next, because the sample variance is asymptotically distributed as
+f )=m), where (cid:22)4f is the fourth central moment, we can apply the delta method
+f ; ((cid:22)4f (cid:0) (cid:27)4
+N ((cid:27)2
+f m). Using the normal-based
+to infer that ^(cid:27)f converges in distribution to N ((cid:27)f ; ((cid:22)4f (cid:0) (cid:27)4
+f )=4(cid:27)2
+con(cid:2)dence interval, this gives the following 1 (cid:0) (cid:11) upper bound for the sample standard deviation:
+^(cid:27)f (cid:20) (cid:27)f + z(cid:11)=2q(cid:22)4f (cid:0) (cid:27)4
+f =(2(cid:27)f pm). We now combine these bounds, but since we only know
+that each bound individually covers at least a 1 (cid:0) (cid:11) fraction of outcomes, we can only guarantee
+they will jointly hold with probability at least 1 (cid:0) 2(cid:11), giving the following 1 (cid:0) 2(cid:11) bound:
+p(cid:22)4f (cid:0)(cid:27)4
+f
+(cid:27)f + z(cid:11)=2
+2(cid:27)f pm
+^(cid:27)f
+j ^(cid:22)f j (cid:20)
+(cid:27)fpm
+j(cid:22)f j (cid:0) z(cid:11)=2
+Combining this with Equation 3 and solving for m shows that, with probability at least 1 (cid:0) 2(cid:11), the
+algorithm will terminate with m no larger than:
+j(cid:22)f j " (cid:27)f
+(cid:0) 1# :
+j(cid:22)f j s (cid:27)f
+2(cid:15)(1 + (cid:15))
+(cid:15)(1 + (cid:15))
+(cid:27)f
+(1 + 2(cid:15))2 r (cid:22)4f
+(cid:0) 1 + r (cid:27)f
+(1 + 2(cid:15))2 r (cid:22)4f
+(cid:27)4
+(cid:27)4
+j(cid:22)f j
+j(cid:22)f j
+f
+f
+
+(1 + 2(cid:15))2
+(cid:15)2
+
+z 2
+(cid:11)=2
+2
+
+:
+
++
+
++
+
+(4)
+
+Three aspects of this bound are salient. First, computation time is liberated from dataset size. This
+is because the sample complexity depends only on the distributional features ((cid:27) 2
+f , (cid:22)f , and (cid:22)4f ) of
+the summation terms, and not on the number of terms. For i.i.d. datasets in particular, these distri-
+butional features are convergent, which means the sample or computational complexity converges
+to a constant while speedup becomes unbounded as the dataset size goes to in(cid:2)nity.
+Second, the bound has sensible dependence on (cid:27)f =j(cid:22)f j and (cid:22)4f =(cid:27)4
+f . The former is a standard
+dispersion measure known as the coef(cid:2)cient of variation, and the latter is the kurtosis. Algorithm 1
+therefore gives greatest speedup for summations whose terms have low dispersion and low kurtosis.
+The intuition is that sampling is most ef(cid:2)cient when values are concentrated tightly in a few clusters,
+making it easy to get a representative sample set. This motivates the additional speedup we later gain
+by stratifying the dataset into low-variance regions.
+Finally, the sample complexity bound indicates whether Algorithm 1 will actually give speedup for
+any particular problem. For a given summation, let the speedup be de(cid:2)ned as the total number of
+terms n divided by the number of terms evaluated by the approximation. For a desired speedup (cid:28) ,
+we need n (cid:21) (cid:28) mbound , where mbound is the expression in Equation 4. This is the fundamental
+characterization of whether speedup will be attained.
+
+4
+
+Algorithm 2 Iterative Monte Carlo approximation for nested summations.
+MC-Approx: as in Algorithm 1
+addSamples(samples; mneeded ; S; Xc )
+for i = 1 to mneeded
+calcStats: as in Algorithm 1
+Xi   rand(S:I (Xc ))
+mcArgs   map(MC-Approx((cid:3); Xc (cid:14) Xi ; : : :); hS:Gj i)
+samples   samples [ S:f (Xc ; mcArgs)
+end for
+
+4 Multi-stage Monte Carlo
+
+We now turn to the inductive case of nested summations, i.e. Equation 2. The approach we take
+is to apply the single-stage Monte Carlo algorithm over the terms fi as before, but with recursive
+invocation to obtain approximations for the arguments Gj . Algorithm 2 speci(cid:2)es this procedure.
+Theorem 3. Given mmin large enough to put ^(cid:22)f in its asymptotic normal regime, with probability
+at least 1 (cid:0) (cid:11) Algorithm 2 approximates the summation S with relative error no greater than (cid:15) .
+Proof. We begin by noting that the proof of correctness for Algorithm 1 rests on 1) the ability to
+n Pi fi , and 2) the ability to invoke the
+sample from a distribution Pf whose expectation is (cid:22)f = 1
+CLT on the sample mean ^(cid:22)f in terms of the sample variance ^(cid:27) 2
+f . Given these properties, Equation 3
+follows as a suf(cid:2)cient condition for relative error no greater than (cid:15) with probability at least 1 (cid:0) (cid:11). We
+therefore need only establish that Algorithm 2 samples from a distribution having these properties.
+For each sampled fi , let bGj be the recursive approximation for argument Gj . We assume bGj has
+been drawn from a CLT-type normal distribution. Because the bGj are recursively approximated, this
+is an inductive hypothesis, with the remainder of the proof showing that if the hypothesis holds for
+the recursive invocations, it also holds for the outer invocation. The base case, where all recursions
+must bottom out, is the type-B summation already shown to give CLT-governed answers (see proof
+of Theorem 1). Let bGm = ( bG1 ; bG2 ; : : :) be the vector of bGj values after each bGj has been estimated
+from mj samples (P mj = m), and let G be the vector of true Gj values. Since each component bGj
+converges in distribution to N (Gj ; (cid:27)2
+j =mj ), bGm satis(cid:2)es bGm   N (G ; (cid:6)m ). We leave the detailed
+j =mj , and that its
+entries of the covariance (cid:6)m unspeci(cid:2)ed, except to note that its j j th element is (cid:27) 2
+off-diagonal elements may be non-zero if the bGj are generated in a correlated way (this can be used
+as a variance reduction technique).
+Given the asymptotic normality of bGm , the same arguments used to derive the multivariate delta
+f (G )).
+method can be used, with some modi(cid:2)cation, to show that fi ( bGm )   N (fi (G ); Of (G )(cid:6)mOT
+Thus, asymptotically, fi ( bGm ) is normally distributed around its true value with a variance that de-
+pends on both the gradient of f and the covariance matrix of the approximated arguments in bGm .
+This being the case, uniform sampling of the recursively estimated fi is equivalent to sampling from
+a distribution ~Pf that gives weight 1
+n to a normal distribution centered on each fi . The expectation
+over ~Pf is (cid:22)f , and since the algorithm uses a simple sample mean the CLT does apply. These are
+the properties we need for correctness, and the applicability of the CLT combined with the proven
+base case completes the inductive proof.
+
+n Pi2I (cid:27)2
+Note that the variance over ~Pf works out to ~(cid:27) 2
+i , where (cid:27) 2
+f (G ).
+f + 1
+f = (cid:27)2
+i = Of (G )(cid:6)mOT
+In other words, the variance with recursive approximation is the exact variance (cid:27) 2
+f plus the average
+of the variances (cid:27) 2
+i of the approximated fi . Likewise one could write an expression for the kurtosis
+~(cid:22)4f . Because we are still dealing with a sample mean, Theorem 2 still holds in the nested case.
+Corollary 2.1. Given mmin large enough to put ^(cid:22)f and ^(cid:27)f in their asymptotic normal regimes,
+j(cid:22)f j q ~(cid:22)4f
+f (cid:0) 1(cid:1).
+with probability at least 1 (cid:0) 2(cid:11) Algorithm 2 terminates with m (cid:20) O (cid:0) ~(cid:27)2
++ ~(cid:27)f
+f
+(cid:22)2
+~(cid:27)4
+f
+It is important to point out that the 1 (cid:0) (cid:11) con(cid:2)dences and (cid:15) relative error bounds of the recursively
+approximated arguments do not pass through to or compound in the overall estimator ^(cid:22)f :
+their
+i of each sampled fi , which in turn contributes to the overall
+in(cid:3)uence appears in the variance (cid:27) 2
+variance ~(cid:27) 2
+f , and the error from ~(cid:27) 2
+f is independently controlled by the outermost sampling procedure.
+
+5
+
+Algorithm 3 Iterative Monte Carlo approximation for nested summations with strati(cid:2)cation.
+MC-Approx: as in Algorithm 1
+addSamples(strata; samples; mneeded ; S; Xc )
+needP erS trat = optAlloc(samples; strata; mneeded )
+for s = 1 to strata:count
+ms = needP erS trat[s]
+for i = 1 to ms
+Xi   rand(S:I (Xc ); strata[s])
+mcArgs   map(MC-Approx((cid:3); Xc (cid:14) Xi ; : : :); hS:Gj i)
+samples[s]   samples[s] [ S:f (Xc ; mcArgs)
+end for
+end for
+
+calcStats(strata; samples)
+m   count(samples)
+^(cid:22)f s   stratAvg(strata; samples)
+^(cid:27)2
+f s   stratV ar(strata; samples)
+return m; ^(cid:22)f s ; ^(cid:27)2
+f s
+
+5 Variance Reduction
+
+With Algorithm 2 we have coverage of the entire generalized summation problem class, and our
+focus turns to maximizing ef(cid:2)ciency. As noted above, Theorem 2 implies we need fewer samples
+when the summation terms are tightly concentrated in a few clusters. We formalize this by spatially
+partitioning the data to enable a strati(cid:2)ed sampling scheme. Additionally, by use of correlated
+sampling we induce covariance between recursively estimated summations whenever the overall
+variance can be reduced by doing so. Adding these techniques to recursive Monte Carlo makes for
+an extremely fast, accurate, and general approximation scheme.
+Stratiﬁcation. Strati(cid:2)cation is a standard Monte Carlo principle whereby the values being sampled
+are partitioned into subsets (strata) whose contributions are separately estimated and then combined.
+The idea is that strata with higher variance can be sampled more heavily than those with lower
+variance, thereby making more ef(cid:2)cient use of samples than in uniform sampling. Application of
+this principle requires the development of an effective partitioning scheme for each new domain of
+interest. In the case of generalized summations, the values being sampled are the f i , which are not
+known a priori and cannot be directly strati(cid:2)ed. However, since f is generally a function with some
+degree of continuity, its output is similar for similar values of its arguments. We therefore stratify the
+argument space, i.e. the input datasets, by use of spatial partitioning structures. Though any spatial
+partitioning could be used, in this work we use modi(cid:2)ed kd-trees that recursively split the data along
+the dimension of highest variance. The approximation procedure runs as it did before, except that
+the sampling and sample statistics are modi(cid:2)ed to make use of the trees. Trees are expanded up to
+a user-speci(cid:2)ed number of nodes, prioritized by a heuristic of expanding nodes in order of largest
+size times average per-dimensional standard deviation. This heuristic will later be justi(cid:2)ed by the
+variance expression for the strati(cid:2)ed sample mean. The approximation procedure is summarized in
+Algorithm 3, and we now establish its error guarantee.
+Theorem 4. Given mmin large enough to put ^(cid:22)f in its asymptotic normal regime, with probability
+at least 1 (cid:0) (cid:11) Algorithm 3 approximates the summation S with relative error no greater than (cid:15) .
+Proof. Identical to Theorem 3, but we need to establish that 1) the sample mean remains unbiased
+under strati(cid:2)cation, and 2) the CLT still holds under strati(cid:2)cation. These turn out to be standard
+properties of the strati(cid:2)ed sample mean and its variance estimator (see [7]):
+^(cid:22)f s = X
+j
+= X
+, m X
+j
+j
+where j indexes the strata, ^(cid:22)j and ^(cid:27)2
+j are the sample mean and variance of stratum j , pj is the
+fraction of summation terms in stratum j , and qj is the fraction of samples drawn from stratum j .
+Algorithm 3 modi(cid:2)es the addSamples subroutine to sample in strati(cid:2)ed fashion, and computes the
+strati(cid:2)ed ^(cid:22)f s and ^(cid:27)2
+f s instead of ^(cid:22)f and ^(cid:27)2
+f in calcStats. Since these estimators satisfy the two
+conditions necessary for the error guarantee, this establishes the theorem.
+
+^(cid:27)2 ( ^(cid:22)f s ) =
+
+^(cid:27)2
+j
+mj
+
+^(cid:27)2
+f s
+m
+
+;
+
+(5)
+
+(6)
+
+p2
+j
+qj
+
+^(cid:27)2
+j ;
+
+pj ^(cid:22)j
+
+^(cid:27)2
+f s
+
+p2
+j
+
+The true variance (cid:27) 2 ( ^(cid:22)f s ) is identical to Equation 6 but with the exact (cid:27) 2
+j substituted for ^(cid:27) 2
+j . In [7],
+it is shown that (cid:27) 2
+f , i.e. strati(cid:2)cation never increases variance, and that any re(cid:2)nement of a
+f s (cid:20) (cid:27)2
+
+6
+
+f s . Although the sample allocation fractions qj can be chosen arbi-
+strati(cid:2)cation can only reduce (cid:27) 2
+f s reduces to (Pj pj (cid:27)j )2 .
+f s is minimized when qj / pj (cid:27)j . With this optimal allocation, (cid:27) 2
+trarily, (cid:27)2
+This motivates our kd-tree expansion heuristic, as described above, which tries to (cid:2)rst split the nodes
+with highest pj (cid:27)j , i.e. the nodes with highest contribution to the variance under optimal allocation.
+While we never know the (cid:27)j exactly, Algorithm 3 uses the sample estimates ^(cid:27)j at each stage to
+approximate the optimal allocation (this is the optAlloc routine).
+Finally, the Theorem 2 sample complexity still holds for the CLT-governed strati(cid:2)ed sample mean.
+Corollary 2.2. Given mmin large enough to put ^(cid:22)f s and ^(cid:27)f s in their asymptotic normal regimes,
+j(cid:22)f j q (cid:22)4f s
+f s (cid:0) 1(cid:1).
+with probability at least 1 (cid:0) 2(cid:11) Algorithm 3 terminates with m (cid:20) O (cid:0) (cid:27)2
++ (cid:27)f s
+f s
+(cid:22)2
+(cid:27)4
+f
+Correlated Sampling. The variance of recursively estimated fi , as expressed by Of (G )(cid:6)mOT
+f (G ),
+depends on the full covariance matrix of the estimated arguments. If the gradient of f is such that the
+variance of fi depends negatively (positively) on a covariance (cid:27)jk , we can reduce the variance by
+inducing positive (negative) covariance between Gj and Gk . Covariance can be induced by sharing
+sampled points across the estimates of Gj and Gk , assuming they both use the same datasets. In
+some cases the expression for fi ’s variance is such that the effect of correlated sampling is data-
+dependent; when this happens, it is easy to test and check whether correlation helps. All experiments
+presented here were bene(cid:2)ted by correlated sampling on top of strati(cid:2)cation.
+
+6 Experiments
+
+We present experimental results in two phases. First, we compare strati(cid:2)ed multi-stage Monte Carlo
+approximations to exact evaluations on tractable datasets. We show that the error distributions con-
+form closely to our asymptotic theory. Second, having veri(cid:2)ed accuracy to the extent possible,
+we run our method on datasets containing millions of points in order to show 1) validation of the
+theoretical prediction that runtime is roughly independent of dataset size, and 2) many orders of
+magnitude speedup (as high as 1014 ) relative to exact computation. These results are presented for
+two method-dataset pairs: kernel regression on a dataset containing 2 million 4-dimensional redshift
+measurements used for quasar identi(cid:2)cation, and kernel conditional density estimation on an n-body
+galaxy simulation dataset containing 3.5 million 3-dimensional locations. In the KR case, the fourth
+dimension is regressed against the other three, while in KCDE the distribution of the third dimension
+is predicted as a function of the (cid:2)rst two. In both cases we are evaluating the cross-validated score
+functions used for bandwidth optimization, i.e. SKR and SKCDE as described in Section 2.
+Error Control. The objective of this (cid:2)rst set of experiments is to validate the guarantee that relative
+error will be less than or equal to (cid:15) with probability 1 (cid:0) (cid:11). We measured the distribution of error on
+a series of random data subsets up to the highest size for which the exact computation was tractable.
+For the O(n2 ) SKR , the limit was n = 10K, while for the O(n3 ) SKCDE it was n = 250. For each
+dataset we randomly chose and evaluated 100 bandwidths with 1 (cid:0) (cid:11) = 0:95 and (cid:15) = 0:1. Figure 1
+shows the full quantile spreads of the relative errors. The most salient feature is the relationship
+of the 95% quantile line (dashed) to the threshold line at (cid:15) = 0:1 (solid). Full compliance with
+asymptotic theory would require the dashed line never to be above the solid. This is basically the
+case for KCDE,1 while the KR line never goes above 0:134. The approximation is therefore quite
+good, and could be improved if desired by increasing mmin or the number of strata, but in this case
+we chose to trade a slight increase in error for an increase in speed.
+Speedup. Given the validation of the error guarantees, we now turn to computational performance.
+As before, we ran on a series of random subsets of the data, this time with n ranging into the millions.
+At each value of n, we randomly chose and evaluated 100 bandwidths, measuring the time for each
+evaluation. Figure 2 presents the average evaluation time versus dataset size for both methods. The
+most striking feature of these graphs is their (cid:3)atness as n increases by orders of magnitude. This is
+in accord with Theorem 2 and its corollaries, which predict sample and computational complexity
+independent of dataset size. Speedups2 for KR range from 1.8 thousand at n = 50K to 2:8 million
+at n = 2M. KCDE speedups range from 70 million at n = 50K to 1014 at n = 3:5M. This
+performance is many orders of magnitude better than that of previous methods.
+1The spike in the max quantile is due to a single outlier point.
+2All speedups are relative to extrapolated runtimes based on the O() order of the exact computation.
+
+7
+
+99%−max
+90%−99%
+75%−90%
+50%−75%
+25%−50%
+10%−25%
+1%−10%
+min−1%
+95%
+error = 0.1
+
+0.25
+
+0.2
+
+r
+o
+r
+r
+e
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+0.15
+
+0.1
+
+0.05
+
+99%−max
+90%−99%
+75%−90%
+50%−75%
+25%−50%
+10%−25%
+1%−10%
+min−1%
+95%
+error = 0.1
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+r
+o
+r
+r
+e
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+0
+1000
+
+2000
+
+0
+3000
+4000
+5000
+150
+6000
+7000
+8000
+9000
+10000
+50
+100
+200
+dataset size
+dataset size
+Figure 1: Error distribution vs. dataset size for KR (left), and KCDE (right).
+
+250
+
+4000
+
+)
+s
+m
+(
+ 
+e
+m
+i
+t
+ 
+n
+o
+i
+t
+a
+t
+u
+p
+m
+o
+c
+ 
+.
+g
+v
+a
+
+3000
+
+2000
+
+1000
+
+6000
+
+5000
+
+4000
+
+3000
+
+2000
+
+1000
+
+0
+
+)
+s
+m
+(
+ 
+e
+m
+i
+t
+ 
+n
+o
+i
+t
+a
+t
+u
+p
+m
+o
+c
+ 
+.
+g
+v
+a
+
+0
+
+−1000
+
+0
+2,000,000
+1,000,000
+500,000
+1,500,000
+2,000,000
+0  
+1,000,000
+3,000,000
+dataset size
+dataset size
+Figure 2: Runtime vs. dataset size for KR (left), and KCDE (right). Error bars are one standard deviation.
+
+7 Conclusion
+
+We have presented a multi-stage strati(cid:2)ed Monte Carlo method for ef(cid:2)ciently approximating a broad
+class of generalized nested summations. Summations of this type lead to computational bottlenecks
+in kernel estimators and elsewhere in machine learning. The theory derived for this Monte Carlo
+approach predicts: 1) relative error no greater than (cid:15) with probability at least 1(cid:0) (cid:11), for user-speci(cid:2)ed
+(cid:15) and (cid:11), and 2) sample and computational complexity independent of dataset size. Our experimen-
+tal results validate these theoretical guarantees on real datasets, where we accelerate kernel cross-
+validation scores by as much as 1014 on millions of points. This is many orders of magnitude faster
+than the previous state of the art. In addition to applications, future work will likely include au-
+tomatic selection of strati(cid:2)cation granularity, additional variance reduction techniques, and further
+generalization to other computational bottlenecks such as linear algebraic operations.
+
+References
+[1] Nicol N. Schraudolph and Thore Graepel. Combining conjugate direction methods with stochastic approx-
+imation of gradients. In Workshop on Artiﬁcial
+Intelligence and Statistics (AISTATS), 2003.
+[2] Alexander G. Gray and Andrew W. Moore. N-body problems in statistical learning. In Advances in Neural
+Information Processing Systems (NIPS) 13, 2000.
+[3] Mike Klaas, Mark Briers, Nando de Freitas, and Arnaud Doucet. Fast particle smoothing: If I had a million
+particles. In International Conference on Machine Learning (ICML), 2006.
+[4] Ping Wang, Dongryeol Lee, Alexander Gray, and James M. Rehg. Fast mean shift with accurate and stable
+convergence. In Workshop on Artiﬁcial
+Intelligence and Statistics (AISTATS), 2007.
+[5] Michael P. Holmes, Alexander G. Gray, and Charles Lee Isbell Jr. Fast nonparametric conditional density
+estimation. In Uncertainty in Artiﬁcial
+Intelligence (UAI), 2007.
+[6] Reuven Y. Rubinstein. Simulation and the Monte Carlo Method. John Wiley & Sons, 1981.
+[7] Paul Glasserman. Monte Carlo methods in ﬁnancial engineering. Springer-Verlag, 2004.
+
+8
+
+

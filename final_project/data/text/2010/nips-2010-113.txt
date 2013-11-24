@@ -1,0 +1,661 @@
+Linear Complementarity for Regularized Policy
+Evaluation and Improvement
+
+Jeff Johns
+
+Christopher Painter-Wakeﬁeld
+Department of Computer Science
+Duke University
+Durham, NC 27708
+{johns, paint007, parr}@cs.duke.edu
+
+Ronald Parr
+
+Abstract
+Recent work in reinforcement learning has emphasized the power of L1 regular-
+ization to perform feature selection and prevent overﬁtting. We propose formulat-
+ing the L1 regularized linear ﬁxed point problem as a linear complementarity prob-
+lem (LCP). This formulation offers several advantages over the LARS-inspired
+formulation, LARS-TD. The LCP formulation allows the use of efﬁcient off-the-
+shelf solvers, leads to a new uniqueness result, and can be initialized with starting
+points from similar problems (warm starts). We demonstrate that warm starts, as
+well as the efﬁciency of LCP solvers, can speed up policy iteration. Moreover,
+warm starts permit a form of modiﬁed policy iteration that can be used to approxi-
+mate a “greedy” homotopy path, a generalization of the LARS-TD homotopy path
+that combines policy evaluation and optimization.
+
+Introduction
+1
+L1 regularization has become an important tool over the last decade with a wide variety of ma-
+chine learning applications. In the context of linear regression, its use helps prevent overﬁtting and
+enforces sparsity in the problem’s solution. Recent work has demonstrated how L1 regularization
+can be applied to the value function approximation problem in Markov decision processes (MDPs).
+Kolter and Ng [1] included L1 regularization within the least-squares temporal difference learning
+[2] algorithm as LARS-TD, while Petrik et al. [3] adapted an approximate linear programming algo-
+rithm. In both cases, L1 regularization automates the important task of selecting relevant features,
+thereby easing the design choices made by a practitioner.
+LARS-TD provides a homotopy method for ﬁnding the L1 regularized linear ﬁxed point formulated
+by Kolter and Ng. We reformulate the L1 regularized linear ﬁxed point as a linear complementarity
+problem (LCP). This formulation offers several advantages. It allows us to draw upon the rich theory
+of LCPs and optimized solvers to provide strong theoretical guarantees and fast performance. In
+addition, we can take advantage of the “warm start” capability of LCP solvers to produce algorithms
+that are better suited to the sequential nature of policy improvement than LARS-TD, which must
+start from scratch for each new policy.
+
+2 Background
+First, we introduce MDPs and linear value function approximation. We then review L1 regulariza-
+tion and feature selection for regression problems. Finally, we introduce LCPs. We defer discussion
+of L1 regularization and feature selection for reinforcement learning (RL) until section 3.
+
+1
+
+2.1 MDP and Value Function Approximation Framework
+We aim to discover optimal, or near-optimal, policies for Markov decision processes (MDPs) deﬁned
+by the quintuple M = (S, A, P , R, γ ). Given a state s ∈ S , the probability of a transition to a state
+s! ∈ S when action a ∈ A is taken is given by P (s! |s, a). The reward function is a mapping from
+states to real numbers R : S "→ R. A policy π for M is a mapping from states to actions π : s "→ a
+and the transition matrix induced by π is denoted P π . Future rewards are discounted by γ ∈ [0, 1).
+The value function at state s for policy π is the expected total γ -discounted reward for following π
+from s. In matrix-vector form, this is written:
+V π = T π V π = R + γP π V π ,
+where T π is the Bellman operator for policy π and V π is the ﬁxed point of this operator. An optimal
+policy, π∗ , maximizes state values, has value function V ∗ , and is the ﬁxed point of the T ∗ operator:
+a∈A !s!∈S
+T ∗V (s) = R(s) + γ max
+P (s! |s, a)V (s! ).
+Of the many algorithms that exist for ﬁnding π∗ , policy iteration is most relevant to the presentation
+herein. For any policy πj , policy iteration computes V πj , then determines πj+1 as the “greedy”
+policy with respect to V πj :
+[R(s) + γ !s!∈S
+P (s! |s, a)V πj (s! )].
+πj+1 (s) = arg max
+a∈A
+This is repeated until some convergence condition is met. For an exact representation of each V πj ,
+the algorithm will converge to an optimal policy and the unique, optimal value function V ∗ .
+The value function, transition model, and reward function are often too large to permit an exact rep-
+resentation. In such cases, an approximation architecture is used for the value function. A common
+choice is ˆV =Φ w , where w is a vector of k scalar weights and Φ stores a set of k features in an n× k
+matrix with one row per state. Since n is often intractably large, Φ can be thought of as populated
+by k linearly independent basis functions, ϕ1 . . .ϕ k , implicitly deﬁning the columns of Φ.
+For the purposes of estimating w , it is common to replace Φ with ˆΦ, which samples rows of Φ,
+though for conciseness of presentation we will use Φ for both, since algorithms for estimating w are
+essentially identical if ˆΦ is substituted for Φ. Typical linear function approximation algorithms [2]
+solve for the w which is a ﬁxed point:
+Φw =Π( R + γΦ!π w) =Π T π Φw,
+where Π is the L2 projection into the span of Φ and Φ!π is P π Φ in the explicit case and composed
+of sampled next features in the sampled case. Likewise, we overload T π for the sampled case.
+2.2 L1 Regularization and Feature Selection in Regression
+In regression, the L1 regularized least squares problem is deﬁned as:
+1
+(1)
+%Φx − y%2
+w = arg min
+2 + β %x%1 ,
+2
+x∈Rk
+where y ∈ Rn is the target function and β ∈ R≥0 is a regularization parameter. This penalized
+regression problem is equivalent to the Lasso [4], which minimizes the squared residual subject to a
+constraint on %x%1 . The use of the L1 norm in the objective function prevents overﬁtting, but also
+serves a secondary purpose of promoting sparse solutions (i.e., coefﬁcients w containing many 0s).
+Therefore, we can think of L1 regularization as performing feature selection. The Lasso’s objective
+function is convex, ensuring the existence of a global (though not necessarily unique) minimum.
+Even though the optimal solution to the Lasso can be computed in a fairly straightforward manner
+using convex programming, this approach is not very efﬁcient for large problems. This is a mo-
+tivating factor for the least angle regression (LARS) algorithm [5], which can be thought of as a
+homotopy method for solving the Lasso for all nonnegative values of β . We do not repeat the de-
+tails of the algorithm here, but point out that this is easier than it might sound at ﬁrst because the
+homotopy path in β -space is piecewise linear (with ﬁnitely many segments). Furthermore, there
+exists a closed form solution for moving from one piecewise linear segment to the next segment.
+An important beneﬁt of LARS is that it provides solutions for all values of β in a single run of the
+algorithm. Cross-validation can then be performed to select an appropriate value.
+
+2
+
+2.3 LCP and BLCP
+Given a square matrix M and a vector q , a linear complementarity problem (LCP) seeks vectors
+w ≥ 0 and z ≥ 0 with wT z = 0 and
+
+w = q + M z .
+The problem is thus parameterized by LCP(q , M ). Even though LCPs may appear to be simple
+feasibility problems, the framework is rich enough to express any convex quadratic program.
+The bounded linear complementarity problem (BLCP) [6] includes box constraints on z . The BLCP
+computes w and z where w = q + M z and each variable zi meets one of the following conditions:
+(2a)
+=⇒ wi ≤ 0
+zi = ui
+(2b)
+zi = li
+=⇒ wi ≥ 0
+(2c)
+=⇒ wi = 0
+li < zi < ui
+with bounds −∞ ≤ li < ui ≤ ∞. The parameterization is written BLCP(q , M , l, u). Notice that an
+LCP is a special case of a BLCP with li = 0 and ui = ∞, ∀i. Like the LCP, the BLCP has a unique
+solution when M is a P-matrix1 and there exist algorithms which are guaranteed to ﬁnd this solution
+[6, 7]. When the lower and upper bounds on the BLCP are ﬁnite, the BLCP can in fact be formulated
+as an equivalent LCP of twice the dimensionality of the original problem. A full derivation of this
+equivalence is shown in the appendix (supplementary materials).
+There are many algorithms for solving (B)LCPs. Since our approach is not tied to a particular algo-
+rithm, we review some general properties of (B)LCP solvers. Optimized solvers can take advantage
+of sparsity in z . A zero entry in z effectively cancels out a column in M . If M is large, efﬁcient
+solvers can avoid using M directly, instead using a smaller M ! that is induced by the nonzero entries
+of z . The columns of M ! can be thought of as the “active” columns and the procedure of swapping
+columns in and out of M ! can be thought of as a pivoting operation, analogous to pivots in the sim-
+plex algorithm. Another important property of some (B)LCP algorithms is their ability to start from
+an initial guess at the solution (i.e., a “warm start”). If the initial guess is close to a solution, this can
+signiﬁcantly reduce the solver’s runtime.
+Recently, Kim and Park [8] derived a connection between the BLCP and the Karush-Kuhn-Tucker
+(KKT) conditions for LARS. In particular, they noted the solution to the minimization problem in
+equation (1) has the form:
+
+= (Φ T Φ)−1ΦT y
++ (Φ T Φ)−1
+x
+(−c)
+!"#$w
+!
+! "# $z
+"#
+!
+$M
+"#
+$
+q
+where the vector −c follows the constraints in equation (2) with li = −β and ui = β . Although we
+describe the equivalence between the BLCP and LARS optimality conditions using M ≡ (ΦT Φ)−1 ,
+the inverse can take place inside the BLCP algorithm and this operation is feasible and efﬁcient as
+it is only done for the active columns of Φ. Kim and Park [8] used a block pivoting algorithm,
+originally introduced by J ´udice and Pires [6], for solving the Lasso. Their experiments show the
+block pivoting algorithm is signiﬁcantly faster than both LARS and Feature Sign Search [9].
+
+,
+
+3 Previous Work
+Recent work has emphasized feature selection as an important problem in reinforcement learn-
+ing [10, 11]. Farahmand et al. [12] consider L2 regularized RL. An L1 regularized Bellman residual
+minimization algorithm was proposed by Loth et al. [13]2 . Johns and Mahadevan [14] investigate
+the combination of least squares temporal difference learning (LSTD) [2] with different variants
+of the matching pursuit algorithm [15, 16]. Petrik et al. [3] consider L1 regularization in the con-
+text of approximate linear programming. Their approach offers some strong guarantees, but is not
+well-suited to noisy, sampled data.
+1A P-matrix is a matrix for which all principal minors are positive.
+2Loth et al. claim to adapt LSTD to L1 regularization, but in fact describe a Bellman residual minimization
+algorithm and not a ﬁxed point calculation.
+
+3
+
+The work most directly related to our own is that of Kolter and Ng [1]. They propose augmenting
+the LSTD algorithm with an L1 regularization penalty. This results in the following L1 regularized
+linear ﬁxed point (L1TD) problem:
+
+1
+w = arg min
+2
+x∈Rk
+Kolter and Ng derive a set of necessary and sufﬁcient conditions characterizing the above ﬁxed
+point3 in terms of β , w , and a vector c of correlations between the features and the Bellman residual
+T π ˆV − ˆV . More speciﬁcally, the correlation ci associated with feature ϕi is given by:
+
+!Φx − (R + γΦ"π w)!2
+2 + β !x!1 .
+
+(3)
+
+i (T π ˆV − ˆV ) = ϕT
+i (R + γΦ"π w − Φw).
+ci = ϕT
+
+(4)
+
+Introducing the notation I to denote the set of indices of active features in the model (i.e., I = {i :
+wi #= 0}), the ﬁxed point optimality conditions can be summarized as follows:
+C1 . All features in the active set share the same absolute correlation, β : ∀i ∈I , |ci | = β .
+C2 . Inactive features have less absolute correlation than active features: ∀i /∈I , |ci | <β .
+C3 . Active features have correlations and weights agreeing in sign: ∀i ∈I , sgn(ci ) = sgn(wi ).
+Kolter and Ng show that it is possible to ﬁnd the ﬁxed point using an iterative procedure adapted
+from LARS. Their algorithm, LARS-TD, computes a sequence of ﬁxed points, each of which sat-
+isﬁes the optimality conditions above for some intermediate L1 parameter ¯β ≥ β . Successive
+solutions decrease ¯β and are computed in closed form by determining the point at which a feature
+must be added or removed in order to further decrease ¯β without violating one of the ﬁxed point
+requirements. The algorithm (as applied to action-value function approximation) is a special case of
+the algorithm presented in the appendix (see Fig. 2). Kolter and Ng prove that if ΦT (Φ − γΦ"π ) is
+a P-matrix, then for any β ≥ 0, LARS-TD will ﬁnd a solution to equation (3).
+LARS-TD inherits many of the beneﬁts and limitations of LARS. The fact that it traces an entire
+homotopy path can be quite helpful because it does not require committing to a particular value of
+β . On the other hand, the incremental nature of LARS may not be the most efﬁcient solution for any
+single value of the regularization parameter, as shown by Lee et al. [9] and Kim and Park [8].
+It is natural to employ LARS-TD in an iterative manner within the least squares policy iteration
+(LSPI) algorithm [17], as Kolter and Ng did. In this usage, however, many of the beneﬁts of LARS
+are lost. When a new policy is selected in the policy iteration loop, LARS-TD must discard its
+solution from the previous policy and start an entirely new homotopy path, making the value of the
+homotopy path in this context not entirely clear. One might cross-validate a choice of regularization
+parameter by measuring the performance of the ﬁnal policy, but this requires guessing a value of β
+for all policies and then running LARS-TD up to this value for each policy. If a new value of β is
+tried, all of the work done for the previous value must be discarded.
+
+4 The L1 Regularized Fixed Point as an LCP
+We show that the optimality conditions for the L1TD ﬁxed point correspond to the solution of a
+(B)LCP. This reformulation allows for (1) new algorithms to compute the ﬁxed point using (B)LCP
+solvers, and (2) a new guarantee on the uniqueness of a ﬁxed point.
+The L1 regularized linear ﬁxed point is described by a vector of correlations c as deﬁned in equation
+(4). We introduce the following variables:
+
+A =Φ T (Φ − γΦ"π )
+
+b =Φ T R,
+
+3For ﬁxed w , the RHS of equation (3) is a convex optimization problem; a sufﬁcient condition for optimality
+of some vector x∗ is that the zero vector is in the subdifferential of the RHS at x∗ . The ﬁxed point conditions
+follow from the equality between the LHS and RHS.
+
+4
+
+that allow equation (4) to be simpliﬁed as c = b − Aw . Assuming A is a P-matrix, A is invert-
+ible4 [18] and we can write:
+
+.
+
+= A−1 b
++ A−1
+w
+(−c)
+!"#$w
+! "# $q
+!"#$M
+! "# $z
+Consider a solution (w and z ) to the equation above where z is bounded as in equation (2) with
+l = −β and u = β to specify a BLCP. It is easy to verify that coefﬁcients w satisfying this BLCP
+acheive the L1TD optimality conditions as detailed in section 3. Thus, any appropriate solver for
+the BLCP(A−1 b, A−1 , −β , β) can be thought of as a linear complementarity approach to solving
+for the L1TD ﬁxed point. We refer to this class of solvers as LC-TD algorithms and parameterize
+them as LC-TD(Φ, Φ"π , R,γ,β ).
+Proposition 1 If A is a P-matrix, then for any R, the L1 regularized linear ﬁxed point exists, is
+unique, and will be found by a basic-set BLCP algorithm solving BLCP(A−1 b, A−1 , −β , β).
+This proposition follows immediately from some basic BLCP results. We note that if A is a P-
+matrix, so is A−1 [18], that BLCPs for P-matrices have a unique solution for any q ([7], Chp. 3),
+and that the the basic-set algorithm of J ´udice and Pires [19] is guaranteed to ﬁnd a solution to any
+BLCP with a P-matrix. This strengthens the theorem by Kolter and Ng [1], which guaranteed only
+that the LARS-TD algorithm would converge to a solution when A is a P-matrix.
+This connection to the LCP literature has practical beneﬁts as well as theoretical ones. Decoupling
+the problem from the solver allows a variety of algorithms to be exploited. For example, the ability
+of many solvers to use a warm start during initialization offers a signiﬁcant computational advantage
+over LARS-TD (which always begins with a null solution). In the experimental section of this paper,
+we demonstrate that the ability to use warm starts during policy iteration can signiﬁcantly improve
+computational efﬁciency. We also ﬁnd that (B)LCP solvers can be more robust than LARS-TD, an
+issue we address further in the appendix.
+5 Modiﬁed Policy Iteration using LARS-TD and LC-TD
+As mentioned in section 3, the advantages of LARS-TD as a homotopy method are less clear when
+it is used in a policy iteration loop since the homotopy path is traced only for speciﬁc policies. It is
+possible to incorporate greedy policy improvements into the LARS-TD loop, leading to a homotopy
+path for greedy policies. The greedy L1 regularized ﬁxed point equation is:
+1
+w = arg min
+2
+x∈Rk
+We propose a modiﬁcation to LARS-TD called LARQ which, along with conditions C1 -C3 in sec-
+tion 3, maintains an additional invariant:
+C4 . The current policy π is greedy with respect to the current solution.
+It turns out that we can change policies and avoid violating the LARS-TD invariants if we make
+policy changes at points where applying the Bellman operator yields the same value for both the
+old policy (π ) and the new policy (π " ): T π ˆV = T π ! ˆV . The LARS-TD invariants all depend on
+the correlation of features with the residual T π ˆV − ˆV of the current solution. When the above
+equation is satisﬁed, the residual is equal for both policies. Thus, we can change policies at such
+points without violating any of the LARS-TD invariants. Due to space limitations, we defer a full
+presentation of the LARQ algorithm to the appendix.
+When run to completion, LARQ provides a set of action-values that are the greedy ﬁxed point for
+all settings of β . In principle, this is more ﬂexible than LARS-TD with policy iteration because it
+produces these results in a single run of the algorithm. In practice, LARQ suffers two limitations.
+4Even when A is not invertible, we can still use a BLCP solver as long as the principal submatrix of A
+associated with the active features is invertible. As with LARS-TD, the inverse only occurs for this principal
+submatrix. In fact, we discuss in the appendix how one need never explicitly compute A. Alternatively, we can
+convert the BLCP to an LCP (appendix A.1) thereby avoiding A−1 in the parameterization of the problem.
+
+(R + γΦ"π w)"2
+2 + β "x"1 .
+
+"Φx − max
+π
+
+(5)
+
+5
+
+The ﬁrst is that it can be slow. LARS-TD enumerates every point at which the active set of features
+might change, a calculation that must be redone every time the active set changes. LARQ must
+do this as well, but it must also enumerate all points at which the greedy policy can change. For k
+features and n samples, LARS-TD must check O(k) points, but LARQ must check O(k + n) points.
+Even though LARS-TD will run multiple times within a policy iteration loop, the number of such
+iterations will typically be far fewer than the number of training data points. In practice, we have
+observed that LARQ runs several times slower than LARS-TD with policy iteration.
+A second limitation of LARQ is that it can get “stuck.” This occurs when the greedy policy for a
+particular β is not well deﬁned. In such cases, the algorithm attempts to switch to a new policy
+immediately following a policy change. This problem is not unique to LARQ. Looping is possible
+with most approximate policy iteration algorithms. What makes it particularly troublesome for
+LARQ is that there are few satisfying ways of addressing this issue without sacriﬁcing the invariants.
+To address these limitations, we present a compromise between LARQ and LARS-TD with policy
+iteration. The algorithm, LC-MPI, is presented as Algorithm 1. It avoids the cost of continually
+checking for policy changes by updating the policy only at a ﬁxed set of values, β (1) . . .β (m) . Note
+that the β values are in decreasing order with β (1) set to the maximum value (i.e., the point such
+that w(1) is the zero vector). At each β (j ) , the algorithm uses a policy iteration loop to (1) determine
+the current policy (greedy with respect to parameters ˆw(j ) ), and (2) compute an approximate value
+function Φw(j ) using LC-TD. The policy iteration loop terminates when w(j ) ≈ ˆw(j ) or some
+predeﬁned number of iterations is exceeded. This use of LC-TD within a policy iteration loop will
+typically be quite fast because we can use the current feature set as a warm start. The warm start is
+indicated in Algorithm 1 by supp( ˆw(j ) ), where the function supp determines the support, or active
+elements, in ˆw(j ) ; many (B)LCP solvers can use this information for initialization.
+Once the policy iteration loop terminates for point β (j ) , LC-MPI simply begins at the next point
+β (j+1) by initializing the weights with the previous solution, ˆw(j+1) ← w(j ) . This was found
+to be a very effective technique. As an alternative, we tested initializing ˆw(j+1) with the result of
+running LARS-TD with the greedy policy implicit in w(j ) from the point (β (j ) , w(j ) ) to β (j+1) . This
+initialization method performed worse experimentally than the simple approach described above.
+We can view LC-MPI as approximating LARQ’s homotopy path since the two algorithms agree for
+any β (j ) reachable by LARQ. However, LC-MPI is more efﬁcient and avoids the problem of getting
+stuck. By compromising between the greedy updates of LARQ and the pure policy evaluation
+methods of LARS-TD and LC-TD, LC-MPI can be thought of as form of modiﬁed policy iteration
+[20]. The following table summarizes the properties of the algorithms described in this paper.
+LC-MPI
+LARQ
+LC-TD Policy Iteration
+LARS-TD Policy Iteration
+Y
+N
+N
+Y
+Y
+Y
+Y
+N
+Approximate
+N
+N
+Y
+Y
+Y
+N
+Y
+
+Warm start for each new β
+Warm start for each new policy
+Greedy policy homotopy path
+Robust to policy cycles
+
+6 Experiments
+We performed two types of experiments to highlight the potential beneﬁts of (B)LCP algorithms.
+First, we used both LARS-TD and LC-TD within policy iteration. These experiments, which were
+run using a single value of the L1 regularization parameter, show the beneﬁt of warm starts for
+LC-TD. The second set of experiments demonstrates the beneﬁt of using the LC-MPI algorithm. A
+single run of LC-MPI results in greedy policies for multiple values of β , allowing the use of cross-
+validation to pick the best policy. We show this is signiﬁcantly more efﬁcient than running policy
+iteration with either LARS-TD or LC-TD multiple times for different values of β . We discuss the
+details of the speciﬁc LCP solver we used in the appendix.
+Both types of experiments were conducted on the 20-state chain [17] and mountain car [21] domains,
+the same problems tested by Kolter and Ng [1]. The chain MDP consists of two stochastic actions,
+left and right, a reward of one at each end of the chain, and γ = 0.9. One thousand samples were
+generated using 100 episodes, each consisting of 10 random steps. For features, we used 1000
+Gaussian random noise features along with ﬁve equally spaced radial basis functions (RBFs) and
+a constant function. The goal in the mountain car MDP is to drive an underpowered car up a hill
+
+6
+
+Algorithm 1 LC-MPI
+Inputs:
+state transition and reward samples
+i=1 ,
+i }n
+{si , ai , ri , s!
+state-action features
+ϕ : S × A → Rk ,
+γ ∈ [0, 1), discount factor
+j=1 , where β (1) = maxl ˛
+˛, β (j ) <β (j−1) for j ∈{ 2, . . . , m}, and β (m) ≥ 0
+˛Pn
+{β (j ) }m
+i=1 ϕl (si , ai )ri ˛
+ ∈ R+ and T ∈ N,
+termination conditions for policy iteration
+Initialization:
+Φ ← [ϕ(s1 , a1 ) . . . ϕ (sn , an )]T , R ← [r1 . . . rn ]T , w(1) ← 0
+for j = 2 to m do
+// Initialize with the previous solution
+ˆw(j ) ← w(j−1)
+// Policy iteration loop
+Loop:
+// Select greedy actions and form Φ!
+i , a)T ˆw(i)
+i ← arg maxa ϕ(s!
+∀i : a!
+n )]T
+Φ! ← [ϕ(s!
+1 , a!
+1 ) . . . ϕ (s!
+n , a!
+// Solve the LC-TD problem using a (B)LCP solver with a warm start
+w(j ) ← LC-TD(Φ, Φ! , R,γ,β (j ) ) with warm start supp( ˆw(j ) )
+// Check for termination
+if (’w(j ) − ˆw(j ) ’2 ≤ ) or
+(# iterations ≥ T )
+then break loop
+else
+ˆw(j ) ← w(j )
+Return {w(j ) }m
+j=1
+
+by building up momentum. The domain is continuous, two dimensional, and has three actions. We
+used γ = 0.99 and 155 radial basis functions (apportioned as a two dimensional grid of 1, 2, 3, 4, 5,
+6, and 8 RBFs) and one constant function for features. Samples were generated using 75 episodes
+where each episode started in a random start state, took random actions, and lasted at most 20 steps.
+
+6.1 Policy Iteration
+To compare LARS-TD and LC-TD when employed within policy iteration, we recorded the number
+of steps used during each round of policy iteration, where a step corresponds to a change in the active
+feature set. The computational complexity per step of each algorithm is similar; therefore, we used
+the average number of steps per policy as a metric for comparing the algorithms. Policy iteration
+was run either until the solution converged or 15 rounds were exceeded. This process was repeated
+10 times for 11 different values of β . We present the results from these experiments in the ﬁrst two
+columns of Table 1. The two algorithms performed similarly for the chain MDP, but LC-TD used
+signiﬁcantly fewer steps for the mountain car MDP. Figure 1 shows plots for the number of steps
+used for each round of policy iteration for a single (typical) trial. Notice the declining trend for
+LC-TD; this is due to the warm starts requiring fewer steps to ﬁnd a solution. The plot for the chain
+MDP shows that LC-TD uses many more steps in the ﬁrst round of policy iteration than does LARS-
+TD. Lastly, in the trials shown in Figure 1, policy iteration using LC-TD converged in six iterations
+whereas it did not converge at all when using LARS-TD. This was due to LARS-TD producing
+solutions that violate the L1TD optimality conditions. We discuss this in detail in appendix A.5.
+
+6.2 LC-MPI
+When LARS-TD and LC-TD are used as subroutines within policy iteration, the process ends at a
+single value of the L1 regularization parameter β . The policy iteration loop must be rerun to consider
+different values of β . In this section, we show how much computation can be saved by running
+LC-MPI once (to produce m greedy policies, each at a different value of β ) versus running policy
+iteration m separate times. The third column in Table 1 shows the average number of algorithm steps
+per policy for LC-MPI. As expected, there is a signiﬁcant reduction in complexity by using LC-MPI
+for both domains. In the appendix, we give a more detailed example of how cross-validation can be
+
+7
+
+300
+
+250
+
+200
+
+150
+
+100
+
+50
+
+s
+p
+e
+t
+S
+ 
+f
+o
+ 
+r
+e
+b
+m
+u
+N
+
+LARS−TD
+LC−TD
+
+ 
+
+250
+
+200
+
+s
+p
+e
+t
+S
+ 
+f
+o
+ 
+r
+e
+b
+m
+u
+N
+
+150
+
+100
+
+50
+
+ 
+
+LARS−TD
+LC−TD
+
+0
+0
+ 
+
+15
+
+0
+0
+ 
+
+15
+
+5
+10
+5
+10
+Round of Policy Iteration
+Round of Policy Iteration
+(a) Chain
+(b) Mountain car
+Figure 1: Number of steps used by algorithms LARS-TD and LC-TD during each round of policy
+iteration for a typical trial. For LC-TD, note the decrease in steps due to warm starts.
+LC-MPI
+LC-TD, PI
+LARS-TD, PI
+Domain
+Chain
+73 ± 13
+77 ± 11
+24 ± 11
+21 ± 5
+116 ± 22
+214 ± 33
+Mountain car
+
+Table 1: Average number of algorithm steps per policy.
+
+used to select a good value of the regularization parameter. We also offer some additional comments
+on the robustness of the LARS-TD algorithm.
+7 Conclusions
+In this paper, we proposed formulating the L1 regularized linear ﬁxed point problem as a linear
+complementarity problem. We showed the LCP formulation leads to a stronger theoretical guarantee
+in terms of the solution’s uniqueness than was previously shown. Furthermore, we demonstrated that
+the “warm start” ability of LCP solvers can accelerate the computation of the L1TD ﬁxed point when
+initialized with the support set of a related problem. This was found to be particularly effective for
+policy iteration problems when the set of active features does not change signiﬁcantly from one
+policy to the next.
+We proposed the LARQ algorithm as an alternative to LARS-TD. The difference between these
+algorithms is that LARQ incorporates greedy policy improvements inside the homotopy path. The
+advantage of this “greedy” homotopy path is that it provides a set of action-values that are a greedy
+ﬁxed point for all settings of the L1 regularization parameter. However, this additional ﬂexibility
+comes with increased computational complexity. As a compromise between LARS-TD and LARQ,
+we proposed the LC-MPI algorithm which only maintains the LARQ invariants at a ﬁxed set of
+values. The key to making LC-MPI efﬁcient is the use of warm starts by using an LCP algorithm.
+There are several directions for future work. An interesting question is whether there is a natural
+way to incorporate policy improvement directly within the LCP formulation. Another concern for
+L1TD algorithms is a better characterization of the conditions under which solutions exist and can
+be found efﬁciently. In previous work, Kolter and Ng [1] indicated the P-matrix property can always
+hold provided enough L2 regularization is added to the problem. While this is possible, it also
+decreases the sparsity of the solution; therefore, it would be useful to ﬁnd other techniques for
+guaranteeing convergence while maintaining sparsity.
+Acknowledgments
+This work was supported by the National Science Foundation (NSF) under Grant #0937060 to the
+Computing Research Association for the CIFellows Project, NSF Grant IIS-0713435, and DARPA
+CSSG HR0011-06-1-0027. Any opinions, ﬁndings, and conclusions or recommendations expressed
+in this material are those of the authors and do not necessarily reﬂect the views of the National
+Science Foundation or the Computing Research Association.
+
+8
+
+References
+[1] J. Kolter and A. Ng. Regularization and feature selection in least-squares temporal difference
+learning. In Proc. ICML, pages 521–528, 2009.
+[2] S. Bradtke and A. Barto. Linear least-squares algorithms for temporal difference learning.
+Machine Learning, 22(1-3):33–57, 1996.
+[3] M. Petrik, G. Taylor, R. Parr, and S. Zilberstein. Feature selection using regularization in
+approximate linear programs for Markov decision processes.
+In To appear in Proc. ICML,
+2010.
+[4] R. Tibshirani. Regression shrinkage and selection via the Lasso. Journal of the Royal Statistical
+Society. Series B (Methodological), 58(1):267–288, 1996.
+[5] B. Efron, T. Hastie, I. Johnstone, and R. Tibshirani. Least angle regression. The Annals of
+Statistics, 32(2):407–451, 2004.
+[6] J. J ´udice and F. Pires. A block principal pivoting algorithm for large-scale strictly monotone
+linear complementarity problems. Computers and Operations Research, 21(5):587–596, 1994.
+[7] K. Murty. Linear Complementarity, Linear and Nonlinear Programming. Heldermann Verlag,
+1988.
+[8] J. Kim and H. Park. Fast active-set-type algorithms for L1 -regularized linear regression. In
+Proc. AISTAT, pages 397–404, 2010.
+[9] H. Lee, A. Battle, R. Raina, and A. Ng. Efﬁcient sparse coding algorithms. In Advances in
+Neural Information Processing Systems 19, pages 801–808, 2007.
+[10] S. Mahadevan and M. Maggioni. Proto-value functions: A Laplacian framework for learning
+representation and control in Markov decision processes. JMLR, 8:2169–2231, 2007.
+[11] R. Parr, L. Li, G. Taylor, C. Painter-Wakeﬁeld, and M. Littman. An analysis of linear models,
+linear value-function approximation, and feature selection for reinforcement learning. In Proc.
+ICML, 2008.
+[12] A. Farahmand, M. Ghavamzadeh, C. Szepesv ´ari, and S. Mannor. Regularized ﬁtted Q-iteration
+for planning in continuous-space Markovian decision problems. In Proc. ACC. IEEE Press,
+2009.
+[13] M. Loth, M. Davy, and P. Preux. Sparse temporal difference learning using LASSO. In IEEE
+International Symposium on Approximate Dynamic Programming and Reinforcement Learn-
+ing, 2007.
+[14] J. Johns and S. Mahadevan. Sparse approximate policy evaluation using graph-based basis
+functions. Technical Report UM-CS-2009-041, University of Massachusetts Amherst, Depart-
+ment of Computer Science, 2009.
+[15] S. Mallat and Z. Zhang. Matching pursuits with time-frequency dictionaries. IEEE Transac-
+tions on Signal Processing, 41(12):3397–3415, 1993.
+[16] Y. Pati, R. Rezaiifar, and P. Krishnaprasad. Orthogonal matching pursuit: Recursive function
+approximation with applications to wavelet decomposition. In Proceedings of the 27th Annual
+Asilomar Conference on Signals, Systems, and Computers, volume 1, pages 40–44, 1993.
+[17] M. Lagoudakis and R. Parr. Least-squares policy iteration. Journal of Machine Learning
+Research, 4:1107–1149, 2003.
+[18] S. Lee and H. Seol. A survey on the matrix completion problem. Trends in Mathematics,
+4(1):38–43, 2001.
+[19] J. J ´udice and F. Pires. Basic-set algorithm for a generalized linear complementarity problem.
+Journal of Optimization Theory and Applications, 74(3):391–411, 1992.
+[20] M. Puterman and M. Shin. Modiﬁed policy iteration algorithms for discounted Markov deci-
+sion problems. Management Science, 24(11), 1978.
+[21] R. Sutton and A. Barto. Reinforcement Learning: An Introduction. MIT Press, 1998.
+
+9
+
+

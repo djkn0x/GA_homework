@@ -1,0 +1,1187 @@
+Efﬁcient Learning using Forward-Backward Splitting
+
+John Duchi
+University of California Berkeley
+jduchi@cs.berkeley.edu
+
+Yoram Singer
+Google
+singer@google.com
+
+Abstract
+
+We describe, analyze, and experiment with a new framework for empirical loss
+minimization with regularization. Our algorithmic framework alternates between
+two phases. On each iteration we ﬁrst perform an unconstrained gradient descent
+step. We then cast and solve an instantaneous optimization problem that trades off
+minimization of a regularization term while keeping close proximity to the result
+of the ﬁrst phase. This yields a simple yet effective algorit hm for both batch penal-
+ized risk minimization and online learning. Furthermore, the two phase approach
+enables sparse solutions when used in conjunction with regularization functions
+that promote sparsity, such as ℓ1 . We derive concrete and very simple algorithms
+for minimization of loss functions with ℓ1 , ℓ2 , ℓ2
+2 , and ℓ∞ regularization. We
+also show how to construct efﬁcient algorithms for mixed-no rm ℓ1 /ℓq regulariza-
+tion. We further extend the algorithms and give efﬁcient imp lementations for very
+high-dimensional data with sparsity. We demonstrate the potential of the proposed
+framework in experiments with synthetic and natural datasets.
+
+1
+
+Introduction
+
+Before we begin, we establish notation for this paper. We denote scalars by lower case letters and
+vectors by lower case bold letters, e.g. w . The inner product of vectors u and v is denoted hu, vi.
+We use kxkp to denote the p-norm of the vector x and kxk as a shorthand for kxk2 .
+The focus of this paper is an algorithmic framework for regularized convex programming to mini-
+mize the following sum of two functions:
+
+(1)
+f (w) + r(w) ,
+where both f and r are convex bounded below functions (so without loss of generality we assume
+they are into R+ ). Often, the function f is an empirical loss and takes the form Pi∈S ℓi (w) for
+a sequence of loss functions ℓi
+: Rn → R+ , and r(w) is a regularization term that penalizes
+for excessively complex vectors, for instance r(w) = λkwkp . This task is prevalent in machine
+learning, in which a learning problem for decision and prediction problems is cast as a convex
+optimization problem. To that end, we propose a general and intuitive algorithm to minimize Eq. (1),
+focusing especially on derivations for and the use of non-differentiable regularization functions.
+
+Many methods have been proposed to minimize general convex functions such as that in Eq. (1).
+One of the most general is the subgradient method [1], which is elegant and very simple. Let ∂ f (w)
+denote the subgradient set of f at w , namely, ∂ f (w) = {g | ∀v : f (v) ≥ f (w) + hg , v − wi}.
+Subgradient procedures then minimize the function f (w) by iteratively updating the parameter vec-
+f
+tor w according to the update rule wt+1 = wt − ηtg
+t , where ηt is a constant or diminishing step
+f
+t ∈ ∂ f (wt ) is an arbitrary vector from the subgradient set of f evaluated at wt . A slightly
+size and g
+more general method than the above is the projected gradient method, which iterates
+w∈Ω (cid:26)(cid:13)(cid:13)(cid:13)
+2(cid:27)
+2
+t )(cid:13)(cid:13)(cid:13)
+t (cid:17) = argmin
+wt+1 = ΠΩ(cid:16)wt − ηtg
+f
+f
+w − (wt − ηtg
+1
+
+where ΠΩ (w) is the Euclidean projection of w onto the set Ω. Standard results [1] show that the
+(projected) subgradient method converges at a rate of O(1/ε2 ), or equivalently that the error f (w) −
+⋆ ) = O(1/√T ), given some simple assumptions on the boundedness of the subdifferential set
+f (w
+and Ω (we have omitted constants dependent on k∂ f k or dim(Ω)). Using the subgradient method to
+f
+minimize Eq. (1) gives simple iterates of the form wt+1 = wt − ηtg
+t ∈ ∂ r(wt ).
+t , where g
+r
+r
+t − ηtg
+A common problem in subgradient methods is that if r or f is non-differentiable, the iterates of the
+subgradient method are very rarely at the points of non-differentiability. In the case of regularization
+functions such as r(w) = kwk1 , however, these points (zeros in the case of the ℓ1 -norm) are often
+the true minima of the function. Furthermore, with ℓ1 and similar penalties, zeros are desirable
+solutions as they tend to convey information about the structure of the problem being solved [2, 3].
+
+There has been a signi ﬁcant amount of work related to minimiz ing Eq. (1), especially when the
+function r is a sparsity-promoting regularizer. We can hardly do justice to the body of prior work,
+and we provide a few references here to the research we believe is most directly related. The ap-
+proach we pursue below is known as “forward-backward splitt ing” or a composite gradient method
+in the optimization literature and has been independently suggested by [4] in the context of sparse
+signal reconstruction, where f (w) = ky − Awk2 , though they note that the method can apply to
+general convex f . [5] give proofs of convergence for forward-backward splitting in Hilbert spaces,
+though without establishing strong rates of convergence. The motivation of their paper is signal
+reconstruction as well. Similar projected-gradient methods, when the regularization function r is no
+longer part of the objective function but rather cast as a constraint so that r(w) ≤ λ, are also well
+known [1]. [6] give a general and efﬁcient projected gradien t method for ℓ1 -constrained problems.
+There is also a body of literature on regret analysis for online learning and online convex program-
+ming with convex constraints upon which we build [7, 8]. Learning sparse models generally is of
+great interest in the statistics literature, speci ﬁcally i n the context of consistency and recovery of
+sparsity patterns through ℓ1 or mixed-norm regularization across multiple tasks [2, 3, 9].
+In this paper, we describe a general gradient-based framework, which we call FOBO S, and analyze
+it in batch and online learning settings. The paper is organized as follows. In the next section, we
+begin by introducing and formally deﬁning the method, givin g some simple preliminary analysis.
+We follow the introduction by giving in Sec. 3 rates of convergence for batch (ofﬂine) optimization.
+We then provide bounds for online convex programming and give a convergence rate for stochastic
+gradient descent. To demonstrate the simplicity and usefulness of the framework, we derive in Sec. 4
+algorithms for several different choices of the regularizing function r . We extend these methods to
+be efﬁcient in very high dimensional settings where the inpu t data is sparse in Sec. 5. Finally,
+we conclude in Sec. 6 with experiments examining various aspects of the proposed framework, in
+particular the runtime and sparsity selection performance of the derived algorithms.
+
+2 Forward-Looking Subgradients and Forward-Backward Splitting
+
+In this section we introduce our algorithm, laying the framework for its strategy for online or batch
+convex programming. We originally named the algorithm Folos as an abbreviation for FOrward-
+LOoking Subgradient. Our algorithm is a distillation of known approaches for convex program-
+ming, in particular the Forward-Backward Splitting method. In order not to confuse readers of the
+early draft, we attempt to stay close to the original name and use the acronym FOBO S rather than
+Fobas. FOBO S is motivated by the desire to have the iterates wt attain points of non-differentiability
+of the function r . The method alleviates the problems of non-differentiability in cases such as
+ℓ1 -regularization by taking analytical minimization steps interleaved with subgradient steps. Put
+informally, FOBO S is analogous to the projected subgradient method, but replaces or augments the
+projection step with an instantaneous minimization problem for which it is possible to derive a
+closed form solution. FOBO S is succinct as each iteration consists of the following two steps:
+f
+= wt − ηtg
+t
+w (cid:26) 1
+r(w)(cid:27) .
+2
+2 (cid:13)(cid:13)(cid:13)
+2 (cid:13)(cid:13)(cid:13)
+wt+1 = argmin
+w − wt+ 1
+f
+t is a vector in ∂ f (wt ) and ηt is the step size at time step t of the algorithm. The
+In the above, g
+actual value of ηt depends on the speci ﬁc setting and analysis. The ﬁrst step th
+us simply amounts
+to an unconstrained subgradient step with respect to the function f . In the second step we ﬁnd a
+
++ ηt+ 1
+2
+
+wt+ 1
+2
+
+(2)
+
+(3)
+
+2
+
++ ηt+ 1
+2
+
+, and (ii)
+new vector that interpolates between two goals: (i) stay close to the interim vector wt+ 1
+2
+attain a low complexity value as expressed by r . Note that the regularization function is scaled by
+an interim step size, denoted ηt+ 1
+. The analyses we describe in the sequel determine the speci ﬁ c
+2
+value of ηt+ 1
+, which is either ηt or ηt+1 . A key property of the solution of Eq. (3) is the necessary
+2
+condition for optimality and gives the reason behind the name FOBO S. Namely, the zero vector must
+belong to subgradient set of the objective at the optimum wt+1 , that is,
+r(w)(cid:27)(cid:12)(cid:12)(cid:12)(cid:12)w=wt+1
+0 ∈ ∂ (cid:26) 1
+2
+2 (cid:13)(cid:13)(cid:13)
+2 (cid:13)(cid:13)(cid:13)
+w − wt+ 1
+f
+f
+Since wt+ 1
+∂ r(wt+1 ).
+t , the above property amounts to 0 ∈ wt+1 − wt + ηtg
+= wt − ηtg
+t + ηt+ 1
+2
+2
+This property implies that so long as we choose wt+1 to be the minimizer of Eq. (3), we are guar-
+f
+t+1 . We can
+t+1 ∈ ∂ r(wt+1 ) such that 0 = wt+1 − wt + ηtg
+anteed to obtain a vector g
+r
+r
+t + ηt+ 1
+g
+2
+understand this as an update scheme where the new weight vector wt+1 is a linear combination of
+the previous weight vector wt , a vector from the subgradient set of f at wt , and a vector from the
+subgradient of r evaluated at the yet to be determined wt+1 . To recap, we can write wt+1 as
+f
+r
+(4)
+wt+1 = wt − ηt g
+t − ηt+ 1
+t+1 ,
+g
+2
+f
+t ∈ ∂ f (wt ) and g
+t+1 ∈ ∂ r(wt+1 ). Solving Eq. (3) with r above has two main ben-
+where g
+r
+eﬁts. First, from an algorithmic standpoint, it enables spa rse solutions at virtually no additional
+computational cost. Second, the forward-looking gradient allows us to build on existing analyses
+and show that the resulting framework enjoys the formal convergence properties of many existing
+gradient-based and online convex programming algorithms.
+
+.
+
+3 Convergence and Regret Analysis of FOBO S
+
+In this section we build on known results while using the forward-looking property of FOBO S to
+properly. As
+provide convergence rate and regret analysis. To derive convergence rates we set ηt+ 1
+2
+we show in the sequel, it is sufﬁcient to set ηt+ 1
+to ηt or ηt+1 , depending on whether we are doing
+2
+online or batch optimization, in order to obtain convergence and low regret bounds. We provide
+proofs of all theorems in this paper, as well as a few useful technical lemmas, in the appendices,
+as the main foci of the paper are the simplicity of the method and derived algorithms and their
+experimental usefulness. The overall proof techniques all rely on the forward-looking property in
+Eq. (4) and moderately straightforward arguments with convexity and subgradient calculus.
+
+⋆ the minimizer of f (w)+ r(w). The ﬁrst bounds we present
+Throughout the section we denote by w
+rely only on the assumption that kw
+⋆k ≤ D , though they are not as tight as those in the sequel. In
+what follows, deﬁne k∂ f (w)k , supg∈∂ f (w) kgk. We begin by deriving convergence results under
+the fairly general assumption [10, 11] that the subgradients are bounded as follows:
+k∂ f (w)k2 ≤ Af (w) + G2 ,
+k∂ r(w)k2 ≤ Ar(w) + G2 .
+(5)
+For example, any Lipschitz loss (such as the logistic or hinge/SVM) satis ﬁes the above with A = 0
+and G equal to the Lipschitz constant; least squares satis ﬁes Eq.
+(5) with G = 0 and A = 4.
+Theorem 1. Assume the following hold: (i) the norm of any subgradient from ∂ f and the norm of
+⋆ is less than or equal to D ,
+any subgradient from ∂ r are bounded as in Eq. (5), (ii) the norm of w
+(iii) r(0) = 0, and (iv) 1
+2 ηt ≤ ηt+1 ≤ ηt . Then for a constant c ≤ 4 with w1 = 0 and ηt+ 1
+= ηt+1 ,
+2
+T
+T
+Xt=1
+Xt=1
+⋆ )) + ηt ((1 − cAηt )r(wt ) − r(w
+⋆ ))] ≤ D2 + 7G2
+The proof of the theorem is in Appendix A. We also provide in the appendix a few useful corollaries.
+We provide one corollary below as it underscores that the rate of convergence ≈ √T .
+Corollary 2 (Fixed step rate). Assume that the conditions of Thm. 1 hold and that we run FOBO S
+for a predeﬁned T iterations with ηt = D√7T G
+and that (1 − cA D√7T G
+) > 0. Then
+T
+3DG
+1
+Xt=1
+√T (cid:16)1 − cAD
+G√7T (cid:17)
+T
+
+[ηt ((1 − cAηt )f (wt ) − f (w
+
+⋆ ) + r(w
+f (w
+1 − cAD
+G√7T
+
+f (wt ) + r(wt ) ≤
+
+f (wt ) + r(wt ) ≤
+
+min
+t∈{1,...,T }
+
+η2
+t
+
+.
+
++
+
+⋆ )
+
+3
+
+Bounds of the form we present above, where the point minimizing f (wt ) + r(wt ) converges rather
+than the last point wT , are standard in subgradient optimization. This occurs since there is no way
+to guarantee a descent direction when using arbitrary subgradients (see, e.g., [12, Theorem 3.2.2]).
+
+⋆ ) + r(w
+
+⋆ ))]
+
+.
+
+Rf +r (T ) =
+
+We next derive regret bounds for FOBO S in online settings in which we are given a sequence of
+functions ft : Rn → R. The goal is for the sequence of predictions wt to attain low regret when
+compared to a single optimal predictor w
+⋆ . Formally, let ft (w) denote the loss suffered on the
+tth input loss function when using a predictor w . The regret of an online algorithm which uses
+w1 , . . . , wt , . . . as its predictors w.r.t a ﬁxed predictor w
+⋆ while using a regularization function r is
+T
+Xt=1
+[ft (wt ) + r(wt ) − (ft (w
+⋆ for arbitrary length sequences.
+Ideally, we would like to achieve 0 regret to a stationary w
+To achieve an online bound for a sequence of convex functions ft , we modify arguments of [7]. We
+begin with a slightly different assignment for ηt+ 1
+: speci ﬁcally, we set ηt+ 1
+= ηt . We have the
+2
+2
+following theorem, whose proof we provide in Appendix B.
+Theorem 3. Assume that kwt − w
+⋆k ≤ D for all iterations and the norm of the subgradient sets
+∂ ft and ∂ r are bounded above by G. Let c > 0 an arbitrary scalar. Then the regret bound of FOBO S
+2c + 7G2 c(cid:17) √T .
+with ηt = c/√t satis ﬁes Rf +r (T ) ≤ GD + (cid:16) D2
+For slightly technical reasons, the assumption on the boundedness of wt and the subgradients is not
+actually restrictive (see Appendix A for details). It is possible to obtain an O(log T ) regret bound
+for FOBO S when the sequence of loss functions ft (·) or the function r(·) is strongly convex, similar
+to [8], by using the curvature of ft or r . While we can extend these results to FOBO S, we omit the
+extension for lack of space (though we do perform some experiments with such functions). Using
+the regret analysis for online learning, we can also give convergence rates for stochastic FOBO S,
+which are O(√T ). Further details are given in Appendix B and the long version of this paper [13].
+
+4 Derived Algorithms
+
+We now give a few variants of FOBO S by considering different regularization functions. The em-
+phasis of the section is on non-differentiable regularization functions that lead to sparse solutions.
+We also give simple extensions to apply FOBO S to mixed-norm regularization [9] that build on the
+ﬁrst part of this section. For lack of space, we mostly give th e resulting updates, skipping techni-
+cal derivations. We would like to note that some of the following results were tacitly given in [4].
+First, we make a few changes to notation. To simplify our derivations, we denote by v the vector
+t and let ˜λ denote ηt+ 1
+f
+2 · λ. Using this notation the problem given in Eq. (3) can
+= wt − ηtg
+wt+ 1
+2
+2 kw − vk2 + ˜λ r(w). Lastly, we let [z ]+ denote max {0, z}.
+1
+be rewritten as minw
+FOBO S with ℓ1 regularization: The update obtained by choosing r(w) = λ kwk1 is simple and
+intuitive. The objective is decomposable into a sum of 1-dimensional convex problems of the form
+2 (w − v)2 + ˜λ|w|. As a result, the components of the optimal solution w
+1
+⋆ = wt+1 are
+minw
+computed from wt+ 1
+as
+2
+t,j (cid:12)(cid:12)(cid:12) − ληt+ 1
+t,j (cid:17)h(cid:12)(cid:12)(cid:12)
+2 ,j (cid:17)h|wt+ 1
+2 i+
+wt+1,j = sign(cid:16)wt+ 1
+2 ,j | − ˜λi+
+= sign(cid:16)wt,j − ηt gf
+wt,j − ηt gf
+Note that this update leads to sparse solutions: whenever the absolute value of a component of wt+ 1
+2
+is smaller than ˜λ, the corresponding component in wt+1 is set to zero. Eq. (6) gives a simple online
+and ofﬂine method for minimizing a convex f with ℓ1 regularization. [10] recently proposed and
+analyzed the same update, terming it the “truncated gradien t,” though the analysis presented here
+stems from a more general framework. This update can also be implemented very efﬁciently when
+f
+the support of g
+t is small [10], but we defer details to Sec. 5, where we describe a uni ﬁed view that
+facilitates an efﬁcient implementation for all the regular ization functions discussed in this paper.
+2 kwk2
+2 regularization: When r(w) = λ
+FOBO S with ℓ2
+2 , we obtain a very simple optimization
+˜λkwk2 . Differentiating the objective and setting the result equal to
+1
+2 kw − vk2 + 1
+problem, minw
+2
+
+(6)
+
+4
+
+zero, we have w
+
+⋆ − v + ˜λw
+
+⋆ = 0, which, using the original notation, yields the update
+
+f
+t
+
+.
+
+(7)
+
+wt+1 =
+
+wt − ηtg
+1 + ˜λ
+Informally, the update simply shrinks wt+1 back toward the origin after each gradient-descent step.
+FOBO S with ℓ2 regularization: A lesser used regularization function is the ℓ2 norm of the weight
+2 kw − vk2 + ˜λkwk.
+vector. By setting r(w) = ˜λkwk we obtain the following problem: minw
+1
+The solution of the above problem must be in the direction of v and takes the form w
+⋆ = sv where
+s ≥ 0. The resulting second step of the FOBO S update with ℓ2 regularization amounts to
+wt+1 = "1 −
+2 k #+
+= "1 −
+t k #+
+˜λ
+˜λ
+f
+t ) .
+f
+kwt+ 1
+kwt − ηtg
+t k ≤ ˜λ. This
+f
+ℓ2 -regularization results in a zero weight vector under the condition that kwt − ηtg
+condition is rather more stringent for sparsity than the condition for ℓ1 , so it is unlikely to hold in
+high dimensions. However, it does constitute a very important building block when using a mixed
+ℓ1 /ℓ2 -norm as the regularization, as we show in the sequel.
+FOBO S with ℓ∞ regularization: We now turn to a less explored regularization function, the ℓ∞
+norm of w . Our interest stems from the recognition that there are settings in which it is desirable to
+consider blocks of variables as a group (see below). We wish to obtain an efﬁcient solution to
+
+(wt − ηtg
+
+.
+
+(8)
+
+min
+w
+
+1
+2 kw − vk2 + ˜λ kwk∞
+A solution to the dual form of Eq. (8) is well established. Recalling that the conjugate of the
+quadratic function is a quadratic function and the conjugate of the ℓ∞ norm is the ℓ1 barrier function,
+2 kα − vk2
+we immediately obtain that the dual of the problem in Eq. (8) is maxα − 1
+2 s.t. kαk1 ≤
+˜λ. Moreover, the vector of dual variables α satis ﬁes the relation α = v − w . [6] describes a
+linear time algorithm for ﬁnding the optimal α to this ℓ1 -constrained projection, and the analysis
+there shows the optimal solution to Eq. (8) is wt+1,j = sign(wt+ 1
+2 ,j |, θ}. The optimal
+2 ,j ) min{|wt+ 1
+2 k1 ≤ ˜λ, and otherwise θ > 0 and can be found in O(n) steps.
+solution satis ﬁes θ = 0 iff kwt+ 1
+Mixed norms: We saw above that when using either the ℓ2 or the ℓ∞ norm as the regularizer we
+2 ||2 ≤ ˜λ or ||wt+ 1
+2 ||1 ≤ ˜λ, respectively. This phenomenon can
+obtain an all zeros vector if ||wt+ 1
+be useful. For example, in multiclass categorization problems each class s may be associated with
+a different weight vector w
+s . The prediction for an instance x is a vector (cid:10)w
+k , x(cid:11),
+1 , x(cid:11) , . . . , (cid:10)w
+where k is the number of classes, and the predicted class is argmaxj (cid:10)w
+j , x(cid:11). Since all the weight
+vectors operate over the same instance space, it may be beneﬁ cial to tie the weights corresponding
+to the same input feature: we would to zero the row of weights w1
+j simultaneously.
+j , . . . , wk
+Formally, let W represent an n×k matrix where the j th column of the matrix is the weight vector w
+j
+associated with class j . Then the ith row contains weight of the ith feature for each class. The mixed
+ℓr /ℓs -norm [9] of W is obtained by computing the ℓs -norm of each row of W and then applying
+= Pn
+j=1 maxj |Wi,j |.
+the ℓr -norm to the resulting n dimensional vector, for instance, kW kℓ1 /ℓ∞
+.
+In a mixed-norm regularized optimization problem, we seek the minimizer of f (W ) + λ kW kℓr /ℓs
+Given the speci ﬁc variants of norms described above, the F OBO S update for the ℓ1 /ℓ∞ and the ℓ1 /ℓ2
+s be the sth row of W . Analogously to standard norm-based
+mixed-norms is readily available. Let ¯w
+regularization, we use the shorthand V = Wt+ 1
+. For the ℓ1 /ℓp mixed-norm, we need to solve
+2
+n
+Xi=1 (cid:18) 1
+i(cid:13)(cid:13)p(cid:19)
+2
+2 + ˜λ (cid:13)(cid:13) ¯w
+i(cid:13)(cid:13)
+2 (cid:13)(cid:13) ¯w
+where ¯v
+i is the ith row of V . It is immediate to see that the problem given in Eq. (9) is decomposable
+into n separate problems of dimension k , each of which can be solved by the procedures described
+in the prequel. The end result of solving these types of mixed-norm problems is a sparse matrix with
+numerous zero rows. We demonstrate the merits of FOBO S with mixed-norms in Sec. 6.
+
+1
+2 kW − V k2
+Fr + ˜λ kW kℓ1 /ℓp ≡ min
+¯w
+1 ,..., ¯w
+
+i − ¯v
+
+min
+W
+
+(9)
+
+k
+
+5
+
+5 Efﬁcient implementation in high dimensions
+
+f
+t reside in a
+In many settings, especially online learning, the weight vector wt and the gradients g
+f
+very high-dimensional space, but only a relatively small number of the components of g
+t are non-
+zero. Such settings are prevalent, for instance, in text-based applications: in text categorization,
+the full dimension corresponds to the dictionary or set of tokens that is being employed while each
+gradient is typically computed from a single or a few documents, each of which contains words
+and bigrams constituting only a small subset of the full dictionary. The need to cope with gradient
+sparsity becomes further pronounced in mixed-norm problems, as a single component of the gradient
+f
+may correspond to an entire row of W . Updating the entire matrix because a few entries of g
+t are
+non-zero is clearly undesirable. Thus, we would like to extend our methods to cope efﬁciently
+with gradient sparsity. For concreteness, we focus in this section on the efﬁcient implementation
+of ℓ1 , ℓ2 , and ℓ∞ regularization, since the extension to mixed-norms (as in the previous section) is
+straightforward. We postpone the proof of the following proposition to Appendix C.
+Proposition 4. Let wT be the end result of solving a succession of T self-similar optimization
+problems for t = 1, . . . , T ,
+
+(11)
+
+(10)
+
+Let w
+
+1
+2 kw − wt−1k2 + λtkwkq .
+P .1 : wt = argmin
+w
+⋆ be the optimal solution of the following optimization problem,
+2 kw − w0 k2 +   T
+λt! kwkq .
+1
+Xt=1
+⋆ are identical.
+
+⋆ = argmin
+P .2 : w
+w
+For q ∈ {1, 2, ∞} the vectors wT and w
+The algorithmic consequence of Proposition 4 is that it is possible to perform a lazy update on each
+iteration by omitting the terms of wt (or whole rows of the matrix Wt when using mixed-norms) that
+f
+are outside the support of g
+t , the gradient of the loss at iteration t. We do need to maintain the step-
+sizes used on each iteration and have them readily available on future rounds when we newly update
+coordinates of w or W . Let Λt denote the sum of the step sizes times regularization multipliers
+ληt used from round 1 through t. Then a simple algebraic manipulation yields that instead of
+2 + ληtkwkq o repeatedly when wt is not changing, we
+solving wt+1 = argminw n 1
+2 kw − wtk2
+can simply cache the last time t0 that w (or a coordinate in w or a row from W ) was updated and,
+when it is needed, solve wt+1 = argminw n 1
+2 + (Λt − Λt0 )kwkq o. The advantage of
+2 kw − wtk2
+the lazy evaluation is pronounced when using mixed-norm regularization as it lets us avoid updating
+f
+entire rows so long as the row index corresponds to a zero entry of the gradient g
+t . In sum, at the
+expense of keeping a time stamp t for each entry of w or row of W and maintaining the cumulative
+f
+sums Λ1 , Λ2 , . . ., we get O(k) updates of w when the gradient g
+t has only k non-zero components.
+
+6 Experiments
+
+In this section we compare FOBO S to state-of-the-art optimizers to demonstrate its relative merits
+and weaknesses. We perform more substantial experiments in the full version of the paper [13].
+2 and ℓ1 -regularized experiments: We performed experiments using FOBO S to solve both ℓ1
+ℓ2
+and ℓ2 -regularized learning problems. For the ℓ2 -regularized experiments, we compared FOBO S to
+Pegasos [14], a fast projected gradient solver for SVM. Pegasos was originally implemented and
+evaluated on SVM-like problems by using the the hinge-loss as the empirical loss function along
+with an ℓ2
+2 regularization term, but it can be straightforwardly extended to the binary logistic loss
+function. We thus experimented with both
+m
+m
+log (cid:16)1 + e−yi hxi ,wi(cid:17) (logistic)
+Xi=1
+Xi=1
+[1 − yi hxi , wi]+ (hinge)
+as loss functions. To generate data for our experiments, we chose a vector w with entries distributed
+normally with 0 mean and unit variance, while randomly zeroing 50% of the entries in the vector.
+
+f (w) =
+
+f (w) =
+
+and
+
+6
+
+)
+*
+w
+(
+f
+ 
+−
+ 
+)
+t
+w
+(
+f
+
+102
+
+101
+
+100
+
+10−1
+
+10−2
+
+10−3
+
+ 
+
+L2 Folos
+Pegasos
+
+)
+*
+
+w
+(
+r
+ 
+−
+ 
+)
+*
+
+w
+(
+f
+ 
+−
+ 
+)
+t
+w
+(
+r
+ 
++
+ 
+)
+t
+w
+(
+f
+
+100
+
+10−1
+
+10−2
+
+ 
+
+L2 Folos
+Pegasos
+
+ 
+
+10
+
+20
+50
+40
+30
+Number of Operations
+
+60
+
+70
+
+ 
+0
+
+20
+
+40
+160
+140
+120
+100
+80
+60
+Approximate Operations
+
+180
+
+)
+*
+
+w
+(
+r
+ 
+−
+ 
+)
+*
+
+w
+(
+f
+ 
+−
+ 
+)
+t
+w
+(
+r
+ 
++
+ 
+)
+t
+w
+(
+f
+
+100
+
+10−1
+
+10−2
+
+10−3
+
+10−4
+
+10−5
+
+ 
+
+ 
+
+L2 Folos
+Pegasos
+
+10
+
+20
+60
+50
+40
+30
+Approximate Operations
+
+70
+
+80
+
+Figure 1: Comparison of FOBO S with Pegasos on the problems of logistic regression (left and right)
+and SVM (middle). The rightmost plot shows the performance of the algorithms without projection.
+
+The examples xi ∈ Rn were also chosen at random with entries normally distributed. To generate
+target values, we set yi = sign(hxi , wi), and ﬂipped the sign of 10% of the examples to add label
+noise. In all experiments, we used 1000 training examples of dimension 400.
+The graphs of Fig. 1 show (on a log-scale) the regularized empirical loss of the algorithms minus
+the optimal value of the objective function. These results were averaged over 20 independent runs
+2 λ kwk2
+of the algorithms. In all experiments with the regularizer 1
+2 , we used step size ηt = λ/t to
+achieve logarithmic regret. The two left graphs of Fig. 1 show that FOBO S performs comparably
+to Pegasos on the logistic loss (left ﬁgure) and hinge (SVM) l oss (middle ﬁgure). Both algorithms
+quickly approach the optimal value. In these experiments we let both Pegasos and FOBO S employ
+a projection after each gradient step into a 2-norm ball containing w
+⋆ (see [14]). However, in the
+experiment corresponding to the rightmost plot of Fig. 1, we eliminated this additional projection
+step and ran the algorithms with the logistic loss. In this case, FOBO S slightly outperforms Pegasos.
+We hypothesize that the slightly faster rate of FOBO S is due to the explicit shrinkage that FOBO S
+performs in the ℓ2 update (see Eq. (7)).
+In the next experiment, whose results are given in Fig. 2, we solved ℓ1 -regularized logistic regres-
+sion problems. We compared FOBO S to a simple subgradient method, where the subgradient of
+the λ kwk1 term is simply λ sign(w)), and a fast interior point (IP) method which was designed
+speci ﬁcally for solving ℓ1 -regularized logistic regression [15]. On the left side of Fig. 2 we show the
+objective function (empirical loss plus the ℓ1 regularization term) obtained by each of the algorithms
+minus the optimal objective value. We again used 1000 training examples of dimension 400. The
+learning rate was set to ηt ∝ 1/√t. The standard subgradient method is clearly much slower than
+the other two methods even though we chose the initial step size for which the subgradient method
+converged the fastest. Furthermore, the subgradient method does not achieve any sparsity along its
+entire run. FOBO S quickly gets close to the optimal value of the objective function, but eventually
+the specialized IP method’s asymptotically faster convergence causes it to surpass FOBO S. In order
+to obtain a weight vector wt such that f (wt ) − f (w
+⋆ ) ≤ 10−2 , FOBO S works very well, though
+the IP method enjoys faster convergence rate when the weight vector is very close to optimal solu-
+tion. However, the IP algorithm was speci ﬁcally designed to minimize empirical logistic loss with
+ℓ1 regularization whereas FOBO S enjoys a broad range of applicable settings.
+The middle plot in Fig. 2 shows the sparsity levels (fraction of non-zero weights) achieved by FOBO S
+as a function of the number of iterations of the algorithm. Each line represents a different synthetic
+experiment as λ is modi ﬁed to give more or less sparsity to the solution vecto r w
+⋆ . The results show
+that FOBO S quickly selects the sparsity pattern of w
+⋆ , and the level of sparsity persists throughout its
+execution. We found this sparsity pattern common to non-stochastic versions of FOBO S we tested.
+Mixed-norm experiments: Our experiments with mixed-norm regularization (ℓ1 /ℓ2 and ℓ1 /ℓ∞ )
+focus mostly on sparsity rather than on the speed of minimizing the objective. Our restricted focus
+is a consequence of the relative paucity of benchmark methods for learning problems with mixed-
+norm regularization. Our methods, however, as described in Sec. 4, are quite simple to implement,
+and we believe could serve as benchmarks for other methods to solve mixed-norm problems.
+Our experiments compared multiclass classi ﬁcation with ℓ1 , ℓ1 /ℓ2 , and ℓ1 /ℓ∞ regularization on
+the MNIST handwritten digit database and the StatLog Landsat Satellite dataset [16]. The MNIST
+database consists of 60,000 training examples and a 10,000 example test set with 10 classes. Each
+digit is a 28 × 28 gray scale image represented as a 784 dimensional vector. Linear classi ﬁers
+
+7
+
+)
+*
+w
+(
+f
+ 
+−
+ 
+)
+t
+w
+(
+f
+
+101
+
+100
+
+10−1
+
+10−2
+
+L1 Folos
+L1 IP
+L1 Subgrad
+
+ 
+
+10
+
+20
+
+30
+
+40
+80
+70
+60
+50
+Number of Operations
+
+90
+
+100
+
+110
+
+1.1
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+ 
+0
+
+Test Error 10%
+NNZ 10%
+Test Error 20%
+NNZ 20%
+Test Error 100%
+NNZ 100%
+
+ 
+
+ 
+
+n
+o
+i
+t
+r
+o
+p
+o
+r
+P
+ 
+y
+t
+i
+s
+r
+a
+p
+S
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+0
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+10
+
+20
+
+30
+
+40
+60
+50
+Folos Steps
+
+70
+
+80
+
+90
+
+100
+
+Figure 2:
+Perfor-
+Left:
+mance of FOBO S, a sub-
+gradient method, and an in-
+terior point method on ℓ1 -
+regularized logistic regular-
+ization. Left: sparsity level
+achieved by FOBO S along its
+run.
+
+Figure 3: Left: FOBO S spar-
+sity and test error for LandSat
+dataset with ℓ1 -regularization.
+Right: FOBO S sparsity and
+test error for MNIST dataset
+with ℓ1 /ℓ2 -regularization.
+
+100
+
+200
+
+300
+
+400
+
+500
+
+600
+
+700
+
+800
+
+900
+
+1000
+
+0
+
+0
+
+100
+
+200
+
+300
+
+400
+
+500
+
+600
+
+700
+
+800
+
+do not perform well on MNIST. Thus, rather than learning weights for the original features, we
+learn the weights for classi ﬁer with Gaussian kernels, wher e value of the j th feature for the ith
+2 kzi−zj k2 . For the LandSat dataset we attempt to classify 3 × 3
+example is xij = K (z i , z j ) = e− 1
+neighborhoods of pixels in a satellite image as a particular type of ground, and we expanded the
+input 36 features into 1296 features by taking the product of all features.
+
+In the left plot of Fig. 3, we show the test set error and row sparsity in W as a function of training
+time (number of single-example gradient calculations) for the ℓ1 -regularized multiclass logistic loss
+with 720 training examples. The green lines show results for using all 720 examples to calculate
+the gradient, black using 20% of the examples, and blue using 10% of the examples to perform
+stochastic gradient. Each used the same learning rate ηt , and the reported results are averaged
+over 5 independent runs with different training data. The righthand ﬁgure shows a similar plot
+but for MNIST with 10000 training examples and ℓ1 /ℓ2 -regularization. The objective value in
+training has a similar contour to the test loss. It is interesting to note that very quickly, FOBO S
+with stochastic gradient descent gets to its minimum test classi ﬁcation error, and as the training
+set size increases this behavior is consistent. However, the deterministic version increases the level
+of sparsity throughout its run, while the stochastic-gradient version has highly variable sparsity
+levels and does not give solutions as sparse as the deterministic counterpart. The slowness of non-
+stochastic gradient mitigates this effect for the larger sample size on MNIST in the right ﬁgure, but
+for longer training times, we do indeed see similar behavior.
+
+For comparison of the different regularization approaches, we report in Table 1 the test error as a
+function of row sparsity of the learned matrix W . For the LandSat data, we see that using the block
+ℓ1 /ℓ2 regularizer yields better performance for a given level of structural sparsity. However, on
+the MNIST data the ℓ1 regularization and the ℓ1 /ℓ2 achieve comparable performance for each level
+of structural sparsity. Moreover, for a given level of structural sparsity, the ℓ1 -regularized solution
+matrix W attains signi ﬁcantly higher overall sparsity, roughly 90% of the entries of each non-zero
+row are zero. The performance on the different datasets might indicate that structural sparsity is
+effective only when the set of parameters indeed exhibit natural grouping.
+
+% Non-zero
+5
+10
+20
+40
+
+ℓ1 Test
+.43
+.30
+.26
+.22
+
+ℓ1/ℓ2 Test
+.29
+.25
+.22
+.19
+
+ℓ1/ℓ∞ Test
+.40
+.30
+.26
+.22
+
+ℓ1 Test
+.37
+.26
+.15
+.08
+
+ℓ1 /ℓ2 Test
+.36
+.26
+.15
+.08
+
+ℓ1/ℓ∞ Test
+.47
+.31
+.24
+.16
+
+Table 1: LandSat (left) and MNIST (right) classi ﬁcation err or versus sparsity
+
+8
+
+References
+
+[1] D.P. Bertsekas. Nonlinear Programming. Athena Scienti ﬁc, 1999.
+[2] P. Zhao and B. Yu. On model selection consistency of Lasso. Journal of Machine Learning
+Research, 7:2541–2567, 2006.
+[3] N. Meinshausen and P. B ¨uhlmann. High dimensional graphs and variable selection with the
+Lasso. Annals of Statistics, 34:1436–1462, 2006.
+[4] S. Wright, R. Nowak, and M. Figueiredo. Sparse reconstruction by separable approximation.
+In IEEE International Conference on Acoustics, Speech, and Signal Processing, pages 3373–
+3376, 2008.
+[5] P. Combettes and V. Wajs. Signal recovery by proximal forward-backward splitting. Multiscale
+Modeling and Simulation, 4(4):1168–1200, 2005.
+[6] J. Duchi, S. Shalev-Shwartz, Y. Singer, and T. Chandra. Efﬁcient projections onto the
+ℓ1 -
+ball for learning in high dimensions. In Proceedings of the 25th International Conference on
+Machine Learning, 2008.
+[7] M. Zinkevich. Online convex programming and generalized inﬁnitesimal gradient ascent. In
+Proceedings of the Twentieth International Conference on Machine Learning, 2003.
+[8] E. Hazan, A. Kalai, S. Kale, and A. Agarwal. Logarithmic regret algorithms for online convex
+optimization. In Proceedings of the Nineteenth Annual Conference on Computational Learning
+Theory, 2006.
+[9] G. Obozinski, M. Wainwright, and M. Jordan. High-dimensional union support recovery in
+multivariate regression. In Advances in Neural Information Processing Systems 22, 2008.
+[10] J. Langford, L. Li, and T. Zhang. Sparse online learning via truncated gradient. In Advances
+in Neural Information Processing Systems 22, 2008.
+[11] S. Shalev-Shwartz and A. Tewari. Stochastic methods for ℓ1 -regularized loss minimization. In
+Proceedings of the 26th International Conference on Machine Learning, 2009.
+[12] Y. Nesterov. Introductory Lectures on Convex Optimization. Kluwer Academic Publishers,
+2004.
+[13] J. Duchi and Y. Singer. Efﬁcient online and batch learni ng using forward-backward splitting.
+Journal of Machine Learning Research, 10:In Press, 2009.
+[14] S. Shalev-Shwartz, Y. Singer, and N. Srebro. Pegasos: Primal estimated sub-gradient solver
+for SVM. In Proceedings of the 24th International Conference on Machine Learning, 2007.
+[15] K. Koh, S.J. Kim, and S. Boyd. An interior-point method for large-scale ℓ1 -regularized logistic
+regression. Journal of Machine Learning Research, 8:1519–1555, 2007.
+[16] D. Spiegelhalter and C. Taylor. Machine Learning, Neural and Statistical Classi ﬁcation . Ellis
+Horwood, 1994.
+[17] R.T. Rockafellar. Convex Analysis. Princeton University Press, 1970.
+
+9
+
+

@@ -1,0 +1,528 @@
+Applying Reinforcement Learning to Competitive Tetris
+Max Bodoia (mbodoia@stanford.edu)
+1618 Sand Hill Rd
+Palo Alto, CA 98498
+
+Arjun Puranik (apuranik@stanford.edu)
+1618 Sand Hill Rd
+Palo Alto, CA 98498
+
+Introduction
+For our project, we attempt to apply reinforcement learning
+to the game of Tetris. The game is played on a board with
+20 rows and 10 columns, and each turn a player drops one of
+seven pieces (the seven tetrominoes) onto the ﬁeld. Points are
+gained by dropping pieces in such a way that all ten squares in
+some line (row) are ﬁlled, at which point the line is cleared.
+Multiple lines may be cleared with a single piece drop and
+will result in more points being earned. A player loses if the
+height of the pieces on his board exceeds the height of the
+board itself.
+The fully observable nature of the Tetris board and the sim-
+ple probabilistic transitions from state to state (i.e. adding a
+randomly selected piece to the end of the piece queue each
+turn) naturally suggest the use of reinforcement learning for
+Tetris. Speciﬁcally, Tetris can be modeled as a Markov Deci-
+sion Process. However, the state space of Tetris is extremely
+large - the number of ways to ﬁll in a 20 × 10 board is 2200 ,
+and the Tetris requirement that no row be completely ﬁlled
+only reduces this to (210 − 1)20 . As a result, the complete
+MDP for Tetris is entirely intractable. In our paper, we will
+outline the different approaches we took to dealing with this
+intractability. We begin by describing our initial, unsuccess-
+ful attempts, and commenting on the reasons why they may
+have failed. Next, we describe the approach that eventu-
+ally suceeded - ﬁtted value iteration - and give a detailed
+analysis of its results. Finally, we conclude by considering
+the strengths and weaknesses of our implementation of ﬁtted
+value iteration, and highlight other potential approaches that
+we did not try.
+
+Initial Attempts
+In this section we will outline our early approaches to the
+problem. In each case we describe the motivations for the ap-
+proach, the extent to which it was successful, and the reasons
+why it was ultimately unsuccessful.
+Block Drop
+As an initial pass at the problem of Tetris, we chose to imple-
+ment a simple game which we will call Block Drop. Block
+Drop is comparable to Tetris in that players drop pieces onto
+a rectangular grid, and gain points for ﬁlling up an entire row
+(clearing a line). The main difference is that in Block Drop,
+the only type of piece available to players is a single unit
+square. Although the relationships between states in Block
+
+Drop are much more simple than in Tetris (and thus the op-
+timal policy is much easier to learn), the size of the state
+space for Block Drop and Tetris are similar. In this sense,
+the tractability of Block Drop can be used as a rough lower
+bound on the tractability of Tetris.
+We wrote a program to formulate an m × n game of Block
+Drop as an MDP. Note that a valid Block Drop gameboard
+never has any holes (where a certain grid square is not ﬁlled
+but a higher up square in the same column is ﬁlled). This al-
+lows us to represent each state by a set of n values correspond-
+ing to the height of the pieces in each of the n columns. These
+column heights can take on values from 0 to m − 1 indepen-
+dently of each other (columns heights are bounded by m − 1
+since the game ends if a column reaches height m). We also
+added a single terminal state to represent losing the game,
+so the total state space of Block Drop is mn + 1. One pos-
+sible action exists for each column (since the player chooses
+which column to drop a piece in) so there are a total of n ac-
+tions. Transition probabilities are completely deterministic -
+dropping a piece in a particular column either increments that
+column’s value by 1, or decrements the value of every column
+by 1 (in the case when a line is cleared). Our reward function
+assigns a reward of 1 for clearing a line and a cost of m for
+losing the game; all basic moves had 0 cost.
+In order to solve the Block Drop MDP, we used the ZMDP
+package written by Trey Smith (Smith & Simmons, 2012).
+This package is designed primarily for ﬁnding (approximate)
+solutions to Partially Observable MDPs, and as a result it re-
+quires that the input problem be described as a POMDP rather
+than an MDP. Unfortunately, we were unable to ﬁnd any other
+software that works for pure MDPs, so we decided to con-
+vert our problem into a POMDP by adding a single observa-
+tion that is always made. We assumed that this modiﬁcation
+would not affect the tractability of the problem signiﬁcantly.
+We found that the solution to Block Drop matched the in-
+tuitively obvious optimal policy, and provided a good sanity
+check for our use of MDPs to model the problem. The result-
+ing policy drops a single block into each column (from left to
+right) until a line is cleared, at which point it repeats. How-
+ever, the Block Drop problem also illustrated the tractability
+issues that we faced: 4 × 4 Block Drop took less than a sec-
+ond to solve, but 5 × 4 Block Drop took 16 seconds and 6 × 4
+Block Drop took over a minute; all sizes above 7 × 5 were
+unable to complete a single solver round. Figure 1 shows the
+time in seconds required for a solution to Block Drop as a
+
+function of the board size (in terms of total number of grid
+squares). These results made it clear that the actual game
+of Tetris would be intractable without signiﬁcant approxima-
+tions; our next task was to decide how to make these approx-
+imations.
+
+Figure 1: Solution times for Block Drop
+
+No-Holes Tetris
+In Tetris, unlike in Block Drop, we cannot represent the states
+of the board by a single height for each column. It is possi-
+ble that holes - where a column has an empty block below
+the highest ﬁlled block - are formed in the board when pieces
+are dropped. In fact, the management of these holes is one of
+the more difﬁcult aspects of the game. However, we decided
+to approximate board states in this manner by emulating the
+state representations for Block Drop and tracking only the
+height of the highest block in each column. We refer to the
+version of Tetris that results from this approximation as No-
+Holes Tetris. The number of possible boards for No-Holes
+Tetris is signiﬁcantly smaller than for Tetris (mn compared
+to around 2mn ) and was the main motivation for making this
+approximation. We attempted to counterbalance the inaccu-
+racy of this simpliﬁcation by also modifying the reward func-
+tion of No-Holes Tetris, so that the player loses points upon
+taking actions which produce holes. This causes the opti-
+mal policy for No-Holes Tetris to avoid actions that lead it
+to states that differ from the corresponding true Tetris state.
+Furthermore, we observed that competitive Tetris players al-
+most never leave holes in their stacks. As a result we hoped
+that the optimal policy for our approximate No-Holes Tetris
+would remain close to the optimal policy of true Tetris.
+We then wrote a program to formulate an m × n game of
+No-Holes Tetris as an MDP. As noted above, each board of
+No-Holes Tetris is represented by a vector of n values be-
+tween 0 and m − 1, representing the heights of the blocks in
+each column. In addition, each state of No-Holes Tetris also
+includes the next piece available to the player. For p pos-
+sible pieces, this gives a total state space of p · mn + 1 (in-
+cluding the terminal state). The set of actions available to
+the player at each state is the set of ways (including rotations)
+that the given piece can be dropped onto the board. Transition
+
+probabilities are deterministic to the extent that they affect the
+board and uniformly random to the extent that they affect the
+piece, so each state/action pair leads uniformly to one of p
+possible next states. The reward function assigns a cost of
+m to losing the game, and the reward for a given state/action
+pair is the number of lines cleared minus the number of holes
+created.
+We found (unsurprisingly) that No-Holes Tetris is signif-
+icantly more difﬁcult to solve than Block Drop. 4 × 4 No-
+Holes Tetris took around 20 seconds to solve, while on larger
+boards our solver was unable to ﬁnd good policies. The best
+policies found had regret values greater than 0.5 on a 5 × 4
+board and greater than 4 on a 6 × 4 board, even when the
+solver is allowed to run for long periods. We tried varying
+the number of pieces to reduce complexity and found that the
+difﬁculty of the problem scaled extremely quickly with the
+number of pieces. No-Holes Tetris with only one piece could
+be solved about as quickly as Block Drop, but attempts to
+solve 6 × 4 No-Holes Tetris with two pieces were unable to
+reduce regret below 1. Figure 2 shows the solution times of
+No-Holes Tetris as a function of board size when different
+total numbers of pieces are used.
+
+Figure 2: Solution times for No-Holes Tetris
+
+These results were disappointing, to say the least. We
+knew from our analysis of Block Drop that solving No-Holes
+Tetris would be intractable for board sizes above 7 × 5. How-
+ever, our hope was that we could ﬁnd a ”good enough” pol-
+icy for the full 7-piece No-Holes Tetris on a ”large enough”
+board. This policy would serve as a starting point for local
+piece placement that we could use to build policies for larger
+boards. We planned to do this by dividing larger boards into
+smaller sub-boards and choosing actions based on some func-
+tion of the sub-board policies. Unfortunately, No-Holes Tetris
+proved to be too computationally difﬁcult to ﬁnd suitable sub-
+board policies. On the one hand, the 4 × 4 board was small
+enough that the outputted policy for No-Holes Tetris was de-
+termined primarily by height constraints, and did not gener-
+alize well to larger boards. On the other hand, the best 5 × 4
+policy performed poorly even on the 5 × 4 board. This left us
+with no good starting point from which to construct a policy
+
+for larger boards, and no obvious way of applying our results
+effectively to the general problem of playing Tetris.
+Factored MDPs
+We brieﬂy considered representing Tetris (or No-Holes
+Tetris) as a factored MDP. Some of the existing literature on
+MDP and POMDP solution algorithms explores ways of op-
+timizing the solution process by representing the state space
+in factored form (Guestrin, Koller, Parr, & Venkataraman,
+2003), (Poupart, 2005). That is, we would represent each
+state in terms of some ﬁnite number of state variables, and
+describe the transition probabilities and rewards as functions
+of these variables instead of deﬁning a particular value for
+every state. Tetris, like most games, is highly factorable and
+therefore well suited to this kind of approach. Possible factor-
+izations of an m × n board include using a binary variable for
+each of the mn grid squares (which encodes the full version
+of Tetris), and representing each of the n columns as a vari-
+able that takes m possible values (which encodes No-Holes
+Tetris).
+Ultimately, however, we decided not to pursue this ap-
+proach. The beneﬁts of representing MDPs in factored form
+come primarily from the ability to represent particular tran-
+sition probabilities and rewards as functions of strict subsets
+of the full set of state variables. In other words, in order for
+a factored MDP to be more efﬁciently solvable than its un-
+factored counterpart, the state variables of the factored form
+must be independent to some extent. At ﬁrst, No-Holes Tetris
+seems to exhibit a great deal of independence: each time a
+piece is dropped, at most four state variables (i.e. columns)
+will change in value, and these changes will depend only on
+the values of the other three state variables. However, the fact
+that state transitions must also take into account line clear-
+ances eliminates this independence. Line clearances only oc-
+cur when a particular row is ﬁlled in at every column, and as
+a result, the transition probabilities for each state variable de-
+pend on the value of all n state variables. For this reason, we
+judged that the use of a factored representation would not pro-
+vide signiﬁcant reductions in tractability and decided against
+this approach.
+
+Fitted Value Iteration
+The next approach that we tried (and the one that ultimately
+proved most successful) was ﬁtted value iteration. The ba-
+sic principle behind ﬁtted value iteration is to choose a small
+set of features and represent each state in terms of this fea-
+ture set. In this respect, it is reminiscent of the factoring ap-
+proach. Importantly, however, the state space of a factored
+MDP is necessarily the same size as the original state space,
+while the set of possible combinations of feature values may
+be much smaller. Furthermore, ﬁtted value iteration does not
+consider this full set of possible feature values, but instead re-
+stricts itself to the feature representations of a sampled set of
+states. This means that the tractability of ﬁtted value iteration
+depends on the number of samples rather than the size of the
+state space.
+
+In general, two basic properties must hold for a particular
+MDP in order for ﬁtted value iteration to be effective. First,
+it must be possible to approximate the true value of a par-
+ticular state using only a small set of information about that
+state. This ensures that the ”featurization” of the MDP is rea-
+sonably representative of the original. Second, the number
+of samples from the original state space needed to represent
+the relationship between state values and state features must
+be relatively small. This ensures that an accurate function
+from features to values can be learned using the sampled set
+of states. Intuitively, Tetris seems to satisfy both properties,
+so the application of ﬁtted value iteration is a natural choice.
+Our algorithm is roughly identical to the ﬁtted value it-
+eration algorithm presented at the end of the Reinforcement
+Learning handout, with a few small caveats. It begins by sam-
+pling a set of states Ss from the state space S and initializing
+a parameter vector θ to zero. Then, it alternates between two
+steps. In the ﬁrst step it calculates, for each state, the maxi-
+mum over all actions of the expected utility of being in that
+state:
+ys = maxa∈A R(s) + γEs(cid:48)∼Psa [V (s(cid:48) )] for each s ∈ Ss .
+In the second step, it ﬁts the values of the parameters to this
+set of maximum expected utilities:
+2 ∑s∈Ss (θT φ(s) − ys )2 .
+1
+θ := arg minθ
+Here, A is the set of all actions, R(s) is the reward received
+from being in state s, Psa is the distribution over possible tran-
+sition states resulting from taking action a in state s, and φ(s)
+is the vector of features values for state s.
+The main difference between our algorithm and the one
+presented in the handout is that instead of sampling from the
+state space as a whole, we take samples by randomly placing
+pieces around the board. This seems reasonable, since a truly
+random Tetris board is unlikely to look anything like the kinds
+of boards found in Tetris gameplay, and the set of states that
+can be generated using this sampling process is identical to
+the set of states it is possible for our agent to encounter during
+test time. The other difference is that because we already
+know the transition probabilites in Tetris, we can compute
+R(s) + γEs(cid:48)∼Psa [V (s(cid:48) )] directly instead of having to sample it.
+Once the algorithm converges, the parameter settings can
+be used by an agent to play Tetris. The agent chooses moves
+in a manner similar to the ﬁrst step of the algorithm. When in
+state s, it chooses action a(cid:48) according to:
+a(cid:48) = arg maxa∈A Es(cid:48)∼Psa [V (s(cid:48) )].
+Feature Selection
+The ﬁtted value iteration algorithm given above assumes the
+existence of a function φ from states to feature values. A full
+implementation therefore requires the choice of a feature set
+and the deﬁnition of φ. Note that φ can be any conceivable
+function φ : S → Rk for some k ∈ N, where k is the number
+of features. This means that the ”feature space” of possible
+functions φ is both enormous and difﬁcult to deﬁne. Although
+techniques exist for automating the process of feature selec-
+tion, it is far more common to deﬁne features manually using
+
+domain knowledge (Hall, 1999).
+We considered a variety of possible features based on our
+personal experience playing Tetris. The ﬁrst kind of features
+we considered were ”summary” features that are functions of
+the whole board. The most straightforward summary features
+we examined were Max-Height, the maximum height of all
+the columns, and Num-Holes, the total number of holes on
+the board (where a ”hole” is an unﬁlled grid square for which
+there exists a ﬁlled grid square higher up in the same col-
+umn). Other more complicated features included: Avg-Diff,
+the average of the absolute values of differences between ad-
+jacent columns; Max-Diff, the maximum of these absolute
+values; and Num-Covers, the total number of covers on the
+board (where a ”cover” is a ﬁlled grid square for which there
+exists an unﬁled grid square lower down in the same column).
+For each proposed feature, we conducted preliminary tests of
+the feature by running our algorithm using only this feature
+and a constant feature with value 1 for every state. We then
+measured the average lifespan (i.e. number of moves made
+before losing) for an agent that plays using the learned pa-
+rameters and compared it to the average lifespan of an agent
+that places pieces randomly. Only the features Max-Height,
+Num-Holes, and Num-Covers led to better than random per-
+formance.
+In addition to the summary features, we also considered
+sets of non-summary features that were functions of partic-
+ular columns. These feature sets corresponded to different
+summary features: examples include i-Col-Height, the height
+of the ith column, and i-Col-Diff, the absolute value of the
+difference between the ith and (i − 1)th columns. However,
+when we tested each of these potential feature sets individu-
+ally, we found that an agent playing with the learned parame-
+ters performed no better than random play. This is most likely
+because the relationships between these feature sets and the
+true value function are non-linear. Since our algorithm ﬁnds
+parameter settings using linear regression, it does not have
+the potential to learn non-linear relationships well and typ-
+ically ends up converging to arbitrary parameter values. In
+theory, the parameter update step could use a wide variety of
+machine learning algorithms, and using a more complex re-
+gression algorithm could allow it to learn more intricate rela-
+tionships between the features and the state values. Without
+such modiﬁcations, however, our algorithm cannot perform
+well using the non-summary feature sets considered and so
+we ultimately chose not to consider them further.
+Results
+After this preliminary testing, we were left with three features
+- Max-Height, Num-Holes, and Num-Covers - that seemed
+promising. We then conducted a series of more rigorous tests
+to determine which combinations of features led to the best
+performance. For each possible combination of these three
+features, we ran our algorithm to convergence 5 times and
+tested an agent for each of the resulting parameter vectors.
+The algorithm used 1000 sampled states and a discount factor
+of 0.9 on a full 20 × 10, 7-piece board, and iterated until the
+
+maximum difference between corresponding parameter val-
+ues from one iteration to the next dropped below 0.01. In test-
+ing, each agent played 100 games and the average number of
+moves per game was computed. Table 1 shows the average of
+the parameter vectors and average lifespans over all 5 agents
+for each possible feature set. The ﬁrst value in each parame-
+ter vector is the value of the constant feature, followed by the
+values of the parameters corresponding to the other features
+in the order listed.
+
+Table 1: Average agent lifespans and parameter vectors
+
+Avg Lifespan
+Feature Set
+25.8
+Constant
+56.8
+Max-Height
+47.7
+Num-Holes
+40.5
+Num-Covers
+126.0
+MH, NH
+72.1
+MH, NC
+NH, NC
+42.0
+MH, NH, NC 129.4
+
+Parameter Vector
+(-13.8)
+(21.8, -2.8)
+(17.6, -2.5)
+(12.6, -1.0)
+(8.2, -0.4, -0.7)
+(63.1, -3.7, -0.2)
+(-15.1, -5.5, -0.1)
+(-17.0, -1.0, -0.9, -0.1)
+
+Max-Height seems to be the most informative feature since
+it gives the best single-feature performance and the two fea-
+ture pairs that use it perform better than the third. Num-Holes
+likely comes in second given the stark difference between
+performance with Max-Height, Num-Holes and with Max-
+Height, Num-Covers. Num-Covers has the worst individual
+performance and it makes a difference only when combined
+with Max-Height, so it seems to be the least informative of
+the three. These rankings seem to make intuitive sense since
+looking at the maximum column height and total number of
+holes on a Tetris player’s board is one of the most obvious
+ways to judge whether they are doing well.
+On the other hand, however, the differences in performance
+given by these three features may not be due to inherent dif-
+ferences in their informativeness about the true value func-
+tion, but rather a product of the random sampling process we
+used. In general, random play clears lines rarely but loses of-
+ten, and thus the set of sampled states contains many more
+examples of terminal states than of line clearances. Since
+Max-Height is especially indicative of whether the player is
+near a terminal state, while the other two features relate more
+to how easily lines can be cleared, it is possible that the cor-
+rect value of Max-Height is simply the easiest to learn from
+random play. To test this hypothesis, we conducted another
+set of trials for the three-feature set using a modiﬁed version
+of the algorithm with multiple training rounds.
+In the ﬁrst
+round, we learn parameter settings for the three features us-
+ing a set of states sampled from random play. In subsequent
+rounds, the set of states is sampled from play using the pa-
+rameter settings from the previous round, with a probability
+of 0.3 to choose a random action. However, this algorithm
+showed no signiﬁcant change in parameters from round to
+round (even though subsequent rounds reinitialized the pa-
+
+agent only survives for an average of 25 moves, and without
+the use of previewed pieces - a staple of almost all versions
+of Tetris - humans without plenty of experience would likely
+not perform much better. Furthermore, the addition of two
+previewed pieces and a 2-step lookahead allowed our agent
+to stay alive indeﬁnitely.
+This ﬁnal instantiation of our agent is particularly interest-
+ing because of the way it combines ﬁtted value iteration and
+simple search and ends up performing better than with either
+technique individually. In this case, the paradigm of uniting
+machine learning and conventional algorithms proved to be
+extremely effective. Future versions of our agent could likely
+be made even more effective if we incorporated other stand-
+alone techniques as well. The linear regression step could
+easily be replaced by a more advanced regression technique
+that would allow our agent to learn non-linear relationships
+between the features and state values, and automated tech-
+niques for feature selection might be able to ﬁnd relationships
+that are not readily apparent to human players. Neverthe-
+less, our ﬁnal agent is a reasonably effective Tetris player as
+it stands, and could provide a solid foundation if we wished
+to extend our agent to the competitive Tetris arena.
+References
+Guestrin, C., Koller, D., Parr, R., & Venkataraman, S. (2003).
+Efﬁcient solution algorithms for factored mdps. J. Artif.
+Intell. Res. (JAIR), 19, 399–468.
+(1999). Correlation-based feature selection for
+Hall, M.
+machine learning. Unpublished doctoral dissertation, The
+University of Waikato.
+Exploiting structure to efﬁciently
+Poupart, P.
+(2005).
+solve large scale partially observable markov decision pro-
+cesses. Unpublished doctoral dissertation, Citeseer.
+Smith, T., & Simmons, R.
+(2012). Point-based pomdp al-
+gorithms: Improved analysis and implementation. arXiv
+preprint arXiv:1207.1412.
+
+rameters to 0 after collecting the samples). This suggests that
+the parameter settings for the three-feature set given in Table
+1 are likely the optimal values achievable by our algorithm.
+The last method we tried for improving the effectiveness
+of our agent was to allow it to preview the upcoming two
+pieces and add a 2-step look-ahead feature. Most versions of
+Tetris allow players to preview several upcoming pieces, so
+it seemed fair to allow our agent the same privilege. During
+training, our agent learns a parameter vector for the three-
+feature set as it did before. In gameplay, however, it maxi-
+mizes the expected value of the next state over all possible
+combinations of actions with the current piece and the two
+previewed pieces. In other words, if Psa1 ,s2 a2 ,s3 a3 is the tran-
+sition distribution over next states after taking actions a1 , a2 ,
+and a3 in s1 , s2 , and s3 respectively, the agent chooses an ac-
+tion a according to:
+[V (s(cid:48) )].
+a = arg maxa1 ∈A R(s2 ) + R(s3 ) + Es(cid:48)∼Ps1 a1 ,s2 a2 ,s3 a3
+We found that this 2-step lookahead agent was a highly
+effective Tetris player - over the course of several thousand
+moves, it never lost once and rarely entered a state with a
+maximum column height above half of the total board height.
+To ensure that this performance was inﬂuenced by our param-
+eter learning (as opposed to merely the lookahead), we tested
+lookahead agents that had no learned parameters and simply
+chose actions based on the maximum reward attained dur-
+ing lookahead. In this case, 2- and 3-step lookahead agents
+performed no better than random play and agents with larger
+lookaheads took dozens of seconds to choose moves. These
+results demonstrate how agents that utilize both low-order
+lookahead and parameter learning can signiﬁcantly outper-
+form agents which use only one or the other.
+
+Conclusions
+We began this project with the hopes of creating an agent ca-
+pable of playing competitive Tetris against a human player.
+Very quickly on, however, we realized that we had underesti-
+mated the difﬁculty of basic, single-player Tetris. The beast
+of exponential size reared its ugly head, and it became clear
+that we could not simply encode the game as an MDP and
+expect it to be tractably solvable. Even reducing the board
+size by a factor of eight and ignoring holes was not enough to
+allow for the computation of an optimal policy, and the tricky
+nature of line clearances prevented us from taking advantage
+of independence between factored state variables.
+This forced us to change tactics and use a less straightfor-
+ward approach to ﬁnd an approximate solution to the MDP.
+The ﬁtted value iteration algorithm was a natural choice, since
+Tetris boards are well characterized by a small set of features
+that can be learned with relatively few sampled states. Af-
+ter some experimentation, we found three features - Max-
+Height, Num-Holes, and Num-Covers - that seemed to be
+roughly linearly correlated with the ”true” value of Tetris
+states. An agent that learned parameter values correspond-
+ing to these features was able to survive for an average of
+around 130 moves. This was not a trivial feat: a random
+
+

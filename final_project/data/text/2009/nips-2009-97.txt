@@ -1,0 +1,646 @@
+Particle-based Variational Inference
+for Continuous Systems
+
+Alexander T. Ihler
+Dept. of Computer Science
+Univ. of California, Irvine
+ihler@ics.uci.edu
+
+Andrew J. Frank
+Dept. of Computer Science
+Univ. of California, Irvine
+ajfrank@ics.uci.edu
+
+Padhraic Smyth
+Dept. of Computer Science
+Univ. of California, Irvine
+smyth@ics.uci.edu
+
+Abstract
+
+Since the development of loopy belief propagation, there has been considerable
+work on advancing the state of the art for approximate inference over distributions
+deﬁned on discrete random variables. Improvements include guarantees of con-
+vergence, approximations that are provably more accurate, and bounds on the re-
+sults of exact inference. However, extending these methods to continuous-valued
+systems has lagged behind. While several methods have been developed to use be-
+lief propagation on systems with continuous values, recent advances for discrete
+variables have not as yet been incorporated.
+In this context we extend a recently proposed particle-based belief propagation
+algorithm to provide a general framework for adapting discrete message-passing
+algorithms to inference in continuous systems. The resulting algorithms behave
+similarly to their purely discrete counterparts, extending the beneﬁts of these more
+advanced inference techniques to the continuous domain.
+
+1
+
+Introduction
+
+Graphical models have proven themselves to be an effective tool for representing the underlying
+structure of probability distributions and organizing the computations required for exact and ap-
+proximate inference. Early examples of the use of graph structure for inference include join or
+junction trees [1] for exact inference, Markov chain Monte Carlo (MCMC) methods [2], and vari-
+ational methods such as mean ﬁeld and structured mean ﬁeld approaches [3]. Belief propagation
+(BP), originally proposed by Pearl [1], has gained in popularity as a method of approximate infer-
+ence, and in the last decade has led to a number of more sophisticated algorithms based on conjugate
+dual formulations and free energy approximations [4, 5, 6].
+However, the progress on approximate inference in systems with continuous random variables has
+not kept pace with that for discrete random variables. Some methods, such as MCMC techniques, are
+directly applicable to continuous domains, while others such as belief propagation have approximate
+continuous formulations [7, 8]. Sample-based representations, such as are used in particle ﬁltering,
+are particularly appealing as they are relatively easy to implement, have few numerical issues, and
+have no inherent distributional assumptions. Our aim is to extend particle methods to take advantage
+of recent advances in approximate inference algorithms for discrete-valued systems.
+Several recent algorithms provide signiﬁcant advantages over loopy belief propagation. Double-
+loop algorithms such as CCCP [9] and UPS [10] use the same approximations as BP but guarantee
+convergence. More general approximations can be used to provide theoretical bounds on the results
+of exact inference [5, 3] or are guaranteed to improve the quality of approximation [6], allowing
+an informed trade-off between computation and accuracy. Like belief propagation, they can be
+formulated as local message-passing algorithms on the graph, making them amenable to parallel
+computation [11] or inference in distributed systems [12, 13].
+
+1
+
+In short, the algorithmic characteristics of these recently-developed algorithms are often better, or at
+least more ﬂexible, than those of BP. However, these methods have not been applied to continuous
+random variables, and in fact this subject was one of the open questions posed at a recent NIPS
+workshop [14].
+In order to develop particle-based approximations for these algorithms, we focus on one particular
+technique for concreteness: tree-reweighted belief propagation (TRW) [5]. TRW represents one
+of the earliest of a recent class of inference algorithms for discrete systems, but as we discuss in
+Section 2.2 the extensions of TRW can be incorporated into the same framework if desired.
+The basic idea of our algorithm is simple and extends previous particle formulations of exact infer-
+ence [15] and loopy belief propagation [16]. We use collections of samples drawn from the con-
+tinuous state space of each variable to deﬁne a discrete problem, “lifting” the inference task from
+the original space to a restricted, discrete domain on which TRW can be performed. At any point,
+the current results of the discrete inference can be used to re-select the sample points from a vari-
+able’s continuous domain. This iterative interaction between the sample locations and the discrete
+messages produces a dynamic discretization that adapts itself to the inference results.
+We demonstrate that TRW and similar methods can be naturally incorporated into the lifted, discrete
+phase of particle belief propagation and that they confer similar beneﬁts on the continuous problem
+as hold in truly discrete systems. To this end we measure the performance of the algorithm on an
+Ising grid, an analogous continuous model, and the sensor localization problem. In each case, we
+show that tree-reweighted particle BP exhibits behavior similar to TRW and produces signiﬁcantly
+more robust marginal estimates than ordinary particle BP.
+
+2 Graphical Models and Inference
+
+Graphical models provide a convenient formalism for describing structure within a probability dis-
+tribution p(X ) deﬁned over a set of variables X = {x1 , . . . , xn}. This structure can then be applied
+to organize computations over p(X ) and construct efﬁcient algorithms for many inference tasks,
+including optimization to ﬁnd a maximum a posteriori (MAP) conﬁguration, marginalization, or
+computing the likelihood of observed data.
+
+2.1 Factor Graphs
+
+(1)
+
+fu (Xu ).
+
+p(x1 , . . . , xn ) =
+
+Factor graphs [17] are a particular type of graphical model that describe the factorization struc-
+ture of the distribution p(X ) using a bipartite graph consisting of factor nodes and variable nodes.
+Speciﬁcally, suppose such a graph G consists of factor nodes F = {f1 , . . . , fm } and variable nodes
+X = {x1 , . . . , xn}. Let Xu ⊆ X denote the neighbors of factor node fu and Fs ⊆ F denote the
+m(cid:89)
+neighbors of variable node xs . Then, G is consistent with a distribution p(X ) if and only if
+1
+Z
+u=1
+In a common abuse of notation, we use the same symbols to represent each variable node and its
+associated variable xs , and similarly for each factor node and its associated function fu . Each factor
+fu corresponds to a strictly positive function over a subset of the variables. The graph connectivity
+captures the conditional independence structure of p(X ), enabling the development of efﬁcient exact
+and approximate inference algorithms [1, 17, 18]. The quantity Z , called the partition function, is
+also of importance in many problems; for example in normalized distributions such as Bayes nets, it
+corresponds to the probability of evidence and can be used for model comparison.
+(cid:90)
+A common inference problem is that of computing the marginal distributions of p(X ). Speciﬁcally,
+for each variable xs we are interested in computing the marginal distribution
+X \xs
+For discrete-valued variables X , the integral is replaced by a summation.
+When the variables are discrete and the graph G representing p(X ) forms a tree (G has no cy-
+cles), marginalization can be performed efﬁciently using the belief propagation or sum-product al-
+gorithm [1, 17]. For inference in more general graphs, the junction tree algorithm [19] creates a
+
+ps (xs ) =
+
+p(X ) ∂X.
+
+2
+
+tree-structured hypergraph of G and then performs inference on this hypergraph. The computational
+complexity of this process is O(ndb ), where d is the number of possible values for each variable and
+b is the maximal clique size of the hypergraph. Unfortunately, for even moderate values of d, this
+complexity becomes prohibitive for even relatively small b.
+
+2.2 Approximate Inference
+
+Loopy BP [1] is a popular alternative to exact methods and proceeds by iteratively passing “mes-
+sages” between variable and factor nodes in the graph as though the graph were a tree (ignoring
+cycles). The algorithm is exact when the graph is tree-structured and can provide excellent approx-
+imations in some cases even when the graph has loops. However, in other cases loopy BP may
+perform poorly, have multiple ﬁxed points, or fail to converge at all.
+Many of the more recent varieties of approximate inference are framed explicitly as an optimiza-
+tion of local approximations over locally deﬁned cost functions. Variational or free-energy based
+approaches convert the problem of exact inference into the optimization of a free energy function
+over the set of realizable marginal distributions M, called the marginal polytope [18]. Approximate
+Eµ [log P (X )] + (cid:98)H(µ)
+inference then corresponds to approximating the constraint set and/or energy function. Formally,
+Eµ [log P (X )] + H(µ) ≈ max
+µ∈ (cid:99)M
+max
+µ∈M
+where H is the entropy of the distribution corresponding to µ. Since the solution µ may not corre-
+referred to as pseudomarginals. If both the constraints in (cid:99)M and approximate entropy (cid:98)H decompose
+spond to the marginals of any consistent joint distribution, these approximate marginals are typically
+locally on the graph, the optimization process can be interpreted as a message-passing procedure,
+and is often performed using ﬁxed-point equations like those of BP.
+tion (cid:99)M ⊇ M enforcing local consistency and the Bethe approximation to H [4]. This viewpoint
+Belief propagation can be understood in this framework as corresponding to an outer approxima-
+provides a clear path to directly improve upon the properties of BP, leading to a number of differ-
+ent algorithms. For example, CCCP [9] and UPS [10] make the same approximations but use an
+alternative, direct optimization procedure to ensure convergence. Fractional belief propagation [20]
+corresponds to a more general Bethe-like approximation with additional parameters, which can be
+modiﬁed to ensure that the cost function is convex and used with convergent algorithms [21]. A
+special case includes tree-reweighted belief propagation [5], which both ensures convexity and pro-
+vides an upper bound on the partition function Z . The approximation of M can also be improved
+using cutting plane methods, which include additional, higher-order consistency constraints on the
+pseudomarginals [6]. Other choices of local cost functions lead to alternative families of approxi-
+mations [8].
+Overall, these advances have provided signiﬁcant improvements in the state of the art for approxi-
+mate inference in discrete-valued systems. They provide increased ﬂexibility, theoretical bounds on
+the results of exact inference, and can provably increase the quality of the estimates. However, these
+advances have not been carried over into the continuous domain.
+For concreteness, in the rest of the paper we will use tree-reweighted belief propagation (TRW) [5]
+as our inference method of choice, although the same ideas can be applied to any of the discussed
+inference algorithms. As we will see shortly, the details speciﬁc to TRW are nicely encapsulated
+and can be swapped out for those of another algorithm with minimal effort.
+mxs(cid:1)fu (xs ) ∝ (cid:89)
+, mfu(cid:1)xs (xs ) ∝ (cid:88)
+fu (Xu )1/ρu (cid:89)
+The ﬁxed-point equations for TRW lead to a message-passing algorithm similar to BP, deﬁned by
+mfv (cid:1)xs (xs )ρv
+mxt(cid:1)fu (xt )
+mfu(cid:1)xs (xs )
+fv ∈Fs
+Xu \xs
+xt∈Xu \xs
+(2)
+The parameters ρv are called edge weights or appearance probabilities. For TRW, the ρ are required
+to correspond to the fractional occurrence rates of the edges in some collection of tree-structured
+subgraphs of G. The choice of ρ affects the quality of the approximation; the tightest upper bound
+can be obtained via a convex optimization of ρ which computes the pseudomarginals as an inner
+loop.
+
+3
+
+3 Continuous Random Variables
+
+For continuous-valued random variables, many of these algorithms cannot be applied directly. In
+particular, any reasonably ﬁne-grained discretization produces a discrete variable whose domain size
+d is quite large. The domain size is typically exponential in the dimension of the variable and the
+complexity of the message-passing algorithms is O(ndb ), where n is the total number of variables
+and b is the number of variables in the largest factor. Thus, the computational cost can quickly
+become intractable even with pairwise factors over low dimensional variables. Our goal is to adapt
+the algorithms of Section 2.2 to perform efﬁcient approximate inference in such systems.
+For time-series problems, in which G forms a chain, a classical solution is to use sequential Monte
+Carlo approximations, generally referred to as particle ﬁltering [22]. These methods use samples to
+deﬁne an adaptive discretization of the problem with ﬁne granularity in regions of high probability.
+The stochastic nature of the discretization is simple to implement and enables probabilistic assur-
+ances of quality including convergence rates which are independent of the problem’s dimensionality.
+(In sufﬁciently few dimensions, deterministic adaptive discretizations can also provide a competitive
+alternative, particularly if the factors are analytically tractable [23, 24].)
+
+3.1 Particle Representations for Message-Passing
+
+Particle-based approximations have been extended to loopy belief propagation as well. For example,
+in the nonparametric belief propagation (NBP) algorithm [7], the BP messages are represented as
+Gaussian mixtures and message products are approximated by drawing samples, which are then
+smoothed to form new Gaussian mixture distributions. A key aspect of this approach is the fact that
+the product of several mixtures of Gaussians is also a mixture of Gaussians, and thus can be sampled
+from with relative ease. However, it is difﬁcult to see how to extend this algorithm to more general
+message-passing algorithms, since for example the TRW ﬁxed point equations (2) involve ratios and
+powers of messages, which do not have a simple form for Gaussian mixtures and may not even form
+ﬁnitely integrable functions.
+Instead, we adapt a recent particle belief propagation (PBP) algorithm [16] to work on the tree-
+reweighted formulation. In PBP, samples (particles) are drawn for each variable, and each message
+is represented as a set of weights over the available values of the target variable. At a high level,
+the procedure iterates between sampling particles from each variable’s domain, performing inference
+over the resulting discrete problem, and adaptively updating the sampling distributions. This process
+is illustrated in Figure 1. Formally, we deﬁne a proposal distribution Ws (xs ) for each variable xs
+such that Ws (xs ) is non-zero over the domain of xs . Note that we may rewrite the factor message
+fu (Xu )1/ρu (cid:89)
+
+computation (2) as an importance reweighted expectation:
+mfu(cid:1)xs (xs ) ∝ E
+Xu \xs
+xt∈Xu \xs
+Let us index the variables that are neighbors of factor fu as Xu = {xu1 , . . . , xub }. Then, after
+sampling particles {x(1)
+s , · · · , x(N )
+} from Ws (xs ), we can index a particular assignment of parti-
+s
+cle values to the variables in Xu with X ((cid:126)j )
+u1 , . . . , x(jb )
+u = [x(j1 )
+ub ]. We then obtain a ﬁnite-sample
+(cid:17)
+(cid:16)
+
+fu
+approximation of the factor message in the form
+(cid:17) ∝ 1
+(cid:17)1/ρu (cid:89)
+(cid:16)
+(cid:16)
+(cid:88)
+(cid:17)
+(cid:16)
+mxul (cid:1)fu
+x(il )
+ul
+N b−1
+x(il )
+l (cid:54)=k
+Wxul
+ul
+(cid:126)i:ik=j
+In other words, we construct a Monte Carlo approximation to the integral using importance weighted
+samples from the proposal. Each of the values in the message then represents an estimate of the
+continuous function (2) evaluated at a single particle. Observe that the sum is over N b−1 elements,
+and hence the complexity of computing an entire factor message is O(N b ); this could be made more
+efﬁcient at the price of increased stochasticity by summing over a random subsample of the vectors
+
+mxt(cid:1)fu (xt )
+Wt (xt )
+
+X ((cid:126)i)
+u
+
+mfu(cid:1)xuk
+
+x(j )
+uk
+
+(3)
+
+(4)
+
+4
+
+(3)
+
+(1)
+
+µ(cid:0)x(j )
+t
+
+(cid:1)
+
+(3) Adjust
+Wt (xt )
+
+(2) Inference on discrete system
+f (cid:0)x(i)
+(cid:1)
+s , x(j )
+t
+
+µ(cid:0)x(i)
+(cid:1)
+s
+(cid:8)x(i)
+(cid:9) ∼ Ws (xs )
+(1) Sample
+s
+Figure 1: Schematic view of particle-based inference.
+(1) Samples for each variable provide a
+dynamic discretization of the continuous space; (2) inference proceeds by optimization or message-
+passing in the discrete space; (3) the resulting local functions can be used to change the proposals
+Ws (·) and choose new sample locations for each variable.
+(cid:16)
+(cid:17)ρv
+(cid:81)
+(cid:126)i. Likewise, we compute variable messages and beliefs as simple point-wise products:
+(cid:16)
+(cid:17) ∝
+(cid:16)
+s ) ∝ (cid:89)
+(cid:17)
+(cid:16)
+mfv (cid:1)xs
+x(j )
+fv ∈Fs
+mfv (cid:1)xs
+mxs(cid:1)fu
+s
+bs (x(j )
+mfu(cid:1)xs
+x(j )
+fv ∈Fs
+s
+This parallels the development in [16], except here we use factor weights (cid:126)ρ to compute messages
+according to TRW rather than standard loopy BP.
+Just as in discrete problems, it is often desirable to obtain estimates of the log partition function for
+use in goodness-of-ﬁt testing or model comparison. Our implementation of TRW-PBP gives us a
+stochastic estimate of an upper bound on the true partition function. Using other message passing
+approaches that ﬁt into this framework, such as mean ﬁeld, can provide a similar a lower bound.
+These bounds provide a possible alternative to Monte Carlo estimates of marginal likelihood [25].
+
+x(j )
+s
+
+(5)
+
+x(j )
+s
+
+,
+
+(cid:17)ρv
+
+3.2 Rao-Blackwellized Estimates
+
+Quantities about xs such as expected values under the pseudomarginal can be computed using the
+samples x(i)
+s . However, for any given variable node xs , the incoming messages to xs given in (4) are
+deﬁned in terms of the importance weights and sampled values of the neighboring variables. Thus,
+we can compute an estimate of the messages and beliefs deﬁned in (4)–(5) at arbitrary values of xs ,
+simply by evaluating (4) at that point. This allows us to perform Rao-Blackwellization, conditioning
+on the samples at the neighbors of xs rather than using xs ’s samples directly.
+Using this trick we can often get much higher quality estimates from the inference for small N . In
+particular, if the variable state spaces are sufﬁciently small that they can be discretized (for example,
+in 3 or fewer dimensions the discretized domain size d may be manageable) but the resulting factor
+domain size, db , is intractably large, we can evaluate (4) on the discretized grid for only O(dN b−1 ).
+More generally, we can substitute a larger number of samples N (cid:48) (cid:29) N with cost that grows only
+linearly in N (cid:48) .
+
+3.3 Resampling and Proposal Distributions
+
+Another critical point is that the efﬁciency of this procedure hinges on the quality of the proposal
+distributions Ws . Unfortunately, this forms a circular problem – W must be chosen to perform
+inference, but the quality of W depends on the distribution and its pseudomarginals. This interde-
+pendence motivates an attempt to learn the sampling distributions in an online fashion, adaptively
+updating them based on the results of the partially completed inference procedure. Note that this
+procedure depends on the same properties as Rao-Blackwellized estimates: that we be able to com-
+pute our messages and beliefs at a new set of points given the message weights at the other nodes.
+Both [15] and [16] suggest using the current belief at each iteration to form a new proposal dis-
+tribution. In [15], parametric density estimates are formed using the message-weighted samples
+at the current iteration, which form the sampling distributions for the next phase. In [16], a short
+Metropolis-Hastings MCMC sequence is run at a single node, using the Rao-Blackwellized belief
+estimate to compute an acceptance probability. A third possibility is to use a sampling/importance
+
+5
+
+Figure 2: 2-D Ising model performance. L1 error for PBP (left) and TRW-PBP (center) for varying
+numbers of particles; (right) PBP and TRW-PBP juxtaposed to reveal the gap for high η .
+
+resampling (SIR) procedure, drawing a large number of samples, computing weights, and prob-
+abilistically retaining only N . In our experiments we draw samples from the current beliefs, as
+approximated by Rao-Blackwellized estimation over a ﬁne grid of particles. For variables in more
+than 2 dimensions, we recommend the Metropolis-Hastings approach.
+
+4
+
+Ising-like Models
+
+The Ising model corresponds to a graphical model, typically a grid, over binary-valued variables with
+pairwise factors. Originating in statistical physics, similar models are common in many applications
+including image denoising and stereo depth estimation.
+Ising models are well understood, and
+provide a simple example of how BP can fail and the beneﬁts of more general forms such as TRW.
+We initially demonstrate the behavior of our particle-based algorithms on a small (3 × 3) lattice
+of binary-valued variables to compare with the exact discrete implementations, then show that the
+same observed behavior arises in an analagous continuous-valued problem.
+
+4.1
+
+Ising model
+
+(cid:21)
+
+1 − η
+η
+
+(cid:20)
+Our factors consist of single-variable and pairwise functions, given by
+
+f (xs , xt ) =
+
+f (xs ) = [ 0.5 0.5 ]
+
+η
+1 − η
+for η > .5. By symmetry, it is easy to see that the true marginal of each variable is uniform, [.5 .5].
+However, around η ≈ .78 there is a phase transition; the uniform ﬁxed point becomes unstable and
+several others appear, becoming more skewed toward one state or another as η increases. As the
+strength of coupling in an Ising model increases, the performance of BP often degrades sharply,
+while TRW is comparatively robust and remains near the true marginals [5].
+Figure 2 shows the performance of PBP and TRW-PBP on this model. Each data point represents
+the median L1 error between the beliefs and the true marginals, across all nodes and 40 randomly
+initialized trials, after 50 iterations. The left plot (BP) clearly shows the phase shift; in contrast,
+the error of TRW remains low even for very strong interactions. In both cases, as N increases the
+particle versions of the algorithms converge to their discrete equivalents.
+
+(6)
+
+4.2 Continuous grid model
+
+f (xs ) = exp
+
+The results for discrete systems, and their corresponding intuition, carry over naturally into contin-
+uous systems as well. To illustrate on an interpretable analogue of the Ising model, we use the same
+(cid:18)
+(cid:19)
+(cid:18)
+(cid:19)
+(cid:18)
+(cid:19)
+graph structure but with real-valued variables, and factors given by:
+− |xs − xt |2
+− (xs − 1)2
+− x2
+s
+2σ2
+2σ2
+2σ2
+p
+l
+l
+Local factors consist of bimodal Gaussian mixtures centered at 0 and 1, while pairwise factors
+encourage similarity using a zero-mean Gaussian on the distance between neighboring variables.
+We set σl = 0.2 and vary σp analagously to η in the discrete model. Since all potentials are Gaussian
+mixtures, the joint distribution is also a Gaussian mixture and can be computed exactly.
+
+f (xs , xt ) = exp
+
++ exp
+
+(7)
+
+.
+
+6
+
+0.50.60.70.80.9100.20.40.60.81ηL1 error  20100500BP0.50.60.70.80.9100.20.40.60.81ηL1 error  20100500TRW0.50.60.70.80.9100.20.40.60.81ηL1 error  PBP 500TRW−PBP 500Figure 3: Continuous grid model performance. L1 error for PBP (left) and TRW-PBP (center) for
+varying numbers of particles; (right) PBP and TRW-PBP juxtaposed to reveal the gap for low σp .
+
+Figure 3 shows the results of running PBP and TRW-PBP on the continuous grid model, demon-
+strating similar characteristics to the discrete model. The left panel reveals that our continuous grid
+model also induces a phase shift in PBP, much like that of the Ising model. For sufﬁciently small
+values of σp (large values on our transformed axis), the beliefs in PBP collapse to unimodal distri-
+butions with an L1 error of 1. In contrast, TRW-PBP avoids this collapse and maintains multi-modal
+distributions throughout; its primary source of error (0.2 at 500 particles) corresponds to overdis-
+persed bimodal beliefs. This is expected in attractive models, in which BP tends to “overcount”
+information leading to underestimates of variance; TRW removes some of this overcounting and
+may overestimate uncertainty.
+As mentioned in Section 3.1, we can use the results of
+TRW-PBP to compute an upper bound on the log parti-
+tion function. We implement naive mean ﬁeld within this
+same framework to achieve a lower bound as well. The
+resulting bounds, computed for a continuous grid model
+in which mean ﬁeld collapses to a single mode, are shown
+in Figure 4. With sufﬁciently many particles, the values
+produced by TRW-PBP and MF inference bound the true
+value, as they should. With only 20 particles per variable,
+however, TRW-PBP occasionally fails and yields “upper
+bounds” below the true value. This is not surprising; the
+consistency guarantees associated with the importance-
+reweighted expectation take effect only when N is sufﬁ-
+ciently large.
+
+Figure 4: Bounds on the log partition
+function.
+
+5 Sensor Localization
+We also demonstrate the presence of these effects in a simulation of a real-world application. Sensor
+localization considers the task of estimating the position of a collection of sensors in a network given
+noisy estimates of a subset of the distances between pairs of sensors, along with known positions
+for a small number of anchor nodes. Typical localization algorithms operate by optimizing to ﬁnd
+the most likely joint conﬁguration of sensor positions. A classical model consists of (at a minimum)
+three anchor nodes, and a Gaussian model on the noise in the distance observations.
+In [12], this problem is formulated as a graphical model and an alternative solution is proposed
+using nonparametric belief propagation to perform approximate marginalization. A signiﬁcant ad-
+vantage of this approach is that by providing approximate marginals, we can estimate the degree
+of uncertainty in the sensor positions. Gauging this uncertainty can be particularly important when
+the distance information is sufﬁciently ambiguous that the posterior belief is multi-modal, since in
+this case the estimated sensor position may be quite far from its true value. Unfortunately, belief
+propagation is not ideal for identifying multimodality, since the model is essentially attractive. BP
+may underestimate the degree of uncertainty in the marginal distributions and (as in the case of the
+Ising-like models in the previous section) collapse into a single mode, providing beliefs which are
+misleadingly overconﬁdent.
+Figure 5 shows a set of sensor conﬁgurations where this is the case. The distance observations
+induce a fully connected graph; the edges are omitted for clarity. In this network the anchor nodes
+are nearly collinear. This induces a bimodal uncertainty about the locations of the remaining nodes
+
+7
+
+−202400.20.40.60.81log(σp−2)L1 error  20100500−202400.20.40.60.81log(σp−2)L1 error  20100500−202400.20.40.60.81log(σp−2)L1 error  PBP 500TRW−PBP 500(a) Exact
+
+(b) PBP
+
+(c) TRW-PBP
+
+Figure 5: Sensor location belief at the target node. (a) Exact belief computed using importance
+sampling. (b) PBP collapses and represents only one of the two modes. (c) TRW-PBP
+overestimates the uncertainty around each mode, but represents both.
+
+– the conﬁguration in which they are all reﬂected across the crooked line formed by the anchors is
+nearly as likely as the true conﬁguration. Although this example is anecdotal, it reﬂects a situation
+which can arise regularly in practice [26].
+Figure 5a shows the true marginal distribution for one node, estimated exhaustively using importance
+sampling with 5 × 106 samples. It shows a clear bimodal structure – a slightly larger mode near the
+sensor’s true location and a smaller mode at a point corresponding to the reﬂection. In this system
+there is not enough information in the measurements to resolve the sensor positions. We compare
+these marginals to the results found using PBP.
+Figure 5b displays the Rao-Blackwellized belief estimate for one node after 20 iterations of PBP
+with each variable represented by 100 particles. Only one mode is present, suggesting that PBP’s
+beliefs have “collapsed,” just as in the highly attractive Ising model. Examination of the other
+nodes’ beliefs (not shown for space) conﬁrms that all are unimodal distributions centered around
+their reﬂected locations. It is worth noting that PBP converged to the alternative set of unimodal
+beliefs (supporting the true locations) in about half of our trials. Such an outcome is only slightly
+better; an accurate estimate of conﬁdence is equally important.
+The corresponding belief estimate generated by TRW-PBP is shown in Figure 5c.
+It is clearly
+bimodal, with signiﬁcant probability mass supporting both the true and reﬂected locations. Also,
+each of the two modes is less concentrated than the belief in 5b. As with the continuous grid model
+we see increased stability at the price of conservative overdispersion. Again, similar effects occur
+for the other nodes in the network.
+
+6 Conclusion
+We propose a framework for extending recent advances in discrete approximate inference for appli-
+cation to continuous systems. The framework directly integrates reweighted message passing algo-
+rithms such as TRW into the lifted, discrete phase of PBP. Furthermore, it allows us to iteratively
+adjust the proposal distributions, providing a discretization that adapts to the results of inference,
+and allows us to use Rao-Blackwellized estimates to improve our ﬁnal belief estimates.
+We consider the particular case of TRW and show that its beneﬁts carry over directly to continuous
+problems. Using an Ising-like system, we argue that phase transitions exist for particle versions of
+BP similar to those found in discrete systems, and that TRW signiﬁcantly improves the quality of the
+estimate in those regimes. This improvement is highly relevant to approximate marginalization for
+sensor localization tasks, in which it is important to accurately represent the posterior uncertainty.
+The ﬂexibility in the choice of message passing algorithm makes it easy to consider several instan-
+tiations of the framework and use the one best suited to a particular problem. Furthermore, future
+improvements in message-passing inference algorithms on discrete systems can be directly incorpo-
+rated into continuous problems.
+
+Acknowledgements: This material is based upon work partially supported by the Ofﬁce of Naval
+Research under MURI grant N00014-08-1-1015.
+
+8
+
+  AnchorMobileTarget  AnchorMobileTarget  AnchorMobileTargetReferences
+
+[1] J. Pearl. Probabilistic Reasoning in Intelligent Systems. Morgan Kaufman, San Mateo, 1988.
+[2] S. Geman and D. Geman. Stochastic relaxation, Gibbs distributions, and the Bayesian restoration of
+images. IEEE Trans. PAMI, 6(6):721–741, November 1984.
+[3] M. Jordan, Z. Ghahramani, T. Jaakkola, and L. Saul. An introduction to variational methods for graphical
+methods. Machine Learning, 37:183–233, 1999.
+[4] J. Yedidia, W. Freeman, and Y. Weiss. Constructing free energy approximations and generalized belief
+propagation algorithms. Technical Report 2004-040, MERL, May 2004.
+[5] M. Wainwright, T. Jaakkola, and A. Willsky. A new class of upper bounds on the log partition function.
+IEEE Trans. Info. Theory, 51(7):2313–2335, July 2005.
+[6] D. Sontag and T. Jaakkola. New outer bounds on the marginal polytope. In NIPS 20, pages 1393–1400.
+MIT Press, Cambridge, MA, 2008.
+[7] E. Sudderth, A. Ihler, W. Freeman, and A. Willsky. Nonparametric belief propagation. In CVPR, 2003.
+[8] T. Minka. Divergence measures and message passing. Technical Report 2005-173, Microsoft Research
+Ltd, January 2005.
+[9] A. Yuille. CCCP algorithms to minimize the Bethe and Kikuchi free energies: convergent alternatives to
+belief propagation. Neural Comput., 14(7):1691–1722, 2002.
+[10] Y.-W. Teh and M. Welling. The uniﬁed propagation and scaling algorithm. In NIPS 14. 2002.
+[11] J. Gonzalez, Y. Low, and C. Guestrin. Residual splash for optimally parallelizing belief propagation. In
+In Artiﬁcial Intelligence and Statistics (AISTATS), Clearwater Beach, Florida, April 2009.
+[12] A. Ihler, J. Fisher, R. Moses, and A. Willsky. Nonparametric belief propagation for self-calibration in
+sensor networks. IEEE J. Select. Areas Commun., pages 809–819, April 2005.
+[13] J. Schiff, D. Antonelli, A. Dimakis, D. Chu, and M. Wainwright. Robust message-passing for statistical
+inference in sensor networks. In IPSN, pages 109–118, April 2007.
+[14] A. Globerson, D. Sontag, and T. Jaakkola. Approximate inference – How far have we come? (NIPS’08
+Workshop), 2008. http://www.cs.huji.ac.il/˜gamir/inference-workshop.html.
+[15] D. Koller, U. Lerner, and D. Angelov. A general algorithm for approximate inference and its application
+to hybrid Bayes nets. In UAI 15, pages 324–333, 1999.
+[16] A. Ihler and D. McAllester. Particle belief propagation. In AI & Statistics: JMLR W&CP, volume 5,
+pages 256–263, April 2009.
+[17] F. Kschischang, B. Frey, and H.-A. Loeliger. Factor graphs and the sum-product algorithm. IEEE Trans.
+Info. Theory, 47(2):498–519, February 2001.
+[18] M. Wainwright and M. Jordan. Graphical models, exponential families, and variational inference. Tech-
+nical Report 629, UC Berkeley Dept. of Statistics, September 2003.
+[19] SL Lauritzen and DJ Spiegelhalter. Local computations with probabilities on graphical structures and
+their application to expert systems. Journal of the Royal Statistical Society. Series B (Methodological),
+pages 157–224, 1988.
+[20] W. Wiegerinck and T. Heskes. Fractional belief propagation. In NIPS 15, pages 438–445. 2003.
+[21] T. Hazan and A. Shashua. Convergent message-passing algorithms for inference over general graphs with
+convex free energies. In UAI 24, pages 264–273. July 2008.
+[22] M. S. Arulampalam, S. Maskell, N. Gordon, and T. Clapp. A tutorial on particle ﬁlters for online
+nonlinear/non-Gaussian Bayesian tracking. 50(2):174–188, February 2002.
+[23] J. Coughlan and H. Shen. Dynamic quantization for belief propagation in sparse spaces. Comput. Vis.
+Image Underst., 106(1):47–58, 2007.
+[24] M. Isard, J. MacCormick, and K. Achan. Continuously-adaptive discretization for message-passing algo-
+rithms. In NIPS 21, pages 737–744. 2009.
+[25] S. Chib. Marginal likelihood from the gibbs output. JASA, 90(432):1313–1321, 1995.
+[26] D. Moore, J. Leonard, D. Rus, and S. Teller. Robust distributed network localization with noisy range
+measurements. In 2nd Int’l Conf. on Emb. Networked Sensor Sys. (SenSys’04), pages 50–61, 2004.
+
+9
+
+

@@ -1,0 +1,808 @@
+Value Pursuit Iteration
+
+Amir-massoud Farahmand∗
+Doina Precup †
+School of Computer Science, McGill University, Montreal, Canada
+
+Abstract
+
+Value Pursuit Iteration (VPI) is an approximate value iteration algorithm that ﬁnds
+a close to optimal policy for reinforcement learning problems with large state
+spaces. VPI has two main features: First, it is a nonparametric algorithm that
+ﬁnds a good sparse approximation of the optimal value function given a dictio-
+nary of features. The algorithm is almost insensitive to the number of irrelevant
+features. Second, after each iteration of VPI, the algorithm adds a set of functions
+based on the currently learned value function to the dictionary. This increases the
+representation power of the dictionary in a way that is directly relevant to the goal
+of having a good approximation of the optimal value function. We theoretically
+study VPI and provide a ﬁnite-sample error upper bound for it.
+
+1
+
+Introduction
+
+One often has to use function approximation to represent the near optimal value function of the
+reinforcement learning (RL) and planning problems with large state spaces. Even though the con-
+ventional approach of using a parametric model for the value function has had successes in many
+applications, it has one main weakness: Its success critically depends on whether the chosen func-
+tion approximation method is suitable for the particular task in hand. Manually designing a suitable
+function approximator, however, is difﬁcult unless one has considerable domain knowledge about
+the problem. To address this issue, the problem-dependent choice of function approximator and
+nonparametric approaches to RL/Planning problems have gained considerable attention in the RL
+community, e.g., feature generation methods of Mahadevan and Maggioni [1], Parr et al. [2], and
+nonparametric regularization-based approaches of Farahmand et al. [3, 4], Taylor and Parr [5] .
+One class of approaches that addresses the aforementioned problem is based on the idea of ﬁnding
+a sparse representation of the value function in a large dictionary of features (or atoms). In this
+approach, the designer does not necessarily know a priori whether or not a feature is relevant to the
+representation of the value function. The feature, therefore, is simply added to the dictionary with
+the hope that the algorithm itself ﬁgures out the necessary subset of features. The usual approach to
+tackle irrelevant features is to use sparsity-inducing regularizers such as the l1 -norm of the weights
+in the case of linear function approximators, e.g., Kolter and Ng [6], Johns et al. [7], Ghavamzadeh
+et al. [8]. Another approach is based on greedily adding atoms to the representation of the target
+function. Examples of these approaches in the supervised learning setting are Matching Pursuit and
+Orthogonal Matching Pursuit (OMP) [9, 10]. These greedy algorithms have successfully been used
+in the signal processing and statistics/supervised machine learning communities for years, but their
+application in the RL/Planning problems has just recently attracted some attention. Johns [11] em-
+pirically investigated some greedy algorithms, including OMP, for the task of feature selection using
+dictionary of proto-value functions [1]. A recent paper by Painter-Wakeﬁeld and Parr [12] considers
+two algorithms (OMP-TD and OMP-BRM; OMP-TD is the same as one of the algorithms by [11])
+in the context of policy evaluation and provides some conditions under which OMP-BRM can ﬁnd
+the minimally sparse solution.
+∗Academic.SoloGen.net.
+†This research was funded in part by NSERC and ONR.
+
+1
+
+To address the problem of value function representation in RL when not much a priori knowledge
+is available, we introduce the Value Pursuit Iteration (VPI) algorithm. VPI, which is an Approx-
+imate Value Iteration (AVI) algorithm (e.g., [13]), has two main features. The ﬁrst is that it is a
+nonparametric algorithm that ﬁnds a good sparse approximation of the optimal value function given
+a set of features (dictionary), by using a modiﬁed version of OMP. The second is that after each
+iteration, the VPI algorithm adds a set of functions based on the currently learned value function to
+the dictionary. This potentially increases the representation power of the dictionary in a way that is
+directly relevant to the goal of approximating the optimal value function.
+At the core of VPI is the OMP algorithm equipped with a model selection procedure. Using OMP
+allows VPI to ﬁnd a sparse representation of the value function in large dictionaries, even countably
+inﬁnite ones1 . This property is very desirable for RL/Planning problems for which one usually does
+not know the right representation of the value function, and so one wishes to add as many features
+as possible and to let the algorithm automatically detect the best representation. A model selection
+procedure ensures that OMP is adaptive to the actual difﬁculty of the problem.
+The second main feature of VPI is that it increases the size of the dictionary by adding some basis
+functions computed from previously learned value functions. To give an intuitive understanding of
+a representation in the form of Q = (cid:80)
+how this might help, consider the dictionary B = {g1 , g2 , . . . }, in which each atom gi is a real-
+valued function deﬁned on the state-action space. The goal is to learn the optimal value function by
+i≥1 wi gi .2 Suppose that we are lucky and the optimal value
+Q∗ = (cid:80)
+function Q∗ belongs to the dictionary B , e.g., g1 = Q∗ . This is indeed an ideal atom to have in the
+dictionary since one may have a sparse representation of the optimal value function in the form of
+i≥1 wi gi with w1 = 1 and wi = 0 for i ≥ 2. Algorithms such as OMP can ﬁnd this sparse
+representation quite effectively (details will be speciﬁed later). Of course, we are not usually lucky
+enough to have the optimal value function in our dictionary, but we may still use approximation of
+the optimal value function. In the exact Value Iteration, Qk → Q∗ exponentially fast. This ensures
+that Qk and Qk+1 = T ∗Qk are close enough, so one may use Qk to explain a large part of Qk+1 and
+use the other atoms of the dictionary to “explain” the residual. In an AVI procedure, however, the
+estimated value function sequence (Qk )k≥1 does not necessarily converge to Q∗ , but one may hope
+that it gets close to a region around the optimum. In that case, we may very well use the dictionary
+of {Q1 , . . . , Qk } as the set of candidate atoms to be used in the representation of Qk+1 . We show
+that adding these learned atoms does not hurt and may actually help.
+To summarize, the algorithmic contribution of this paper is to introduce the VPI algorithm that ﬁnds
+a sparse representation of the optimal value function in a huge function space and increases the
+representation capacity of the dictionary problem-dependently. The theoretical contribution of this
+work is to provide a ﬁnite-sample analysis of VPI and to show that the method is sound.
+
+2 Deﬁnitions
+
+We follow the standard notation and deﬁnitions of Markov Decision Processes (MDP) and Rein-
+forcement Learning (RL) (cf. [14]). We also need some deﬁnitions regarding the function spaces
+and norms, which are deﬁned later in this section.
+For a space Ω with σ -algebra σΩ , M(Ω) denotes the set of all probability measures over σΩ . B (Ω)
+denotes the space of bounded measurable functions w.r.t. (with respect to) σΩ and B (Ω, L) denotes
+the subset of B (Ω) with bound 0 < L < ∞.
+A ﬁnite-action discounted MDP is a 5-tuple (X , A, P, R, γ ), where X is a measurable state space,
+A is a ﬁnite set of actions, P : X × A → M(X ) is the transition probability kernel, R : X × A →
+M(R) is the reward kernel, and γ ∈ [0, 1) is a discount factor. Let r(x, a) = E [R(·|x, a)], and
+assume that r is uniformly bounded by Rmax . A measurable mapping π : X → A is called a
+deterministic Markov stationary policy, or just a policy for short. A policy π induces the m-step
+transition probability kernels (P π )m : X → M(X ) and (P π )m : X × A → M(X × A) for m ≥ 1.
+We use V π and Qπ to denote the value and action-value function of a policy π . We also use V ∗
+and Q∗ for the optimal value and optimal action-value functions, with the corresponding optimal
+
+1From the statistical viewpoint and ignoring the computational difﬁculty of working with large dictionaries.
+2The notation will be deﬁned precisely in Section 2.
+
+2
+
+policy π∗ . A policy π is greedy w.r.t. an action-value function Q, denoted π = ˆπ(·; Q), if π(x) =
+argmaxa∈A Q(x, a) holds for all x ∈ X (if there exist multiple maximizers, one of them is chosen in
+an arbitrary deterministic manner). Deﬁne Qmax = Rmax/(1 − γ ). The Bellman optimality operator
+is denoted by T ∗ . We use (P V )(x) to denote the expected value of V after the transition according
+to a probability transition kernel P . Also for a probability measure ρ ∈ M(X ), the symbol (ρP )
+represents the distribution over states when the initial state distribution is ρ and we follow P for
+a single step. A typical choice of P is (P π )m for m ≥ 1 (similarly for ρ ∈ M(X × A) and
+action-value functions).
+
+2.1 Norms and Dictionaries
+X |V (x)|p dρ(x)(cid:3)1/p . The L∞ (X )-norm is deﬁned as
+(cid:44) (cid:2)(cid:82)
+For a probability measure ρ ∈ M(X ), and a measurable function V ∈ B (X ), we deﬁne the Lp (ρ)-
+norm (1 ≤ p < ∞) of V as (cid:107)V (cid:107)p,ρ
+(cid:44) (cid:82)
+(cid:107)V (cid:107)∞ (cid:44) supx∈X |V (x)|. Similarly for ν ∈ M(X × A) and Q ∈ B (X × A), we deﬁne (cid:107)·(cid:107)p,ν as
+X ×A |Q(x, a)|pdν (x, a) and (cid:107)Q(cid:107)∞ (cid:44) sup(x,a)∈X ×A |Q(x, a)|.
+(cid:107)Q(cid:107)p
+(cid:80)n
+p,ν
+Let z1:n denote the Z -valued sequence (z1 , . . . , zn ). For Dn = z1:n , deﬁne the empirical norm of
+= (cid:107)f (cid:107)p
+function f : Z → R as (cid:107)f (cid:107)p
+i=1 |f (zi )|p . Based on this deﬁnition, one
+(cid:44) 1
+p,Dn
+(cid:105)
+E (cid:104)(cid:107)f (cid:107)p,Dn
+p,z1:n
+(with Z = X × A). Note that if Dn = Z1:n is
+(with Z = X ) and (cid:107)Q(cid:107)Dn
+may deﬁne (cid:107)V (cid:107)Dn
+n
+random with Zi ∼ ν , the empirical norm is random as well. For any ﬁxed function f , we have
+= (cid:107)f (cid:107)p,ν . The symbols (cid:107)·(cid:107)ν and (cid:107)·(cid:107)Dn
+refer to an L2 -norm. When we do not want to
+emphasize the underlying measure, we use (cid:107)·(cid:107) to denote an L2 -norm.
+functions f ∈ H that admits an expansion f = (cid:80)
+Consider a Hilbert space H endowed with an inner product norm (cid:107)·(cid:107). We call a family of functions
+B = {g1 , g2 , . . . , } with atoms gi ∈ H a dictionary. The class L1 (B) = L1 (B ; (cid:107)·(cid:107)) consists of those
+(cid:44) inf {(cid:80)
+g∈B |cg | : f = (cid:80)
+g∈B cg g with (cg ) being an absolutely summable
+sequence (these deﬁnitions are quoted from Barron et al. [15]). The norm of a function f in this
+space is deﬁned as (cid:107)f (cid:107)L1 (B;(cid:107)·(cid:107))
+g∈B cg g}. To avoid clutter, when the
+norm is the empirical norm (cid:107)·(cid:107)Dn
+, we may use L1 (B ; Dn ) instead of L1 (B ; (cid:107)·(cid:107)Dn
+), and when the
+norm is (cid:107)·(cid:107)ν , we may use L1 (B ; ν ). We denote a ball with radius r > 0 w.r.t. the norm of L1 (B ; ν )
+by Br (L1 (B ; ν )).
+For a dictionary B , we introduce a ﬁxed exhaustion B1 ⊂ B2 ⊂ . . . ⊂ B , with the number of atoms
+|Bm | being m. If we index our dictionaries as Bk , the symbol Bk,m refers to the m-th element of
+the exhaustion of Bk . For a real number α > 0, the space L1,α (B ; (cid:107)·(cid:107)) is deﬁned as the set of
+all functions f such that for all m = 1, 2, . . . , there exists a function h depending on m such that
+(cid:107)h(cid:107)L1 (Bm ;(cid:107)·(cid:107)) ≤ C and (cid:107)f − h(cid:107) ≤ Cm−α . The smallest constant C such that these inequalities
+hold deﬁnes a norm for L1,α (B ; (cid:107)·(cid:107)). Finally, we deﬁne the truncation operator βL : B (X ) → B (X )
+for some real number L > 0 as follows. For any function f ∈ B (X ), the truncated function of f at
+the threshold level L is the function βL f : B (X ) → R such that for any x ∈ X , βL f (x) is equal
+to f (x) if −L ≤ f (x) ≤ L, is equal to L if f (x) > L, and is equal to −L if f (x) < −L. We
+overload βL to be an operator from B (X × A) to B (X × A) by applying it component-wise, i.e.,
+βLQ(x, ·) (cid:44) [βLQ(x, a1 ), . . . , βLQ(x, aA )](cid:62) .
+
+3 VPI Algorithm
+
+In this section, we ﬁrst describe the behaviour of VPI in the ideal situation when the Bellman op-
+timality operator T ∗ can be applied exactly in order to provide the intuitive understanding of why
+VPI might work. Afterwards, we describe the algorithm that does not have access to the Bellman
+optimality operator and only uses a ﬁnite sample of transitions.
+VPI belongs to the family of AVI algorithms, which start with an initial action-value function Q0
+and at each iteration k = 0, 1, . . . , approximately apply the Bellman optimality operator T ∗ to the
+most recent estimate Qk to get a new estimate Qk+1 ≈ T ∗Qk . The size of the error between Qk+1
+and T ∗Qk is a key factor in determining the performance of an AVI procedure.
+
+3
+
+Suppose that T ∗Qk can be calculated, but it is not possible to represent it exactly. In this case, one
+for all g ∈ B), that is Qk+1 = (cid:80)
+may use an approximant Qk+1 to represent T ∗Qk . In this paper we would like to represent Qk+1
+as a linear function of some atoms in a dictionary B = {g1 , g2 , . . . } (g ∈ H(X × A) and (cid:107)g(cid:107) = 1
+g∈B cg g . Our goal is to ﬁnd a representation that is as sparse as
+possible, i.e., uses only a few atoms in B . From statistical viewpoint, the smallest representation
+among all those that have the same function approximation error is desirable as it leads to smaller
+estimation error. The goal of ﬁnding the sparsest representation, however, is computationally in-
+tractable. Nevertheless, it is possible to ﬁnd a “reasonable” suboptimal sparse approximation using
+algorithms such as OMP, which is the focus of this paper.
+(cid:12)(cid:12)(cid:10) r(i−1) , g (cid:11)(cid:12)(cid:12), i.e., choose an element of the dictionary that has the maxi-
+The OMP algorithm works as follows. Let ˜Q(0) = 0. For each i = 1, 2, . . . , deﬁne the
+residual r(i−1) = T ∗Qk − ˜Q(i−1) . Deﬁne the new atom to be added to the representation as
+g (i) ∈ Argmaxg∈B
+mum correlation with the residual. Here (cid:104) · , · (cid:105) is the inner product for a Hilbert space H(X × A)
+to which T ∗Qk and atoms of the dictionary belong. Let Π(i) be the orthogonal projection onto
+span(g (1) , . . . , g (i) ), i.e., Π(i)T ∗Qk (cid:44) argminQ∈span(g(1) ,...,g(i) ) (cid:107)Q − T ∗Qk (cid:107). We then have
+˜Q(i) = Π(i)T ∗Qk . OMP continues iteratively.
+To quantify the approximation error at the i-th iteration, we use the L1 (B ; (cid:107)·(cid:107))-norm of the target
+an expansion in the form (cid:80)
+function of the OMP algorithm, which is T ∗Qk in our case (with the norm being the one induced by
+the inner product used in the OMP procedure). Recall that this class consists of functions that admit
+g∈B cg g and (cg ) being an absolutely summable sequence. If T ∗Qk
+belongs to the class of L1 (B ; (cid:107)·(cid:107)), it can be shown (e.g., Theorem 2.1 of Barron et al. [15]) that
+after i iterations of OMP, the returned function ˜Q(i) is such that (cid:107) ˜Q(i) − T ∗Qk (cid:107) ≤ (cid:107)T ∗Qk (cid:107)L1 (B;(cid:107)·(cid:107))
+√
+.
+The problem with this result is that it requires T ∗Qk to belong to L1 (B ; (cid:107)·(cid:107)). This depends on how
+i+1
+expressive the dictionary B is. If it is not expressive enough, we still would like OMP to quickly
+converge to the best approximation of T ∗Qk /∈ L1 (B ; (cid:107)·(cid:107)) in L1 (B ; (cid:107)·(cid:107)). Fortunately, such a result
+exists (Theorem 2.3 by Barron et al. [15], quoted in the supplementary material) and we use it in the
+proof of our main result.
+We now turn to the more interesting case when we do not have access to T ∗Qk .
+Instead we
+(k) )}n
+n = {(X (k)
+are only given a set of transitions in the form of D(k)
+, X (cid:48)
+, R(k)
+, A(k)
+i=1 , where
+i
+i
+i
+i
+) are drawn from the sampling distribution ν ∈ M(X × A), X (cid:48)
+i ∼ P (·|Xi , Ai ), and
+(X (k)
+, A(k)
+Ri ∼ R(·|Xi , Ai ). Instead of using T ∗Qk , we use the empirical Bellman operator for the dataset
+i
+i
+D(k)
+n . The operator is deﬁned as follows.
+
+Dn
+Deﬁnition
+Operator).
+1
+Let
+Bellman
+(Empirical
+Optimality
+=
+n )}, deﬁned similarly as above. Deﬁne the ordered multi-
+{(X1 , A1 , R1 , X (cid:48)
+1 ), . . . , (Xn , An , Rn , X (cid:48)
+set Sn = {(X1 , A1 ), . . . , (Xn , An )}. The empirical Bellman optimality operator ˆT ∗ : Sn → Rn is
+i , a(cid:48) ) for 1 ≤ i ≤ n.
+deﬁned as ( ˆT ∗Q)(Xi , Ai ) (cid:44) Ri + γ maxa(cid:48) Q(X (cid:48)
+(cid:105)
+Since E (cid:104) ˆT ∗Qk (X (k)
+) (cid:12)(cid:12) Qk , X (k)
+= T ∗Qk (X (k)
+, A(k)
+, A(k)
+, A(k)
+), we can solve a regression
+i
+i
+i
+i
+i
+i
+problem and ﬁnd an estimate for Qk+1 , which is close T ∗Qk . This regression problem is the core of
+the family of Fitted Q-Iteration (FQI) algorithms, e.g., [13, 4]. In this paper, the regression function
+at each iteration is estimated using a modiﬁed OMP procedure introduced by Barron et al. [15].
+We are now ready to describe the VPI algorithm (Algorithm 1). It gets as input a predeﬁned dictio-
+nary B0 . This can be a dictionary of wavelets, proto-value functions, etc. The size of this dictionary
+can be countably inﬁnite. It also receives an integer m, which speciﬁes how many atoms of B0
+should be used by the algorithm. This deﬁnes the effective dictionary B0,m . This value can be set to
+m = (cid:100)na (cid:101) for some ﬁnite a > 0, so it can actually be quite large. VPI also receives K , the number
+of iterations, and ν , the sampling distribution. For the simplicity of analysis, we assume that the
+sampling distribution is ﬁxed, but in practice one may change this sampling distribution after each
+iteration (e.g., sample new data according to the latest policy). Finally, VPI gets a set of m(cid:48) link
+functions σi : B (X × A, Qmax ) → B (X × A, Qmax ) for some m(cid:48) that is smaller than m/K . We
+describe the role of link functions shortly.
+
+4
+
+, A(k)
+i
+
+, R(k)
+i
+
+, X (cid:48)
+i
+
+(k) )
+
+i.i.d.∼ ν
+
+(cid:111)n
+i=1
+
+Algorithm 1 Value Pursuit Iteration(B0 , m, {σi }m(cid:48)
+i=1 , ν, K )
+Input: Initial dictionary B0 , Number of dictionary atoms used m, Link functions {σi }m(cid:48)
+i=1 , State-
+action distribution ν , Number of iterations K .
+Return: QK
+Q0 ← 0.
+(cid:110)
+0 ← ∅.
+B (cid:48)
+for k = 0, 1, . . . , K − 1 do
+Construct a dataset D(k)
+(X (k)
+n =
+i
+k+1 ← 0
+ˆQ(0)
+// Orthogonal Matching Pursuit loop
+k according to (cid:107)·(cid:107)D(k)
+Normalize elements of B0,m and B (cid:48)
+(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:10) r(i−1) , g (cid:11)
+n
+for i = 1, 2, . . . , c1n do
+r(i−1) ← ˆT ∗Qk − ˆQ(i−1)
+(cid:83) ˆB(cid:48)
+k+1
+g (i) ← Argmaxg∈ ˆBk
+D(k)
+(cid:26)(cid:13)(cid:13)(cid:13)βQmax
+n
+k
+(cid:13)(cid:13)(cid:13)2
+k+1 ← Π(i) ˆT ∗Qk
+ˆQ(i)
+end for
+k+1 − ˆT ∗Qk
+i∗ ← argmini≥1
+ˆQ(i)
+D(k)
+(cid:83) B (cid:48)
+(cid:83){σi (βQmax Qk+1 ; Bk
+n
+Qk+1 ← ˆQ(i∗ )
+k+1
+k )}m(cid:48)
+i=1 {Extending the dictionary}
+k+1 ← B (cid:48)
+B (cid:48)
+k
+end for
+
+(cid:27)
+{Π(i) : Projection onto span(g (1) , . . . , g (i) )}
+
+and call them ˆBk and ˆB (cid:48)
+k .
+
+{Complexity Regularization}
+
++ c2 (Qmax ) i ln(n)
+n
+
+, (X (k)
+i
+
+, A(k)
+i
+
+)
+
+At the k-th iteration of the algorithm, we perform OMP for c1n iterations (c1 > 0), similar to
+what is described above with the difference that instead of using T ∗Qk as the target, we use ˆT ∗Qk
+(cid:80)n
+over empirical samples.3 This means that we use the empirical inner product (cid:104) Q1 , Q2 (cid:105)D(k)
+(cid:44)
+n
+i=1 |Q1 (Xi , Ai ) · Q2 (Xi , Ai )| for (Xi , Ai ) ∈ D(k)
+n and the empirical orthogonal projection.4
+1
+n
+The result would be a sequence ( ˆQ(i)
+k+1 )i≥0 . Next, we perform a model selection procedure to choose
+the best candidate. This can be done in different ways such as using a separate dataset as a validation
+set. Here we use a complexity regularization technique that penalizes more complex estimates (those
+ˆQ(i)
+that have more atoms in their representation). Note that we use the truncated estimate βQmax
+k+1 in
+the model selection procedure. This is required for the theoretical guarantees. The outcome of this
+model selection procedure will determine Qk+1 .
+Finally we use link functions {σi }m(cid:48)
+i=1 to generate m(cid:48) new atoms, which are vector-valued Qmax -
+(cid:83) B (cid:48)
+bounded measurable functions from X × A to R|A| , to be added to the learned dictionary B (cid:48)
+k .
+The link functions extract “interesting” aspects of Qk+1 , potentially by considering the current
+dictionary Bk
+k . VPI is quite ﬂexible in how the new atoms are generated and how large m(cid:48) can
+be. The theory allows m(cid:48) to be in the order of na (a > 0), so one may add many potentially useful
+atoms without much deterioration in the performance. Regarding the choice of the link functions,
+the theory requires that at least Qk+1 itself is being added to the dictionary, but it leaves other
+possibilities open. For example, one might apply nonlinearities (e.g., sigmoid functions) to Qk+1 .
+Or one might add atoms localized in parts of the state-action space with high residual errors – a
+heuristic which has been used previously in basis function construction. This procedure continues
+for K iterations and the outcome will be QK . In the next section, we study the theoretical properties
+of the greedy policy w.r.t. QK , i.e., πK = ˆπ(·; QK ).
+Remark 1 (Comparison of VPI with FQI). Both VPI and FQI are indeed instances of AVI. If we
+compare VPI with the conventional implementation of FQI that uses a ﬁxed set of linear basis
+
+3The value of c1 depends only on Qmax and a. We do not explicitly specify it since the value that is
+determined by the theory shall be quite conservative. One may instead ﬁnd it by the trial and error. Moreover,
+in practice we may stop much earlier than n iterations.
+4When the number of atoms is larger than the number of samples (i > n), one may use the Moore–Penrose
+pseudoinverse to perform the orthogonal projection.
+
+5
+
+functions, we observe that FQI is the special case of VPI in which all atoms in the dictionary are
+used in the estimation. As VPI has a model selection step, its chosen estimator is not worse than
+FQI’s (up to a small extra risk) and is possibly much better if the target is sparse in the dictionary.
+Moreover, extending the dictionary decreases the function approximation error with negligible effect
+on the model selection error. The same arguments apply to many other FQI versions that use a ﬁxed
+data-independent set of basis functions and do not perform model selection.
+
+4 Theoretical Analysis
+
+In this section, we ﬁrst study how the function approximation error propagates in VPI (Section 4.1)
+and then provide a ﬁnite-sample error upper bound as Theorem 3 in Section 4.2. All the proofs are
+in the supplementary material.
+
+4.1 Propagation of Function Approximation Error
+
+In this section, we present tools to upper bound the function approximation error at each iteration.
+Deﬁnition 2 (Concentrability Coefﬁcient of Function Approximation Error Propagation). (I) Let ν
+be a distribution over the state-action pairs, (X, A) ∼ ν , νX be the marginal distribution of X ,
+and πb (·|·) be the conditional probability of A given X . Further, let P be a transition probability
+(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:105)(cid:17) 1
+(cid:16)E (cid:104)
+kernel P : X × A → M(X ) and Px,a = P (·|x, a). Deﬁne the concentrability coefﬁcient of one-
+dPX,A
+2 , where Cν→∞ =
+step transitions w.r.t. ν by Cν→∞ =
+1
+sup(y ,a(cid:48) )∈X ×A
+dνX (y)
+πb (a(cid:48) |y)
+∞ if Px,a is not absolutely continuous w.r.t. νX for some (x, a) ∈ X × A, or if πb (a(cid:48) |y) = 0
+for some (y , a(cid:48) ) ∈ X × A. (II) Furthermore, for an optimal policy π∗ and an integer m ≥ 0,
+)m ∈ M(X × A) denote the future state-action distribution obtained after m-steps of
+let ν (P π∗
+following π∗ . Deﬁne cν (m) (cid:44) (cid:107) d(ν (P π∗
+(cid:107)∞ . If the future state-action distribution ν (P π∗
+)m )
+)m is
+not absolutely continuous w.r.t. ν , we let cν (m) = ∞.
+dν
+The constant Cν→∞ is large if after transition step, the future states can be highly concentrated at
+some states where the probability of taking some action a(cid:48) is small or dνX is small. Hence, the name
+“concentrability of one-step transitions”. The deﬁnition of Cν→∞ is from Chapter 5 of Farahmand
+[16]. The constant cν (m) shows how much we deviate from ν whenever we follow an optimal policy
+π∗ . It is notable that if ν happens to be the stationary distribution of the optimal policy π∗ (e.g., the
+samples are generated by an optimal expert), cν (m) = 1 for all m ≥ 0.
+We now provide the following result that upper bounds the error caused by using Qk (which is the
+newly added atom to the dictionary) to approximate T ∗Qk . The proof is provided in the supplemen-
+tary material.
+i=0 ⊂ B (X × A, Qmax ) be a Qmax -bounded sequence of measurable action-
+ν + γ k (2Qmax )2 (cid:105)
+(cid:104)(cid:80)k−1
+Lemma 1. Let (Qi )k
+ν ≤
+value functions. Deﬁne εi (cid:44) T ∗Qi − Qi+1 (0 ≤ i ≤ k − 1). Then, (cid:107)Qk − T ∗Qk (cid:107)2
+i=0 γ k−1−i cν (k − 1 − i) (cid:107)εi (cid:107)2
+(1+γCν→∞ )2
+.
+1−γ
+If there was no error at earlier iterations (i.e., (cid:107)εi (cid:107)ν = 0 for 0 ≤ i ≤ k−1), the error (cid:107)Qk − T ∗Qk (cid:107)2
+ν
+would be O(γ kQ2
+max ), which is decaying toward zero with a geometrical rate. This is similar to the
+behaviour of the exact VI, i.e., (cid:107)T ∗Qk − Qk (cid:107)∞ ≤ (1 + γ )γ k (cid:107)Q∗ − Q0(cid:107)∞ .
+The following result is Theorem 5.3 of Farahmand [16]. For the sake of completeness, we provide
+the proof in the supplementary material.
+Theorem 2. Let (Qk )k−1
+measurable functions. Then, inf Q(cid:48)∈F |A| (cid:107)Q(cid:48) − T ∗Qk (cid:107)ν ≤ inf Q(cid:48)∈F |A| (cid:13)(cid:13)Q(cid:48) − (T ∗ )(k+1)Q0
+(cid:13)(cid:13)ν +
+k=0 be a sequence of state-action value functions and deﬁne εi (cid:44)
+T ∗Qi − Qi+1 (0 ≤ i ≤ k). Let F |A|
+: X × A → R|A| be a subset of vector-valued
+(cid:80)k−1
+i=0 (γ Cν→∞ )k−i (cid:107)εi(cid:107)ν .
+This result quantiﬁes the behaviour of the function approximation error and relates it to the function
+approximation error of approximating (T ∗ )k+1Q0 (which is a deterministic quantity depending only
+on the MDP itself, the function space F |A| , and Q0 ) and the errors of earlier iterations. This allows
+
+6
+
+us to provide a tighter upper bound for the function approximation error compared to the so-called
+inherent Bellman error supQ∈F |A| inf Q(cid:48)∈F |A| (cid:107)Q(cid:48) − T ∗Q(cid:107)ν introduced by Munos and Szepesv ´ari
+[17], whenever the errors at previous iterations are small.
+
+4.2 Finite Sample Error Bound for VPI
+In this section, we provide an upper bound on the performance loss (cid:107)Q∗ − QπK (cid:107)1,ρ . This perfor-
+mance loss indicates the regret of following the policy πK instead of an optimal policy when the
+initial state-action is distributed according to ρ. We deﬁne the following concentrability coefﬁcients
+similar to Farahmand et al. [18].
+Deﬁnition 3 (Expected Concentrability of
+the Future State-Action Distribution). Given
+ρ, ν ∈ M(X × A), m ≥ 0, and an arbitrary sequence of
+stationary policies
+let ρP π1 P π2 . . . P πm ∈ M(X × A) denote the future state-action distribu-
+(πm )m≥1 ,
+tion obtained after m transitions, when the ﬁrst state-action pair is distributed accord-
+For integers m1 , m2 ≥
+(cid:34)(cid:12)(cid:12)(cid:12)(cid:12) d
+(cid:32)
+(cid:12)(cid:12)(cid:12)(cid:12)2(cid:35)(cid:33) 1
+ing to ρ and then we follow the sequence of policies (πk )m
+k=1 .
+(cid:16)
+(cid:17)
+1, policy π and the sequence of policies π1 , . . . , πk deﬁne the concentrability coefﬁcients
+ρ(P π )m1 (P π∗
+2
+)m2
+cVI1 ,ρ,ν (m1 , m2 ; π) (cid:44)
+and cVI2 ,ρ,ν (m1 ; π1 , . . . , πk ) (cid:44)
+(cid:12)(cid:12)(cid:12)2(cid:21)(cid:19) 1
+(cid:20)(cid:12)(cid:12)(cid:12) d(ρ(P πk )m1 P πk−1 P πk−2 ···P π1 )
+(cid:18)
+E
+(X, A)
+dν
+, where (X, A) ∼ ν . If the future state-action dis-
+2
+E
+(X, A)
+dν
+)m2 (similarly, if ρ(P πk )m1 P πk−1 P πk−2 · · · P π1 ) is not absolutely continu-
+tribution ρ(P π )m1 (P π∗
+ous w.r.t. ν , we let cVI1 ,ρ,ν (m1 , m2 ; π) = ∞ (similarly, cVI2 ,ρ,ν (m1 ; π1 , . . . , πk ) = ∞).
+Assumption A1 We make the following assumptions:
+• For all values of 0 ≤ k ≤ K − 1,
+the dataset used by VPI at each iteration is
+n = {(X (k)
+(k) )}n
+D(k)
+, X (cid:48)
+, A(k)
+, R(k)
+i=1 with independent and identically distributed (i.i.d.)
+i
+i
+i
+i
+(k) ∼ P (·|X (k)
+) ∼ ν ∈ M(X × A) and X (cid:48)
+i ∼
+, A(k)
+samples (X (k)
+, A(k)
+) and R(k)
+i
+i
+i
+i
+i
+R(·, ·|X (k)
+, A(k)
+) for i = 1, 2, . . . , n.
+i
+i
+n and D(k(cid:48) )
+• For 1 ≤ k , k (cid:48) ≤ K − 1 and k (cid:54)= k (cid:48) , the datasets D(k)
+are independent.
+n
+• There exists a constant Qmax ≥ 1 such that for any Q ∈ B (X × A; Qmax ), | ˆT ∗Q(X, A)| ≤
+Qmax almost surely (a.s).
+• For all g ∈ B0 , (cid:107)g(cid:107)∞ ≤ L < ∞.
+• The number of atoms m used from the dictionary B0 is m = (cid:100)na (cid:101) for some ﬁnite a > 0.
+The number of link functions m(cid:48) used at each iteration is at most m/K .
+(cid:83) B (cid:48)
+• At iteration k , each of the link functions {σi }m(cid:48)
+i=1 maps βQmax Qk+1 and the dictionary
+Bk
+k to an element of the space of vector-valued Qmax -bounded measurable functions
+X × A → R|A| . At least one of the mappings returns βQmax Qk+1 .
+
+Most of these assumptions are mild and some of them can be relaxed. The i.i.d. assumption can be
+relaxed using the so called independent block technique [19], but it results in much more complicated
+proofs. We conjecture that the independence of datasets at different iterations might be relaxed as
+well under certain condition on the Bellman operator (cf. Section 4.2 of [17]). The condition on the
+number of atoms m and the number of link functions being polynomial in n are indeed very mild.
+In order to compactly present our result, we deﬁne ak = (1−γ ) γK−k−1
+for 0 ≤ k < K . Note that
+(cid:80)k−1
+1−γK+1
+the behaviour of ak ∝ γK−k−1 , so it gives more weight to later iterations. Also deﬁne C1 (k) (cid:44)
+i=0 γ k−iC 2(k−i)
+. For 0 ≤ s ≤ 1, deﬁne
+ν→∞ (k = 1, 2, . . . ) and C2 (cid:44) (1+γCν→∞ )2
+1−γ
+(cid:34) (cid:88)
+K )(cid:1) (cid:35)2
+K−1(cid:88)
+γm (cid:0)cVI1 ,ρ,ν (m, K − k ; π (cid:48)
+CVI,ρ,ν (K ; s) =
+1 − γ
+k+1 , . . . , π (cid:48)
+K ) + cVI2 ,ρ,ν (m + 1; π (cid:48)
+)2 sup
+π (cid:48)
+1 ,...,π (cid:48)
+2
+m≥0
+k=0
+K
+where in the last deﬁnition the supremum is taken over all policies. The following theorem is the
+main theoretical result of this paper. Its proof is provided in the supplementary material.
+
+a2(1−s)
+k
+
+(
+
+,
+
+7
+
+b2
+0
+
+b2
+k
+
+c3 min
+
+,
+
++ 3
+
++
+
+k−1(cid:88)
+i=0
+
+(cid:107)Q(cid:48) − T ∗Q0 (cid:107)2
+ν ,
+
+Theorem 3. Consider the sequence (Qk )K
+k=0 generated by VPI (Algorithm 1). Let Assumptions A1
+(cid:115)
+log (cid:0) nK
+(cid:1)
+hold. For any ﬁxed 0 < δ < 1, recursively deﬁne the sequence (bi )K
+i=0 as follows:
+(cid:115)
+(cid:44) c1Q3
+log (cid:0) nK
+(cid:1)
+δ
+max
+n
+(cid:40)
+(cid:44) c2Q3
+δ
+max
+n
+
+inf
+Q(cid:48)∈BQmax (L1 (B0,m ;ν ))
+(cid:13)(cid:13)2
+(cid:13)(cid:13)Q(cid:48) − (T ∗ )k+1Q0
+γ k−i b2
+(cid:32)k−1(cid:88)
+(cid:33) (cid:41)
+ν + C1 (k)
+i ,
+inf
+Q(cid:48)∈BQmax (L1 (B0,m ;ν ))
+γ k−1−i cν (k − 1 − i) b2
+(k ≥ 1)
+i + γ k (2Qmax )2
+C2
+,
+i=0
+for some c1 , c2 , c3 > 0 that are only functions of Qmax and L. Then, for any k = 0, 1, . . . , K − 1,
+discounted sum of errors as E (s) (cid:44) (cid:80)K−1
+it holds that (cid:107)Qk+1 − T ∗Qk (cid:107)2
+ν ≤ b2
+k , with probability at least 1 − kδ
+K . Furthermore, deﬁne the
+k bk (for s ∈ [0, 1]). Choose ρ ∈ M(X × A). The
+(cid:20)
+(cid:21)
+k=0 a2s
+ρ-weighted performance loss of πK is upper bounded as
+VI,ρ,ν (K ; s)E 1/2 (s) + 2γK Qmax
+(cid:107)Q∗ − QπK (cid:107)1,ρ ≤
+2γ
+C 1/2
+(1 − γ )2
+inf
+s∈[0,1]
+with probability at least 1 − δ .
+The value of bk is a deterministic upper bound on the error (cid:107)Qk+1 − T ∗Qk (cid:107)ν of each iteration of
+(cid:113) log(nK/δ)
+VPI. We would like bk to be close to zero, because the second part of the theorem implies that
+(cid:107)Q∗ − QπK (cid:107)1,ρ would be small too. If we study b2
+k , we observe two main terms: The ﬁrst term,
+which behaves as
+, is the estimation error. The second term describes the function
+approximation error. For k ≥ 1, it consists of two terms from which the minimum is selected.
+n
+The ﬁrst term inside min{·, ·} describes the behaviour of the function approximation error when
+we only use the predeﬁned dictionary B0,m to approximate T ∗Qk (see Theorem 2). The second
+term describes the behaviour of the function approximation error when we only consider Qk as
+the approximant of T ∗Qk (see Lemma 1). The error caused by this approximation depends on
+the error made in earlier iterations. The current analysis only considers the atom Qk from the
+learned dictionary, but VPI may actually use other atoms to represent T ∗Qk . This might lead to
+much smaller function approximation errors. Hence, our analysis shows that in terms of function
+approximation error, our method is sound and superior to not increasing the size of the dictionary.
+However, revealing the full power of VPI remains as future work. Just as an example, if B0 is
+complete in L2 (ν ), by letting n, m → ∞ both the estimation error and function approximation error
+goes to zero and the method is consistent and converges to the optimal value function.
+
+5 Conclusion
+
+This work introduced VPI, an approximate value iteration algorithm that aims to ﬁnd a close to
+optimal policy using a dictionary of atoms (or features). The VPI algorithm uses a modiﬁed Orthog-
+onal Matching Pursuit that is equipped with a model selection procedure. This allows VPI to ﬁnd a
+sparse representation of the value function in large, and potentially overcomplete, dictionaries. We
+theoretically analyzed VPI and provided a ﬁnite-sample error upper bound for it. The error bound
+shows the effect of the number of samples as well as the function approximation properties of the
+predeﬁned dictionary, and the effect of learned atoms.
+This paper is a step forward to better understanding how overcomplete dictionaries and sparsity can
+effectively be used in the RL/Planning context. A more complete theory describing the effect of
+adding atoms to the dictionary remains to be established. We are also planning to study VPI’s em-
+pirical performance, and comparing with other feature construction methods. We note that our main
+focus was on the statistical properties of the algorithm, not on computational efﬁciency; optimizing
+computation speed will be an interesting topic for future investigation.
+
+8
+
+References
+[1] Sridhar Mahadevan and Mauro Maggioni. Proto-value functions: A Laplacian framework for learning
+representation and control in markov decision processes. Journal of Machine Learning Research, 8:
+2169–2231, 2007. 1
+[2] Ronald Parr, Christopher Painter-Wakeﬁeld, Lihong Li, and Michael Littman. Analyzing feature gener-
+ation for value-function approximation. In ICML ’07: Proceedings of the 24th international conference
+on Machine learning, pages 737 – 744, New York, NY, USA, 2007. ACM. 1
+[3] Amir-massoud Farahmand, Mohammad Ghavamzadeh, Csaba Szepesv ´ari, and Shie Mannor. Regularized
+policy iteration. In D. Koller, D. Schuurmans, Y. Bengio, and L. Bottou, editors, Advances in Neural
+Information Processing Systems (NIPS - 21), pages 441–448. MIT Press, 2009. 1
+[4] Amir-massoud Farahmand, Mohammad Ghavamzadeh, Csaba Szepesv ´ari, and Shie Mannor. Regularized
+In Proceedings of
+ﬁtted Q-iteration for planning in continuous-space Markovian Decision Problems.
+American Control Conference (ACC), pages 725–730, June 2009. 1, 4
+[5] Gavin Taylor and Ronald Parr. Kernelized value function approximation for reinforcement learning. In
+ICML ’09: Proceedings of the 26th Annual International Conference on Machine Learning, pages 1017–
+1024, New York, NY, USA, 2009. ACM. 1
+[6] J. Zico Kolter and Andrew Y. Ng. Regularization and feature selection in least-squares temporal difference
+learning. In ICML ’09: Proceedings of the 26th Annual International Conference on Machine Learning,
+pages 521–528. ACM, 2009. 1
+[7] Jeff Johns, Christopher Painter-Wakeﬁeld, and Ronald Parr. Linear complementarity for regularized pol-
+icy evaluation and improvement.
+In J. Lafferty, C. K. I. Williams, J. Shawe-Taylor, R.S. Zemel, and
+A. Culotta, editors, Advances in Neural Information Processing Systems (NIPS - 23), pages 1009–1017.
+2010. 1
+[8] Mohammad Ghavamzadeh, Alessandro Lazaric, R ´emi Munos, and Matthew Hoffman. Finite-sample
+analysis of lasso-TD. In Lise Getoor and Tobias Scheffer, editors, Proceedings of the 28th International
+Conference on Machine Learning (ICML-11), ICML ’11, pages 1177–1184, New York, NY, USA, June
+2011. ACM. ISBN 978-1-4503-0619-5. 1
+[9] Y. C. Pati, R. Rezaiifar, and P. S. Krishnaprasad. Orthogonal matching pursuit: Recursive function ap-
+proximation with applications to wavelet decomposition. In Proceedings of the 27th Annual Asilomar
+Conference on Signals, Systems, and Computers, pages 40–44, 1993. 1
+[10] Geoffrey M. Davis, St ´ephane Mallat, and Marco Avellaneda. Adaptive greedy approximations. Journal
+of Constructive Approximation, 13:57–98, 1997. 1
+[11] Jeff Johns. Basis Construction and Utilization for Markov Decision Processes using Graphs. PhD thesis,
+University of Massachusetts Amherst, 2010. 1
+[12] Christopher Painter-Wakeﬁeld and Ronald Parr. Greedy algorithms for sparse reinforcement learning. In
+Proceedings of the 29th International Conference on Machine Learning (ICML) (Accepted), 2012. 1
+[13] Damien Ernst, Pierre Geurts, and Louis Wehenkel. Tree-based batch mode reinforcement learning. Jour-
+nal of Machine Learning Research, 6:503–556, 2005. 2, 4
+[14] Csaba Szepesv ´ari. Algorithms for Reinforcement Learning. Morgan Claypool Publishers, 2010. 2
+[15] Andrew R. Barron, Albert Cohen, Wolfgang Dahmen, and Ronald A. Devore. Approximation and learning
+by greedy algorithms. The Annals of Statistics, 36(1):64–94, 2008. 3, 4
+[16] Amir-massoud Farahmand. Regularization in Reinforcement Learning. PhD thesis, University of Alberta,
+2011. 6
+[17] R ´emi Munos and Csaba Szepesv ´ari. Finite-time bounds for ﬁtted value iteration. Journal of Machine
+Learning Research, 9:815–857, 2008. 7
+[18] Amir-massoud Farahmand, R ´emi Munos, and Csaba Szepesv ´ari. Error propagation for approximate pol-
+icy and value iteration. In J. Lafferty, C. K. I. Williams, J. Shawe-Taylor, R.S. Zemel, and A. Culotta,
+editors, Advances in Neural Information Processing Systems (NIPS - 23), pages 568–576. 2010. 7
+[19] Bin Yu. Rates of convergence for empirical processes of stationary mixing sequences. The Annals of
+Probability, 22(1):94–116, January 1994. 7
+
+9
+
+

@@ -1,0 +1,524 @@
+MAUL: Machine Agent User Learning∗
+
+Robert Holley and Daniel Rosenfeld
+CS229 Pro ject Report
+
+12/10/2010
+
+Abstract
+
+We describe implementation of a classiﬁer for User-Agent strings using Support Vector Machines.
+The best kernel is found to be the linear kernel, even when more complicated string based kernels, such
+as the edit distance kernel and the subsequence kernel, are employed. A robust tokenization scheme is
+employed which dramatically speeds up the calculation for the edit string and subsequence kernels by
+shortening the eﬀective string length.
+
+1 Introduction
+
+A User-Agent string is an HTTP header sent along
+with a request for a web page, often but not always by
+a web browser. [5] The intent is to inform the server
+of the capabilities of the software being used by the
+client. The User-Agent is one of the most important
+signals to diﬀerentiate a desktop browser from a mo-
+bile device or an automatic crawl. In addition gath-
+ering statistics on them provides insights on changes
+in browser, operating system and device usage. They
+are also frequently misused, in e.g. cloaking a web site
+to make it look diﬀerent to a search engine crawl.
+User-Agent strings can contain loosely-structured
+tokens on engine, browser, version, build date, etc.
+but their format was never strictly standardized.
+[5] As the number of web-access devices increases,
+especially with new-generation mobile devices and
+browsers, the numbers of diﬀerent User-Agent strings
+is rapidly growing and diversifying. Extensions and
+plugins can often mutate User-Agent strings in un-
+predictable ways (insert, splitting, duplicating, and
+re-ordering tokens). Firefox 4 and Internet Explorer
+9 will soon ship with completely reformatted strings.
+Some mobile operators have begun introducing cus-
+tom HTTP headers to extend the traditional role
+of the User-Agent. [2] Web spiders and crawlers are
+also an important and unpredictable contributing fac-
+tor. An overview of the development and mutation
+of User-Agent strings is given in, [15] while [8] is a
+public list of over 50000 currently unique strings.
+For over a decade, those interested in tracking the
+proliferation of the web have collected User-Agent
+∗ Some unscrambling necessary.
+
+strings and built classiﬁers for them. One of the ﬁrst
+such entities was Microsoft, who included a recogni-
+tion engine (browscap.dll) and a pattern ﬁle (brows-
+cap.ini) with its early web servers. [7] The Browser
+Capabilities Pro ject (BCP) has kept these ﬁles up
+to date for the web development community, despite
+Microsoft’s abandonment for more sophisticated (and
+proprietary) methods. [7] However, the maintenance
+of the pro ject requires human parsing of new User-
+Agent strings every week and subsequent updating
+of the recognition engine and pattern ﬁle (BCP re-
+ports that they receive several dozen new User-Agent
+strings per week). Gary Keith, the proprietor of BCP,
+has an automatic script run every Sunday morning,
+the output of which he parses in the afternoon and
+subsequently updates his ﬁle of highly structured
+regular expression searches. A more recent eﬀort,
+Browserscope (which started as UAProﬁler), took a
+similar approach, using a regular expression based
+parsing engine to identify speciﬁc browsers (browsers
+only). [12] The parsing engine required regular up-
+dates to remain up to date with new User-Agent
+strings.
+In 2009, the author of UAProﬁler (Steve
+Souders) reported ﬁnding 20 new User-Agent strings
+per day, which he examined every day at 7 am over
+morning coﬀee. [11] Other eﬀorts such as those by
+user-agent-string.info and useragentstring.com, also
+use brittle parsing rules and curated data just like
+Browserscope and BCP. [1, 10] Other eﬀorts to cate-
+gorize User-Agent strings include entire communities
+such as agentarius.net, which has created a structured
+database of over 200,000 User-Agent strings.
+Our machine learning approach to User-Agent
+
+1
+
+string parsing could provide partially automated
+parsing even on new User-Agent strings, absolving
+the need for a human to keep User-Agent parsers up
+to date. Although we are quite sure Gary and Steve
+will continue updating their parsers each Sunday and
+over morning coﬀee, perhaps some day in the future
+this will not be necessary.
+
+2 Computational Approach
+
+2.1 Data
+
+We have assembled an annotated dataset consist-
+ing of 53,829 User-Agent strings. The strings were
+acquired from a variety of sources (user-agents.org:
+2463 strings, ua-tracker.com: 50,482 strings, user-
+agent-string.info: 1460 strings; 53,829 total exclud-
+ing duplicates.). [8, 10, 13] The annotation consists
+of agent type (Browser, Bot), agent family (Fire-
+fox, googlebot, etc.), family version, OS (Windows,
+Linux, etc.), and OS version. The annotation was
+performed by using two common parsing engines
+(UASparser [10] and uaParser (formerly Browser-
+scope, formerly UA Proﬁler) [3] )) and merging the
+result. Since UASparser returns the most information
+(a Python dictionary with User-Agent Type, Family,
+and OS) it is used as the primary source of informa-
+tion whereas uaParser is used to generate version in-
+formation for Browsers. uaParser is primarily geared
+toward parsing Browsers and therefore is not useful
+for Bots and the other types of entities on the web.
+This approach was taken due to the lack of avail-
+ability of annotated sources. Some of the annotated
+User-Agent strings were curated by hand due to the
+failure of the parsers. The data were parsed and an-
+notated using a series of python scripts and python
+versions of the afore-mentioned parsers.
+
+2.2 Data Processing
+
+The data generated by the above methods were ad-
+ditionally processed to reduce and standardize the
+number of classes. Speciﬁcally, the OS information
+was parsed to collapse all versions of Windows, Linux
+and Mac OS into only three OS’s and move all other
+OS information into the OS version ﬁeld. All special
+versions/modes/builds of speciﬁc Browsers were col-
+lapsed into their respective families. All Validators
+and Bots were given the Type ﬁeld “Robot” since
+Validators are also non-human web crawler applica-
+tions. The dataset is stored in both a ﬂatﬁle for-
+mat which allows for facile reading and editing by a
+human and a SQLlite database for use by classiﬁer
+
+codes. The User-Agent strings were tokenized in or-
+der to build feature vectors and also speed up the
+implementation of the non-vector based string Ker-
+nels we used to classify the strings. Tokenization is
+an atomistic deconstruction of each User-Agent string
+at arbitrarily chosen break characters (See Figure 1).
+The tokenization scheme used in our classiﬁers was
+to break apart the string at any instance of \/ [].,;.
+Other break characters were also attempted, such as
+‘@’ and ‘+’, however little improvement resulted.
+The tokens were further coalesced to increase the
+robustness of the classiﬁer.
+Instead of having a
+unique token for every number, all numbers of the
+same length were represented by a single token. Fur-
+ther coalescing was performed so that instances of
+‘http’ and ‘+http’ were represented by a single to-
+ken.
+
+Figure 1: Example of the tokenization process. No-
+tice that the string is de-constructed at any instance
+of one of the following characters: \/[].,; .
+
+2.3 Learning
+Generally, given a new User-Agent string, our goal is
+to guess whether the string is from a bot, a browser
+or a mobile browser. If the string is from a browser,
+we will also want to guess the browser type (fam-
+ily) and OS type. Our goal is to build several clas-
+siﬁers using diﬀerent techniques in order to ﬁnd the
+most robust for classifying User-Agent strings. For
+performing SVM training and prediction we use the
+LIBSVM-String library library (see implementation
+section below). [4] [14]
+The kernels we chose to test are the linear, radial
+basis function (Gaussian), edit string (tokenized),
+and subsequence (tokenized). For the linear and RBF
+kernels, the feature vectors were the number of in-
+stances of each token in a user agent string. The edit
+string kernel is deﬁned as
+K (x, z ) = exp [−γ LD(x, z )]
+(1)
+where LD is the Levenshtein edit distance between
+the strings x and z . As input parameters, the edit
+distance kernel takes the decay factor γ . The sub-
+sequence kernel is calculated in a less straightfor-
+ward manner. This kernel seeks to compare all
+non-contiguous sub-strings of length p between two
+strings. [9] Given that the string is expressed in an
+alphabet of size |A|, the feature vector φ(x) ∈ R|A|p .
+Each element in the feature vector corresponds to a
+
+2
+
+(2)
+
+λlength(i)
+
+possible sub-string, u, of length p in alphabet |A|.
+φu (x) = (cid:88)
+The entry for each element is
+i∈instances(u,x)
+where the notation instances(u, x) means all
+in-
+stances of the sub-string u in x. The inner product
+between two vectors is then simply the normal in-
+ner product between two feature feature vectors φ(x),
+φ(z ). Any sub-string which is not present in a string
+has a 0 entry in the u position of the feature vector,
+indicating that the inner product corresponds to a
+sum over all shared length k sub-strings. As inputs
+the subsequence kernel takes in a desired sub-string
+length p and a decay factor λ.
+All of our classiﬁers are of the multi-class vari-
+ety. Our multi-class classiﬁers are of the one-vs.-one,
+max-wins variety. This means that for a problem
+of k classes, we form k(k−1)
+one-vs.-one classiﬁers.
+2
+For prediction on an input string, the input string is
+passed through all classiﬁers, and the class that was
+predicted most frequently is returned as the predic-
+tion.
+
+3
+
+Implementation
+
+In our eﬀorts, we developed a versatile software
+stack for classifying User-Agent strings. The code is
+open-source and available at https://github.com/
+bholley/maul.
+In this section, we brieﬂy describe
+the key components.
+
+3.1 libsvm-string
+At the heart of our implementation is LIBSVM-
+string, a superset of libsvm that includes the ability
+to classify string data. [14] When invoked with the
+proper parameters, LIBSVM-string accepts arrays of
+characters (rather than vectors) as input data, and
+operates on them with a string kernel.
+LIBSVM-string comes standard with an imple-
+mentation of the edit distance kernel. For compar-
+ison, we also implemented a recursive subsequence
+kernel, basing our work on example code from [6].
+Unfortunately, the subsequence kernel turned out to
+be signiﬁcantly slower than the edit kernel, with time
+spent in the kernel function dominating training and
+testing time. During proﬁling, we discovered that half
+of the total computational time was spent inside the
+pow() function computing various powers of λ (the
+decay parameter). Since this parameter is constant
+for a given SVM, we restructured the code to make
+the subsequence kernel stateful. On the ﬁrst call, the
+
+3
+
+kernel precomputes all necessary powers of lambda,
+so that subsequent calls can retrieve the appropriate
+values from a look-up table.
+This doubled the performance of our SVM, but
+training with a small fraction of our training data
+still took over an hour. We determined that the per-
+formance of the subsequence kernel was cubic in its
+input string. Thus, the most eﬀective way to speed
+up the algorithm would be to reduce the size of the
+input. To do this, we introduced a tokenizer, which
+mapped ASCII strings to sequences of tokens (repre-
+sented as 4-byte unsigned integers). This had the ef-
+fect of dramatically increasing the alphabet size (from
+28 to 232 ), while dramatically decreasing the average
+string length. We made the necessary generalizations
+in the data structures and control logic, and templa-
+tized the kernel function (replacing char* with T*),
+allowing us to use the exact same code for both data
+types.
+One ma jor problem with libsvm-string was that
+it didn’t include a good memory ownership model for
+string data. In particular, it would assume that the
+data pointed to by a char* remained immutable be-
+tween calls into the library, and would not make any
+internal copies of the training data. This assumption
+was not valid for our use cases, leading to crashes. We
+thus introduced a memory management system where
+we make copies of input data and track whether struc-
+tures were allocated within LIBSVM or outside of it,
+allowing LIBSVM to clean up its own memory but
+avoid clobbering the memory of its caller.
+
+3.2 Python Framework
+
+Since we were operating primarily on string data,
+we decided that it would be unnecessarily painful to
+write all of our code in C or C++. We settled on
+Python as a harness language, and wrote a ﬂexible
+and robust framework on top of LIBSVM-string using
+the CTypes module of Python. This turned out to be
+less straightforward than we had originally thought,
+and we eventually had to make a few small changes
+to LIBSVM-string to work around CTypes bugs on
+certain operating systems.
+In the end, it turned out to be worth it. Using
+our MAUL framework, any cross-validation proce-
+dure with any set of parameters can be implemented
+with only a few lines of code (see MaulHarness.py
+and MaulBatch.py). The framework includes au-
+tomatic model saving, data selection, and built-in
+validation. The data was managed with an SQLite
+database, so that training and testing data could be
+selected quickly and eﬃciently from our highly het-
+erogeneous data sources. Finally, it allows string and
+
+vector SVMs to be instantiated and used with the
+same code. As a result, the ﬁnished framework made
+it extremely easy to compile our ﬁnal results. We
+wrote a small python program to repeatedly call the
+cross-validation routine with diﬀerent sets of param-
+eters, and let it run overnight.
+
+4 Results and Discussion
+
+Classiﬁers using the afore-mentioned kernels were
+built to determine whether a User-Agent string is
+a Browser/Robot/Mobile Browser (B/MB/R), which
+family (IE, Chrome, Firefox, etc.) a Brower belongs
+to (Fam.), and which OS a Browser type User-Agent
+string reports (OS). The below table summarizes the
+accuracy results for the given classiﬁers. These classi-
+ﬁers were run using the parameters (C = 1.0, γ = 0.1,
+p = 5, λ = 0.8)
+Kernel\Accuracy(%) B/MB/R Fam.
+Linear
+99.68
+99.81
+98.69
+99.51
+RBF
+98.61
+99.60
+Edit String
+Subsequence
+99.30
+99.28
+
+OS
+99.90
+99.66
+99.68
+99.67
+
+The above table demonstrates that the linear clas-
+siﬁer, despite its simplicity, performs better than all
+other kernels. This is surprising given the more com-
+plicated feature space implied by some of the other
+kernels. For example, both edit string and subse-
+quence kernels include information regarding the or-
+dering and position of tokens within a string. Our
+results suggest that this information is of little use
+in classifying User-Agent strings. Possible reasons
+include the shuﬄing of tokens in User-Agent strings
+due to browser plugins, browser build diﬀerences, or
+other mechanisms. In Robot vs. Other classiﬁcation,
+the Robot strings are typically short and in a more
+standard format, suggesting perhaps ordering infor-
+mation is not necessary for good classiﬁers.
+The data was further inspected post-hoc to de-
+termine whether our SVM based classiﬁer was supe-
+rior to regular expression based parsers. Some types
+of strings are expected to be diﬃcult to classify for
+standard parsers, speciﬁcally: robots never seen be-
+fore, robots disguised as browsers, and browsers that
+are partially disguised as robots. We have found an
+instance of each of these cases, where when the be-
+low strings are excluded from the data they are still
+classiﬁed properly, yet several online tools fail at clas-
+siﬁcation. The examples we found were:
+The robot with the User-Agent string, Mozilla/5.0
+(compatible; Butterﬂy/1.0;
++http://labs.topsy.com/butterﬂy/) Gecko
+
+/2009032608 Firefox/3.0.8, is a bot disguised as a
+browser, and was misclassiﬁed by uaProﬁler, user-
+agentstring.com, and user-agent-string.info.
+The
+robot with the User-Agent String, ArabyBot (com-
+patible; Mozilla/5.0; GoogleBot; FAST Crawler 6.4;
+http://www.araby.com;), is a bot that was not seen
+before, and went unclassiﬁed by uaProﬁler, user-
+agent-string.info, useragentstring.com and Agentar-
+ius. The browser with the User-Agent string, Google-
+bot/2.1
+(+http://www.googlebot.com/bot.html;
+MSIE 7.0; Windows NT 5.1; GoogleT5; .NET CLR
+.NET CLR 3.0.4506.2152;
+2.0.50727;
+.NET CLR
+3.5.30729;
+.NET CLR 1.1.4322),
+is a browser dis-
+guised as a bot, and was misclassiﬁed by user-
+agent-string.info and BCP (the more browser centric
+parsers uaProﬁler and useragentstring.com did get
+this one right).
+For the type classiﬁer (B/MB/R) some eﬀort was
+expended in cross-validating the input kernel pa-
+rameters. However, little if any improvement was
+achieved. Changing the parameters γ , λ, and p did
+not result in any improvement in the performance of
+the edit and subsequence kernels relative to the linear
+kernel. Changing the parameter C had some eﬀect on
+the performance of the classiﬁers, although C = 1.0
+was close to optimal and only improvement at the
+hundredth of a percent level was achieved for the lin-
+ear classiﬁer with C = 3.0. This lack of improvement
+could be due to the “ease” in classifying a User-Agent
+string, and testiﬁes to the power of the SVM based
+classiﬁer with respect to this data class.
+
+5 Extensions
+
+Our classiﬁcation eﬀorts were highly successful, but
+there is still much to be done. The Mozilla Corpo-
+ration has expressed interest in using MAUL in its
+Metrics & Analytics group, so we hope that work on
+this topic will continue. User-Agent classiﬁcation is
+a rich and nuanced problem, and there are a num-
+ber of interesting extensions that we did not have the
+resources to explore. We list a few of them here:
+
+5.1 Improved Cross-Validation and
+Tokenization
+
+We did some cursory testing to select our set of to-
+ken delimiters, but it was far from a rigorous process.
+It would be interesting to use formal cross-validation
+and feature-selection techniques to select the optimal
+separators.
+Also, our attempt to cross-validate the input ker-
+nel parameters could be improved by using k-fold
+
+4
+
+cross-validation (instead of a held out test set).
+
+5.3 Larger Datasets
+
+5.2 Improved Token Coalescence
+The SVM treats all tokens as equally distinct, regard-
+less of the true similarity between any two tokens. We
+implemented some manual coalescing of tokens. For
+example, we replaced any integer with its number of
+digits (ie, 14 and 36 are treated as the same number).
+Nonetheless, there are many other approaches worth
+exploring:
+• Other common patterns (for example, email ad-
+dresses)
+• Coalescing the most infrequent tokens into a
+single ’Other’ token
+• Using one of the string kernels to identify the
+nearest neighbor to an infrequent token (this
+would allow for User-Agent strings with new
+tokens to be classiﬁed, despite having tokens in
+the classiﬁer feature set)
+
+Our training set was large, but not exhaustive. There
+are many other sources of User-Agent data on the
+web (including sites like Agentarius.net, as mentioned
+above), and we believe that the size of our dataset
+could increase by an order of magnitude with reason-
+able eﬀort.
+
+6 Summary of Results
+
+A new class of text data has been successfully clas-
+siﬁed using SVM techniques and the results of using
+several kernels have been compared. Little improve-
+ment is found over using the linear kernel. A tok-
+enization scheme is described that allows for large
+speed improvements in using string based kernels.
+An easy to use Python based framework was devel-
+oped that allows for rapid training and testing using
+a modiﬁed LIBSVM-String library.
+
+References
+
+[1] http://www.useragentstring.com/. Web, 2005-2009.
+
+[2] Header examples (http://www.betavine.net/bvportal/resources/vodafone/mics/examples). Web, 2010.
+
+[3] Browserscope. Uaparser. Source Repository: https://github.com/dinomite/uaParser, October 2010.
+
+[4] Chih-Chung Chang and Chih-Jen Lin. LIBSVM: a library for support vector machines, 2001. Software
+available at http://www.csie.ntu.edu.tw/~cjlin/libsvm.
+[5] Fielding et al. Hypertext transfer protocol – http/1.1. RFC 2616, Network Working Group, 1999.
+(Section 14.43).
+
+[6] Ralf Herbrich. Learning Kernel Classiﬁers. MIT Press, 2002.
+
+[7] Gary Keith. Browser capabilities pro ject. http://browsers.garykeith.com/, 1998-2010.
+
+[8] Scott J. LeCompte. http://www.ua-tracker.com. Web, 2010.
+
+[9] Huma Lodhi, Craig Saunders, John Shaw-Taylor, Nello Cristianini, and Chris Watkins. Text classiﬁca-
+tion using string kernels. Journal of Machine Learning Research, 2:419–444, 2002.
+
+[10] Jaroslav Mallat. http://www.user-agent-string.info. Web, 2010.
+
+[11] Steve Souders. User agents in the morning. http://www.stevesouders.com/blog/2009/01/18/user-
+agents-in-the-morning/, January 2009.
+
+[12] Steve Souders. Ua proﬁler. http://www.stevesouders.com/ua/, 2010.
+
+[13] Andreas Staeding. http://www.user-agents.org. Web, 2010.
+
+[14] Guo-Xun Yuan. LIBSVM-string: an extension to libsvm for classifying string data, 2010. Software
+available at http://www.csie.ntu.edu.tw/~cjlin/libsvmtools/#libsvm_for_string_data.
+[15] Nicholas C. Zakas. History of the user-agent string (http://www.nczonline.net/blog/2010/01/12/history-
+of-the-user-agent-string/). Web, January 2010.
+
+5
+
+

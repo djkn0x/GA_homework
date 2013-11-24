@@ -1,0 +1,688 @@
+1
+
+Parallelizing Machine Learning Algorithms
+
+Juan Batiz-Benet
+
+Quinn Slack
+
+Matt Sparks
+
+Ali Yahya
+
+{jbenet , sqs , msparks , alive} @ cs . stanford . edu
+
+Abstract—Implementing machine learning algorithms in-
+volves of performing computationally intensive operations
+on large data sets. As these data sets grow in size and algo-
+rithms grow in complexity, it becomes necessary to spread
+the work among multiple computers and multiple cores.
+Qjam is a framework for the rapid prototyping of parallel
+machine learning algorithms on clusters.
+
+I. Introduction
+
+Many machine learning algorithms are easy to parallelize
+in theory. However, the ﬁxed cost of creating a distributed
+system that organizes and manages the work is an obstacle
+to parallelizing existing algorithms and prototyping new
+ones. We present Qjam, a Python library that transpar-
+ently parallelizes machine learning algorithms that adhere
+to a constrained MapReduce model of computation.
+
+II. Previous Work
+
+Signiﬁcant research has been done in the area of dis-
+tributed data processing.
+Perhaps the most notable
+and relevant contribution is the MapReduce programming
+model [1], which applies the map and reduce functions
+from functional programming to large datasets spread
+over a cluster of machines. Since their introduction, the
+MapReduce concepts have been implemented in several
+pro jects for highly parallel computing, such as Apache
+Hadoop [2].
+Chu et al. [3] show how ten popular machine learn-
+ing algorithms can be written in a “summation form” in
+which parallelization is straightforward. The authors im-
+plemented these algorithms on a MapReduce-like frame-
+work and ran them on multicore machines. They yielded a
+near-linear speedup as the number of cores was increased.
+Whereas Chu et al. experimented on single multicore
+machines, our pro ject extends their ideas to a cluster of
+networked computers. Rather than use a framework like
+Hadoop [2], which is intended for large batch processing
+jobs, we have designed and implemented a lightweight
+framework for low-latency tasks that requires minimal
+server conﬁguration.
+
+III. Choosing a Language
+
+Our two criteria for language choice were ease of devel-
+opment and good support for linear algebra operations.
+C++ is known to provide excellent performance, but it
+is not conducive to rapid prototyping. MATLAB’s licens-
+ing costs make it infeasible for use on large clusters. We
+evaluated Python and R as possible options.
+The following sections compare Python and R and ex-
+plain why we chose Python.
+
+A. Code Style
+
+R is stylistically very similar to MATLAB. Matrix and
+list operations are ﬁrst-class operations, and it provides
+built-in equivalents to most of MATLAB’s probability and
+statistics functions. Also, the R interpreter makes plotting
+and visualizing data structures just as easy as in MATLAB.
+
+While Python’s syntax is less suited for matrix opera-
+tions, the NumPy package for Python [4] includes Matlib,
+an interface that attempts to emulate MATLAB’s syntax.
+It is designed speciﬁcally for MATLAB programmers and
+to ease the porting of MATLAB code. Certain syntactic
+elements are still overly verbose (e.g., M.transpose() vs
+M’) and may hinder the readability of an algorithm.
+Strictly from a syntactic and stylistic perspective, R
+wins on its simplicity and similarity to MATLAB. How-
+ever, Python’s slight disadvantage here is far outweighed
+by its relative performance, as described below.
+
+B. Performance
+
+Python is not a mathematical language, but it is eas-
+ily extensible and provides many high-quality mathemat-
+ics packages (NumPy in particular). Though interpreted,
+Python can easily call down to C and avoid dynamic-
+language overhead in computationally intensive opera-
+tions. For instance, NumPy’s matrix multiplication is im-
+plemented in C, yielding very good performance without
+sacriﬁcing ease of use or readability in the Python code.
+
+We benchmarked the performance of R against Python’s
+(using the NumPy package).
+In order
+to avoid
+implementation- or algorithm-speciﬁc bias, we decided to
+benchmark the common linear algebra functions, such as
+matrix multiplication, that are ubiquitous in learning al-
+gorithms.
+
+Table I shows the running times of Python and R on
+various operations using diﬀerent matrix or vector sizes,
+as well as the time ratio of P ython/R. Every test ran
+10,000 operations. In terms of performance, Python is the
+clear winner. It outperforms R in every case, most of the
+cases by an order of magnitude. In the worst case, Python
+takes 82% of the time that R takes.
+
+Although na¨ıve Python implementations of serial ma-
+chine learning algorithms tend to be slower than their
+MATLAB equivalents, recent benchmarks of the paral-
+lel sparse autoencoder show that Python’s performance
+penalty is not as signiﬁcant in parallel execution as it is
+amortized over the number of workers. Also, since we are
+targeting rapid prototyping, not peak production perfor-
+mance, a small performance hit is acceptable.
+
+2
+
+Matrix Multiplication
+Size Python
+R
+Python / R
+0.7246
+0.2208
+0.1600
+50
+0.7903
+0.7339
+0.5800
+75
+0.7983
+1.6323
+1.3030
+100
+150
+4.2350
+5.2311
+0.8096
+0.8234
+22.9759
+18.9190
+250
+
+Element-Wise Matrix Multiplication
+Size Python
+R
+Python / R
+0.2221
+0.1576
+0.0350
+150
+0.2032
+0.3741
+0.0760
+225
+0.2201
+0.6859
+0.1510
+300
+450
+0.9310
+2.0938
+0.4446
+0.6100
+5.4117
+3.3010
+750
+
+Matrix Transpose
+Python / R
+R
+Size Python
+50
+0.0010
+0.0325
+0.0308
+0.0164
+0.0610
+0.0010
+75
+0.0097
+0.1030
+0.0010
+100
+0.0046
+0.2196
+0.0010
+150
+250
+0.0010
+0.6119
+0.0016
+
+Size
+2500
+3750
+5000
+7500
+12500
+
+Vector Inner Product
+Python / R
+R
+Python
+0.0765
+0.0523
+0.0040
+0.0060
+0.0772
+0.0777
+0.0680
+0.1030
+0.0070
+0.0658
+0.1519
+0.0100
+0.0160
+0.2514
+0.0636
+
+TABLE I
+Benchmarks of Python and R for linear algebra operations.
+
+IV. Architecture
+
+This section describes the architecture of the qjam
+framework. Subsection A deﬁnes the ma jor components
+of the system and how they communicate with each other.
+Subsection B explains the programming interface. Subsec-
+tion C describes the protocol that Qjam uses to commu-
+nicate. Finally, subsection D describes details of Qjam’s
+Python implementation.
+
+machines. One RemoteWorker has a single target
+machine that can be reached via ssh. There can be
+many RemoteWorkers with the same target (say, in
+the case where there are many cores on a machine),
+but only one target per RemoteWorker. At creation,
+the RemoteWorker bootstraps the remote machine by
+copying the requisite ﬁles to run the Worker program,
+via ssh. After the bootstrapping process completes,
+the RemoteWorker starts a Worker process on the re-
+mote machine and attaches to it. The RemoteWorker
+is the proxy between the Master and the Worker.
+
+Master — The Master is a Python class that divides
+up work and assigns the work units among its pool
+of RemoteWorker instances. These RemoteWorker
+instances relay the work to the Worker programs
+running on the remote machines and wait for the
+results.
+
+Figure 1 shows the communication channels between
+components on multiple machines.
+
+Fig. 1. Master controlling four RemoteWorkers with Workers in two
+machines.
+
+A. Components
+
+B. Qjam Library API
+
+Qjam is a single-master distributed system made up of
+instances of the following components:
+
+Worker — The Worker is a program that is copied to
+all of the remote machines during the bootstrapping
+process. It is responsible for waiting for instructions
+from the Master, and upon receiving work, processing
+that work and returning the result.
+
+RemoteWorker — The RemoteWorker is a special
+Python class that communicates with the remote
+
+This section describes the interface exposed by Qjam
+and provides a simple example of its use. The workﬂow of
+a typical distributed computation on Qjam is divided into
+two phases. In the initialization phase, the client creates
+an instance of the Master class by passing its constructor
+a list of remote workers. In the execution phase, the client
+speciﬁes a Python module containing a function, mapfunc,
+to be executed on each worker along with a dataset and
+a list of parameters for the computation. The framework
+then breaks the dataset into smaller pieces and distributes
+the work to the worker processes. The following two sub-
+
+LibraryMasterSlaveSlaveSlavecorn10corn11localhostRemoteWorker poolqjam LibraryMasterWorker 1RemoteWorkerRemoteWorkerRemoteWorkerRemoteWorkerWorker 2Worker 4Worker 3SHORT NAMES: PARALLELIZING MACHINE LEARNING ALGORITHMS
+
+3
+
+sections elaborate on the details.
+
+B.1 Initialization
+
+At a fundamental level, the Qjam library is built on top
+of the RemoteWorker class. An instance of RemoteWorker
+deﬁnes a single connection to a worker node. A collec-
+tion of RemoteWorker ob jects is passed to the constructor
+of Master to deﬁne the pool of workers available to the
+master.
+The following code demonstrates the initialization of the
+worker pool and master.
+
+workers = [RemoteWorker(‘corn15.stanford.edu’),
+RemoteWorker(‘corn16.stanford.edu’),
+RemoteWorker(‘corn17.stanford.edu’)]
+master = Master(workers)
+
+B.2 Execution
+
+Once the list of RemoteWorkers and the Master have
+been initialized, the client must ﬁrst wrap any static data
+into a DataSet ob ject, and then it can issue a call to
+master.run(...) to distribute the computation. Results
+of the work are obtained through the return value of this
+call.
+
+B.2.a Creating a DataSet Ob ject.
+In order for Master to
+know how to partition the task data between the registered
+RemoteWorkers, it needs to have some notion of how the
+data is structured. In order to fulﬁll that requirement, the
+client can either resort to one of the convenience DataSet
+classes provided by Qjam, or deﬁne a custom data class
+that inherits from BaseDataSet.
+The DataSet classes provided by Qjam include sup-
+port for Python tuples or lists of any kind, or NumPy
+matrices.
+In the case the client wishes to repre-
+sent the data as a matrix, he can choose between
+NumpyMatrixDataSet, which simply represents the ma-
+trix in-memory, or NumpyMatrixFileDataSet, which rep-
+resents the matrix as a ﬁle on disk in the case that it is too
+large to ﬁt in memory.
+In the case that the client wishes to deﬁne a custom data
+set class that inherits from Qjam’s BaseDataSet class, he
+must implement at least the following two member func-
+tions:
+1. chunks() Returns the number of chunks into which
+the internal data can be divided.
+2. slice(index) Returns the slice of data at the given
+index where index is an integer in [0, chunks() − 1].
+B.2.b Deﬁning a Code Module. The code that is to be ex-
+ecuted at each remote worker must be written by the client
+in a self-contained Python module. The module must con-
+tain a function called mapfunc that will be called by the
+framework. The function mapfunc must take two argu-
+ments: The ﬁrst argument are the parameters, θ , passed
+by the client in the call to master.run. θ can be of any
+type and is passed, without modiﬁcation, to every remote
+worker. The second argument of mapfunc is a subset of
+the DataSet created by the client as described in section
+B.2.a. Note that Qjam guarantees that diﬀerent workers
+will receive diﬀerent, non-overlapping subset of the data.
+
+The client also has the option of deﬁning a reduce func-
+tion as part of the same module. If the client opts out of
+this option, then the return value of mapfunc must be of a
+type that deﬁnes the sum operator or a list of types that
+deﬁne the sum operator. More complex return values are
+possible if the client deﬁnes a custom reduce function.
+A simple mapfunc might be deﬁned as follows.
+
+def multiply_sum(theta, dataset):
+return sum([theta * x_i for x_i in dataset])
+
+mapfunc = multiply_sum
+
+B.2.c Calling master.run. Once the code module and
+the dataset ob ject have been deﬁned, the client can make
+a call to the function master.run to distribute the compu-
+tation. The master.run function takes the client-deﬁned
+code module, the parameters, and a DataSet ob ject as ar-
+guments. The return value of master.run is the result of
+the computation.
+The
+following simple
+master.run.
+
+shows a call
+
+example
+
+to
+
+from examples import multiply_sum
+
+params = 42
+dataset = ListDataSet(range(1, 100))
+result = master.run(multiply_sum, params, dataset)
+
+C. Protocol
+
+Communication between the Qjam master and each of
+the workers occurs via a connection that is persistent
+throughout the existence of the master ob ject. This sec-
+tion describes the details of the communication protocol
+that is used by our implementation to assign tasks to re-
+mote workers, eﬃciently distribute data, and coalesce re-
+sults.
+implementation relies on ﬁve diﬀerent
+The protocol
+types of messages. Figure 2 shows the use of those mes-
+sages in a typical communication workﬂow.
+
+C.1 task Message
+
+The task message type is sent by the master to each
+worker to initiate a task. It contains an encoded1 repre-
+sentation of the client’s code module, a hash of the chunks
+that compose the worker’s assigned dataset, and an en-
+coded representation of the client-speciﬁed parameters.
+
+C.2 state Message
+
+Upon receiving a task message, the worker must re-
+spond with a state message. This message contains a
+status ﬁeld that can take one of two values: “running”
+or “blocked”. In the case that the status ﬁeld is set to
+blocked, the worker must include a separate ﬁeld whose
+value is a list of hash values where each hash value identi-
+ﬁes a chunk of the dataset that the worker is missing.
+
+1 Ob jects are encoded using a base64 representation of the serial-
+ized Python ob ject.
+
+4
+
+Fig. 2. Communication between Master and a single RemoteWorker
+during the execution of a typical Qjam distributed computation
+
+C.3 refs Message
+
+If the master receives a state message whose status is
+set to “blocked”, then it responds with a refs message.
+This type of message includes a list of encoded ob jects that
+correspond to the data chunks that the worker identiﬁed
+as missing.
+
+C.4 result Message
+
+Finally, the result message is sent to the from the
+worker to the master whenever it completes its task. This
+message contains an encoded representation of the compu-
+tation’s result.
+
+C.5 error Message
+
+In the case that the worker encounters an unexpected
+state, it can send an error reply to any message sent by
+the master. This message contains a description of the
+error.
+
+D. Feature Highlights
+
+D.1 Remote Data Caching
+
+One important feature of Qjam is caching of data by each
+remote worker. The master initially sends each worker a
+list of the hash values of each data chunk that the worker
+will need for a given task. If a worker cannot ﬁnd the data
+ob ject that corresponds to one or more hash values, it re-
+quests them from the master and caches them.
+In later
+iterations, the master can take advantage of data local-
+ity by assigning workers data chunks that they have seen
+before.
+
+D.2 Automatic Bootstrapping
+
+An important design goal for Qjam is to make the ex-
+ecution of a distributed computation as easy as possible.
+To that end, our implementation strives to minimize the
+amount of setup necessary on each worker machine. Qjam
+has the ability to transparently bootstrap each remote
+worker with all of the code it needs to communicate with
+the master. After initiating an SSH connection to a worker,
+the master sends a source code of the worker protocol im-
+plementation and remotely executes it on the worker node.
+This allows any computer with Python and an SSH server
+to serve as a remote worker—no manual setup required.
+
+V. Evaluation
+
+We benchmarked the framework running various algo-
+rithms with multiple workers.
+
+A. L-BFGS Sparse Autoencoder
+
+We benchmarked qjam using a sparse autoencoder with
+L-BFGS [5]. A sparse autoencoder is an unsupervised
+learning algorithm that automatically learns features from
+unlabeled data.
+It is implemented as a neural network
+with one hidden layer (parameters) that adjusts its weight
+values at each iteration over the training set. L-BFGS is
+a limited-memory, quasi-Newton optimization method for
+unconstrained optimization.
+We benchmarked the running time of the sparse autoen-
+coder using a parallelized cost function (with L-BFGS opti-
+mizing it). We tested a regular single-core implementation
+against 2, 4, 8, and 16 workers over four multicore ma-
+chines. We tested with three datasets (of 1,000, 10,000, and
+100,000 patches each). Table II summarizes per-iteration
+results, while Table III is the sum of all iterations plus the
+master’s setup overhead.
+
+workers
+1
+2
+4
+8
+16
+
+1k
+0.1458 (1.0x)
+0.1752 (0.8x)
+0.2634 (0.5x)
+0.5339 (0.3x)
+0.9969 (0.2x)
+
+10k
+0.7310 (1.0x)
+0.3321 (2.2x)
+0.3360 (2.2x)
+0.5251 (1.4x)
+1.0186 (0.7x)
+
+100k
+10.0282 (1.0x)
+4.6782 (2.1x)
+2.4858 (4.0x)
+1.8046 (5.6x)
+1.4376 (6.9x)
+
+TABLE II
+Iteration Mean Time (seconds)
+
+workers
+1
+2
+4
+8
+16
+
+1k
+76 (1.0x)
+92 (0.8x)
+137 (0.5x)
+275 (0.3x)
+544 (0.1x)
+
+10k
+370 (1.0x)
+170 (2.2x)
+173 (2.1x)
+270 (1.4x)
+529 (0.7x)
+
+100k
+5030 (1.0x)
+2350 (2.1x)
+1253 (4.0x)
+914 (5.5x)
+703 (7.2x)
+
+TABLE III
+Total Running Time (seconds)
+
+For the large job (100k), qjam performs better than the
+single-core every time, as seen in Figure 3(a). The running
+
+MasterWorkerTASKSTATE = "blocked"REFS STATE = "running"RESULTSHORT NAMES: PARALLELIZING MACHINE LEARNING ALGORITHMS
+
+5
+
+performance and reliability under high stress. Moreover,
+having more data about Qjam’s performance would more
+clearly reveal whatever bottlenecks remain.
+With regard to features, another important step is to
+achieve feature parity with other, more general parallel
+frameworks (e.g. MapReduce). Handling worker failures,
+anticipating stragglers, and using a smarter job scheduling
+algorithm will likely yield performance improvements, par-
+ticularly when running on larger or heterogeneous clusters
+than those we tested on.
+We currently use SSH and JSON to transfer data and
+messages. Using a more eﬃcient protocol and data en-
+coding will improve performance and reliability. We no-
+ticed that SSH occasionally dropped connections and im-
+plemented a workaround to automatically reconnect upon
+failure; this, however, remains the biggest source of insta-
+bility on Qjam.
+Finally, aside from implementation related improve-
+ments, we will also improve usability. As a start, we can
+oﬀer a wider range of convenience DataSet subclasses—
+beyond those that encapsulate matrices and lists (e.g., Im-
+ageDataSet, AudioDataSet).
+
+VII. Conclusion
+
+We have presented a framework that greatly simpliﬁes
+the rapid prototyping of distributed machine learning algo-
+rithms. Qjam provides an abstraction of the complexities
+associated with building an entire distributed system just
+to run a task on multiple computers in parallel. As a result,
+it is now possible rapidly prototype and execute distributed
+computations without having to explicitly manage commu-
+nication overhead and the distribution of code and data to
+remote workers.
+Moreover, Qjam oﬀers satisfactory performance. On a
+computation that takes a mean of 10 seconds to complete
+on a single machine, we observed 4x speed-up on 4 workers
+and 7x speedup on 16 workers.
+
+VIII. Acknowledgements
+
+We would like to recognize the assistance of those in
+our CS 229 class research group: Prof. Andrew Ng, Adam
+Coates, Bobby Prochnow, Milinda Lakkam, Sisi Sarkizova,
+Raghav Pasari, and Abhik Lahiri.
+
+References
+
+[1] Jeﬀrey Dean and Sanjay Ghemawat, “Mapreduce: simpliﬁed data
+processing on large clusters,” in Proceedings of the 6th conference
+on Symposium on Operating Systems Design & Implementation
+- Volume 6, Berkeley, CA, USA, 2004, pp. 10–10, USENIX As-
+sociation.
+[2] “Apache hadoop,” http : / / hadoop . apache . org, Dec 2010.
+[3] C.T. Chu, S.K. Kim, Y.A. Lin, Y.Y. Yu, G. Bradski, A.Y. Ng,
+and K. Olukotun, “Map-reduce for machine learning on multi-
+core,” in Advances in Neural Information Processing Systems
+19: Proceedings of the 2006 Conference. The MIT Press, 2007,
+p. 281.
+[4] “Scientiﬁc computing tools for python – numpy,” http : / /
+numpy . scipy . org/, Dec 2010.
+[5] Dong C. Liu and Jorge Nocedal, “On the limited memory bfgs
+method for large scale optimization,” Mathematical Program-
+ming, vol. 45, pp. 503–528, 1989, 10.1007/BF01589116.
+
+Fig. 3. a) Total Running Time Speedup. b) Per-Iteration and Total
+Speedups (100k patches). Per-Iteration times reﬂect only client code,
+whereas Total times incorporate the master’s coordination overhead.
+
+times show a signiﬁcant speedup when using qjam with
+multiple workers.
+In particular, the 16 worker trial saw
+a speedup of over 7 times the single-core’s running time.
+Comparing the speedups observed per-iteration against the
+total running time of this trial (Figure 3(b)) reveals that
+the master overhead is very small, yielding no signiﬁcant
+slowdown.
+The non-intensive job (10k) saw a small increase in per-
+formance, but not signiﬁcantly. For the smallest, trivial
+job (1k), the overhead of coordinating many workers with
+very little to compute drove the performance below that
+of the single-core’s implementation, just as expected.
+A particular number of workers seems to be suited for
+a particular job size: for the 10k patches trials, the best
+run was that with 2 workers. The others performed worse,
+though still most performed better than the single core.
+For the largest job, though the 16 worker runtime was the
+lowest, the savings from 8 workers to 16 were proportion-
+ally small, requiring twice the number of workers for 1x
+more. This further conﬁrms that in order to minimize the
+overhead of distributing the job, the number of workers
+should be picked according to the job size. Further research
+should explore various job sizes with diﬀerent worker pools.
+
+VI. Future Work
+
+The next logical step in the development of Qjam is run-
+ning more benchmarks with signiﬁcantly larger datasets
+It is important to observe Qjam’s
+and more iterations.
+
+124816workers012345678speedup (times faster)Total Running Time Speedup1k10k100ksinge core124816workers012345678speedup (times faster)Per-Iteration vs Total Speedupper iterationtotal time

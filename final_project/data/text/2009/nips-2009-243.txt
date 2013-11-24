@@ -1,0 +1,681 @@
+Parallel Inference for Latent Dirichlet Allocation on
+Graphics Processing Units
+
+Feng Yan
+Department of CS
+Purdue University
+West Lafayette, IN 47907
+
+Ningyi Xu
+Microsoft Research Asia
+No. 49 Zhichun Road
+Beijing, P.R. China
+
+Yuan (Alan) Qi
+Departments of CS and Statistics
+Purdue University
+West Lafayette, IN 47907
+
+Abstract
+
+The recent emergence of Graphics Processing Units (GPUs) as general-purpose
+parallel computing devices provides us with new opportunities to develop scal-
+able learning methods for massive data.
+In this work, we consider the prob-
+lem of parallelizing two inference methods on GPUs for latent Dirichlet Allo-
+cation (LDA) models, collapsed Gibbs sampling (CGS) and collapsed variational
+Bayesian (CVB). To address limited memory constraints on GPUs, we propose
+a novel data partitioning scheme that effectively reduces the memory cost. This
+partitioning scheme also balances the computational cost on each multiprocessor
+and enables us to easily avoid memory access conﬂicts. We use data streaming to
+handle extremely large datasets. Extensive experiments showed that our parallel
+inference methods consistently produced LDA models with the same predictive
+power as sequential training methods did but with 26x speedup for CGS and 196x
+speedup for CVB on a GPU with 30 multiprocessors. The proposed partitioning
+scheme and data streaming make our approach scalable with more multiproces-
+sors. Furthermore, they can be used as general techniques to parallelize other
+machine learning models.
+
+1
+
+Introduction
+
+Learning from massive datasets, such as text, images, and high throughput biological data, has
+applications in various scientiﬁc and engineering disciplines. The scale of these datasets, however,
+often demands high, sometimes prohibitive, computational cost. To address this issue, an obvious
+approach is to parallelize learning methods with multiple processors. While large CPU clusters
+are commonly used for parallel computing, Graphics Processing Units (GPUs) provide us with a
+powerful alternative platform for developing parallel machine learning methods.
+A GPU has massively built-in parallel thread processors and high-speed memory, therefore provid-
+ing potentially one or two magnitudes of peak ﬂops and memory throughput greater than its CPU
+counterpart. Although GPU is not good at complex logical computation, it can signiﬁcantly reduce
+running time of numerical computation-centric applications. Also, GPUs are more cost effective
+and energy efﬁcient. The current high-end GPU has over 50x more peak ﬂops than CPUs at the
+same price. Given a similar power consumption, GPUs perform more ﬂops per watt than CPUs. For
+large-scale industrial applications, such as web search engines, efﬁcient learning methods on GPUs
+can make a big difference in energy consumption and equipment cost. However, parallel computing
+
+1
+
+on GPUs can be a challenging task because of several limitations, such as relatively small memory
+size.
+In this paper, we demonstrate how to overcome these limitations to parallel computing on GPUs with
+an exemplary data-intensive application, training Latent Dirichlet Allocation (LDA) models. LDA
+models have been successfully applied to text analysis. For large corpora, however, it takes days,
+even months, to train them. Our parallel approaches take the advantage of parallel computing power
+of GPUs and explore the algorithmic structures of LDA learning methods, therefore signiﬁcantly
+reducing the computational cost. Furthermore, our parallel inference approaches, based on a new
+data partition scheme and data streaming, can be applied to not only GPUs but also any shared
+memory machine. Speciﬁcally, the main contributions of this paper include:
+• We introduce parallel collapsed Gibbs sampling (CGS) and parallel collapsed variational
+Bayesian (CVB) for LDA models on GPUs. We also analyze the convergence property
+of the parallel variational inference and show that, with mild convexity assumptions, the
+parallel inference monotonically increases the variational lower bound until convergence.
+• We propose a fast data partition scheme that efﬁciently balances the workloads across pro-
+cessors, fully utilizing the massive parallel mechanisms of GPUs.
+• Based on this partitioning scheme, our method is also independent of speciﬁc memory
+consistency models: with partitioned data and parameters in exclusive memory sections,
+we avoid access conﬂict and do not sacriﬁce speedup caused by extra cost from a memory
+consistency mechanism
+• We propose a data streaming scheme, which allows our methods to handle very large cor-
+pora that cannot be stored in a single GPU.
+• Extensive experiments show both parallel inference algorithms on GPUs achieve the same
+predictive power as their sequential inference counterparts on CPUs, but signiﬁcantly faster.
+The speedup is near linear in terms of the number of multiprocessors in the GPU card.
+
+2 Latent Dirichlet Allocation
+
+We brieﬂy review the LDA model and two inference algorithms for LDA. 1LDA models each of D
+documents as a mixture over K latent topics, and each topic k is a multinomial distribution over
+a word vocabulary having W distinct words denoted by φk = {φkw }, where φk is drawn from a
+symmetric Dirichlet prior with parameter β . In order to generate a document j , the document’s
+mixture over topics, θj = {θjk }, is drawn from a symmetric Dirichlet prior with parameter α
+ﬁrst. For the ith token in the document, a topic assignment zij is drawn with topic k chosen with
+probability θjk . Then word xij is drawn from the zij th topic, with xij taking on value w with
+probability φzij w . Given the training data with N words x = {xij }, we need to compute the
+posterior distribution over the latent variables.
+Collapsed Gibbs sampling [4] is an efﬁcient procedure to sample the posterior distribution of topic
+assignment z = {zij } by integrating out all θjk and φkw . Given the current state of all but one
+variable zij , the conditional distribution of zij is
+¬ij
+xij k + β
+P (zij = k |z¬ij , x, α, β ) ∝ n
+¬ij
+k = X
+k + W β
+n
+where nwk denotes the number of tokens with word w assigned to topic k , njk denotes the number
+¬ij
+¬ij
+wk . Superscript ¬ij denotes that the
+of tokens in document j assigned to topic k and n
+n
+w
+variable is calculated as if token xij is removed from the training data.
+CGS is very efﬁcient because the variance is greatly reduced by sampling in a collapsed state
+space. Teh et al. [9] applied the same state space to variational Bayesian and proposed the col-
+torized posterior q(z) = Q
+lapsed variational Bayesian inference algorithm. It has been shown that CVB has a theoretically
+tighter variational bound than standard VB. In CVB, the posterior of z is approximated by a fac-
+ij q(zij |γij ) where q(zij |γij ) is multinomial with variational parameter
+1We use indices to represent topics, documents and vocabulary words.
+
+¬ij
+jk + α)
+
+(n
+
+(1)
+
+2
+
+bound L(q) = X
+γij = {γijk }. The inference task is to ﬁnd variational parameters maximizing the variational lower
+q(z) log p(z, x|α, β )
+. The authors used a computationally efﬁcient Gaussian
+q(z)
+z
+approximation. The updating formula for γij is similar to the CGS updates
+¬ij
+¬ij
+¬ij
+γijk ∝ (Eq [n
+k ] + W β )−1
+jk ] + α)(Eq [n
+xij k ] + β )(Eq [n
+¬ij
+¬ij
+¬ij
+xij k ]+β )2 −
+exp(− Varq [n
+xij k ]
+Varq [n
+Varq [n
+jk ]
+k ]
+k ]+W β )2 )
++
+¬ij
+¬ij
+¬ij
+jk ]+α)2 )
+2(Eq [n
+2(Eq [n
+2(Eq [n
+3 Parallel Algorithms for LDA Training
+
+(2)
+
+3.1 Parallel Collapsed Gibbs Sampling
+
+A natural way to parallelize LDA training is to distribute documents across P processors. Based on
+this idea, Newman et al. [8] introduced a parallel implementation of CGS on distributed machines,
+called AD-LDA. In AD-LDA, D documents and document-speciﬁc counts njk are distributed over
+k = P
+P processors, with D
+P documents on each processor.
+In each iteration, every processor p inde-
+pendently runs local Gibbs sampling with its own copy of topic-word count np
+kw and topic counts
+w np
+kw in parallel. Then a global synchronization aggregates local counts np
+np
+kw to produce
+global counts nkw and nk . AD-LDA achieved substantial speedup compared with single-processor
+CGS training without sacriﬁcing prediction accuracy. However, it needs to store P copies of topic-
+word counts nkw for all processors, which is unrealistic for GPUs with large P and large datasets
+due to device memory space limitation. For example, a dataset having 100, 000 vocabulary words
+needs at least 1.4 GBytes to store 256-topic nwk for 60 processors, exceeding the device memory ca-
+pacity of current high-end GPUs. In order to address this issue, we develop parallel CGS algorithm
+that only requires one copy of nkw .
+
+1
+
+2
+3
+
+4
+5
+
+Algorithm 1: Parallel Collapsed Gibbs Sampling
+Input: Word tokens x, document partition
+J1 , . . . , JP and vocabulary partition
+V1 , . . . , VP
+Output: njk , nwk , zij
+Initialize topic assignment to each word token, set
+k ← nk
+np
+repeat
+for l = 0 to P − 1 do
+/* Sampling step
+*/
+for each processor p in parallel do
+Sample zij for j ∈ Jp and xij ∈ Vp⊕l
+(Equation (1)) with global counts nwk ,
+global counts njk and local counts np
+k
+end
+/* Synchronization step
+Update np
+k according to Equation (3)
+end
+until convergence
+
+Our parallel CGS algorithm is motivated
+by the following observation: for word
+token w1 in document j1 and word to-
+ken w2 in document j2 , if w1 6= w2 and
+j1 6= j2 , simultaneous updates of topic
+assignment by (1) have no memory
+read/write conﬂicts on document-topic
+counts njk and topic-word counts nwk .
+The algorithmic ﬂow is summarized in
+Algorithm 1.
+In addition to dividing
+all documents J = {1, . . . , D} to P
+(disjoint) sets of documents J1 , . . . , JP
+and distribute them to P processors,
+we further divide the vocabulary words
+V = {1, . . . , W } into P disjoint subsets
+V1 , . . . , VP , and each processor p (p =
+0, . . . , P − 1) stores a local copy of topic
+counts np
+k . Every parallel CGS training
+iteration consists of P epochs, and each
+epoch consists of a sampling step and
+a synchronization step. In the sampling
+step of the lth epoch (l = 0, . . . , P − 1),
+processor p samples topic assignments
+zij whose document index is j ∈ Jp and word index is xij ∈ Vp⊕l . The ⊕ is the modulus P
+addition operation deﬁned by
+a ⊕ b = (a + b) mod P ,
+and all processors run the sampling simultaneously without memory read/write conﬂicts on the
+nk ← nk + X
+global counts njk and nwk . Then the synchronization step uses (3) to aggregate np
+k to global counts
+nk , which are used as local counts in the next epoch.
+k − nk ),
+k ← nk
+(np
+np
+p
+
+*/
+
+(3)
+
+6
+
+7
+8
+9
+
+3
+
+Our parallel CGS can be regarded as an extension to AD-LDA by using the data partition in local
+sampling and inserting P − 1 more synchronization steps within an iteration. Since our data partition
+guarantees that any two processors access neither the same document nor the same word in an epoch,
+the synchronization of nwk in AD-LDA is equivalent to keeping nwk unchanged after the sampling
+step of the epoch. Becasue P processors concurrently sample new topic assignments in parallel
+CGS, we don’t necessarily sample from the correct posterior distribution. However, we can view it
+as a stochastic optimization method that maximizes p(z |x, α, β ). A justiﬁcation of this viewpoint
+can be found in [8].
+
+3.2 Parallel Collapsed Variational Bayesian
+
+The collapsed Gibbs sampling and the collapsed variational Bayesian inference [9] are similar in
+their algorithmic structures. As pointed out by Asuncion et al. [2], there are striking similarities
+between CGS and CVB. A single iteration of our parallel CVB also consists of P epochs, and each
+epoch has an updating step and a synchronization step. The updating step updates variational pa-
+rameters in a similar manner as the sampling step of parallel CGS. Counts in CGS are replaced
+by expectations and variances, and new variational parameters are computed by (2). The synchro-
+nization step involves an afﬁne combination of the variational parameters in the natural parameter
+space.
+Since multinomial distribution belongs to the exponential family, we can represent the multinomial
+1−P
+distribution over K topics deﬁned by mean parameter γij in natural parameter λij = (λijk ) by
+k0 6=K γijk0 ) for k = 1, 2, . . . , K − 1, and the domain of λij is unconstrained. Thus
+γijk
+λijk = log(
+maximizing L(q(λ)) becomes an unconstrained optimization problem. Denote λm = (λij )j∈Jm ,
+λ = (λ0 , . . . , λP −1 ), λnew and λold to be the variational parameters immediately after and before
+the updating step respectively. Let λ(p) = (λold
+P −1 ). We pick a λsync as the
+0 , . . . , λnew
+, . . . , λold
+p
+updated λ from a one-parameter class of variational parameters λ(µ) that combines the contribution
+P −1X
+from all processors
+(λ(i) − λold ), µ ≥ 0.
+i=0
+P ) is a convex combination of {λ(p) }; and 2)
+Two special cases are of interest: 1) λsync = λ( 1
+λsync = λ(1) = λnew .
+If (quasi)concavity [3] holds in sufﬁcient large neighborhoods of the
+sequence of λ(µ), say near a local maximum having negatively deﬁned Hessian, then L(q(λ(µ))) ≥
+minp L(q(λ(p) )) ≥ L(q(λold )) and L(q) converge locally. For the second case, we keep γ new and
+E [nk ] ← E [nk ] + P
+only update Eq [nk ] and Varq [nk ] similarly as (3) in the synchronization step. The formulas are
+Var[nk ] ← Var[nk ] + P
+k ] ← E [nk ]
+k ] − E [nk ]),
+p (E [np
+E [np
+Also, λ(1) assigns a larger step size to the direction PP −1
+k ] − Var[nk ]),
+k ] ← Var[nk ]
+p (Var[np
+Var[np
+(4)
+i=0 (λ(i) − λold ). Thus we can achieve a
+faster convergence rate if it is an ascending direction. It should be noted that our choice of λsync
+doesn’t guarantee global convergence, but we shall see that λ(1) can produce models that have
+almost the same predictive power and variational lower bounds as the single-processor CVB.
+
+λ(µ) = λold + µ
+
+3.3 Data Partition
+
+In order to achieve maximal speedup, we need the partitions producing balanced workloads across
+processors, and we also hope that generating the data partition consumes a small fraction of time in
+the whole training process.
+In order to present in a uniﬁed way, we deﬁne the co-occurrence matrix R = (rjw ) as: For parallel
+CGS, rjw is the number of occurrences of word w in document j ; for parallel CVB, rjw = 1 if w
+occurs at least once in j , otherwise rjw = 0. We deﬁne the submatrix Rmn = (rjw ) ∀j ∈ Jm , w ∈
+Cmn = X
+P −1X
+Vn . The optimal data partition is equivalent to minimizing the following cost function
+{Cmn},
+rjw ∈Rmn
+l=0
+
+C =
+
+max
+(m,n):
+m⊕l=n
+
+rjw
+
+(5)
+
+4
+
+(6)
+
+rjw /P
+
+The basic operation in the proposed algorithms is either sampling topic assignments (in CGS) or
+updating variational parameters (in CVB). Each value of l in the ﬁrst summation term in (5) is
+associated with one epoch. All Rmn satisfying m ⊕ l = n are the P submatrices of R whose entries
+are used to perform basic operations in epoch l. The number of these two types of basic operations
+on each unique document/word pair (j, w) are all rjw . So the total number of basic operations in
+Rm,n is Cmn for a single processor. Since all processors have to wait for the slowest processor to
+complete its job before a synchronization step, the maximal Cmn is the number of basic operations
+for the slowest processor. Thus the total number of basic operations is C . We deﬁne data partition
+, Copt = X
+efﬁciency, η , for a given row and column partitions by
+η = Copt
+C
+j∈J,w∈V
+where Copt is the theoretically minimal number of basic operations. η is deﬁned to be less than or
+equal to 1. The higher the η , the better the partitions. Exact optimization of (5) can be achieved
+through solving an equivalent integer programming problem. Since integer programming is NP-
+hard in general, and the large number of free variables for real-world datasets makes it intractable
+to solve, we use a simple approximate algorithm to perform data partitioning. In our observation, it
+|mCopt − X
+works well empirically.
+Here we use the convention of initial value j0 = w0 = 0. Our data partition algorithm divides row
+index J into disjoint subsets Jm = {j(m−1) , . . . , jm}, where jm = arg min
+rjw |.
+j 0
+|mCopt − X
+j≤j 0
+Similarly, we divide column index V into disjoint subsets Vn = {w(n−1) + 1, . . . , wn } by wn =
+rjw |. This algorithm is fast, since it needs only one full sweep over all word
+arg min
+w0
+w≤w0
+tokens or unique document/word pairs to calculate jm and wn . In practice, we can run this algorithm
+for several random permutations of J or V , and take the partitions with the highest η .
+We empirically obtained high η on large datasets with the approximate algorithm. For a word token x
+in the corpus, the probability that x is the word w is P (x = w), the probability that x is in document
+P where Cmn = P
+j is P (x in j ). If we assume these two distributions are independent and x is i.i.d., then for a ﬁxed P ,
+the law of large numbers asserts P (x in Jm ) ≈ jm−j(m−1)
+P and P (x ∈ Vn ) ≈ wn−w(n−1)
+≈ 1
+≈ 1
+P .
+D
+W
+Independence gives E [Cmn ] ≈ Copt
+x 1{x inJm ,x∈Vn } . Furthermore, the law of
+large numbers and the central limit theorem also give Cmn ≈ Copt
+and the distribution of Cmn is
+P
+approximately a normal distribution. Although independence and i.i.d. assumptions are not true for
+real data, the above analysis holds in an approximate way. Actually, when P = 10, the Cmn of
+NIPS and NY Times datasets (see Section 4) accepted the null hypothesis of Lilliefors’ normality
+test with a 0.05 signiﬁcance level.
+
+3.4 GPU Implementation and Data Streaming
+
+We used a Leatek Geforce 280 GTX GPU (G280) in this experiment. The G280 has 30 on-chip
+multiprocessors running at 1296 MHz, and each multiprocessor has 8 thread processors that are
+responsible for executing all threads deployed on the multiprocessor in parallel. The G280 has
+1 GBytes on-board device memory, the memory bandwidth is 141.7 GB/s. We adopted NVidia’s
+Compute Uniﬁed Device Architecture (CUDA) as our GPU programming environment. CUDA
+programs run in a Single Program Multiple Threads (SPMT) fashion. All threads are divided into
+equal-sized thread blocks. Threads in the same thread block are executed on a multiprocessor, and
+a multiprocessor can execute a number of thread blocks. We map a “processor” in the previous
+algorithmic description to a thread block. For a word token, ﬁne parallel calculations, such as (1)
+and (2), are realized by parallel threads inside a thread block.
+Given the limited amount of device memory on GPUs, we cannot load all training data and model
+parameters into the device memory for large-scale datasets. However, the sequential nature of Gibbs
+sampling and variational Bayesian inferences allow us to implement a data streaming [5] scheme
+which effectively reduces GPU device memory space requirements. Temporal data and variables,
+xij , zij and γij , are sent to a working space on GPU device memory on-the-ﬂy. Computation and
+data transfer are carried out simultaneously, i.e. data transfer latency is hidden by computation.
+
+5
+
+KOS
+dataset
+3, 430
+Number of documents, D
+6, 906
+Number of words, W
+Number of word tokens, N 467, 714
+Number of unique document/word pairs, M 353, 160
+
+NIPS
+1, 500
+12, 419
+1, 932, 365
+746, 316
+
+NYT
+300, 000
+102, 660
+99, 542, 125
+69, 679, 427
+
+Table 1: datasets used in the experiments.
+
+Figure 1: Test set perplexity versus number of processors P for KOS (left) and NIPS (right).
+4 Experiments
+
+We used three text datasets retrieved from the UCI Machine Learning Repository2 for evaluation.
+Statistical information about these datasets is shown in Table 4. For each dataset, we randomly
+extracted 90% of all word tokens as the training set, and the remaining 10% of word tokens are the
+test set. We set α = 50/K and β = 0.1 in all experiments [4]. We use λsync = λ(1) in the parallel
+CVB, and this setting works well in all of our experiments.
+
+4.1 Perplexity
+We measure the performance of the parallel algorithms using test set perplexity. Test set perplexity
+log X
+p(xtest ) = Y
+is deﬁned as exp(− 1
+N test log p(xtest )). For CVB, test set likelihood p(xtest ) is computed as
+K α + P
+α + E [njk ]
+¯φwk = β + E [nwk ]
+¯θjk
+¯θjk =
+¯φxij k
+k E [njk ]
+W β + E [nk ]
+ij
+k
+We report the average perplexity and the standard deviation of 10 randomly initialized runs for the
+parallel CVB. The typical burn-in period of CGS is about 200 iterations. We compute the likelihood
+p(xtest ) = Y
+X
+X
+p(xtest ) for CGS by averaging S = 10 samples at the end of 1000 iterations from different chains.
+K α + P
+α + ns
+1
+wk = β + ns
+ˆφs
+jk
+wk
+W β + ns
+k ns
+S
+jk
+k
+s
+ij
+k
+Two small datasets, KOS and NIPS, are used in the perplexity experiment. We computed test per-
+plexity for different values of K and P . Figure 1 shows the test set perplexity on KOS (left) and NIPS
+(right). We used the CPU to compute perplexity for P = 1 and the GPU for P = 10, 30, 60. For a
+ﬁxed number of K , there is no signiﬁcant difference between the parallel and the single-processor
+algorithms. It suggests our parallel algorithms converge to models having the same predictive power
+in terms of perplexity as single-processor LDA algorithms.
+Perplexity as a function of iteration number for parallel CGS and parallel CVB on NIPS are shown
+in Figure 2 (a) and (b) respectively. Since CVB actually maxmizes the variational lower bound L(q)
+on the training set, so we also investigated the convergence rate of the variational lower bound. The
+variational lower bound is computed using an exact method suggested in [9]. Figure 2 (c) shows the
+per word token variational lower bound as a function of iteration for P = 1, 10, 30 on a sampled
+
+ˆθs
+jk =
+
+log
+
+ˆθs
+jk
+
+ˆφs
+xij k
+
+(7)
+
+(8)
+
+2http://archive.ics.uci.edu/ml/datasets/Bag+of+Words
+
+6
+
+P=1P=10P=30P=6013501400145015001550CVB, K=64CVB, K=128CGS, K=64CGS, K=128PerplexityP=1P=10P=30P=60100010501100115012001250130013501400CVB, K=64CVB, K=128CVB, K=256CGS, K=64CGS, K=128CGS, K=256Perplexitysubset of KOS (K = 64). Both parallel algorithms converge as rapidly as the single-processor
+LDA algorithms. Therefore, when P gets larger, convergence rate does not curtail the speedup. We
+surmise that these results in Figure 2 may be due to frequent synchronization and relative big step
+sizes in our algorithms. In fact, as we decreased the number of synchronizations in the parallel CVB,
+the result became signiﬁcantly worse. The curve “µ=1/P, P=10” in Figure 2 (right) was obtained by
+setting λsync = λ( 1
+P ). It converged considerably slower than the other curves because of its small
+step size.
+
+(c)
+(b)
+(a)
+Figure 2: (a) Test set perplexity as a function of iteration number for the parallel CGS on NIPS,
+K = 256. (b) Test set perplexity as a function of iteration number for the parallel CVB on NIPS,
+K = 128. (c) Variational lower bound on a dataset sampled from KOS, K = 64.
+
+4.2 Speedup
+
+The speedup is compared with a PC equipped with an Intel quad-core 2.4GHz CPU and 4 GBytes
+memory. Only one core of the CPU is used. All CPU implementations are compiled by Microsoft
+C++ compiler 8.0 with -O2 optimization. We did our best to optimize the code through experiments,
+such as using better data layout and reducing redundant computation. The ﬁnal CPU code is almost
+twice as fast as the initial code.
+Our speedup experiments are conducted on the NIPS dataset for both parallel algorithms and the
+large NYT dataset for only the parallel CGS, because γij of the NYT dataset requires too much
+memory space to ﬁt into our PC’s host memory. We measure the speedup on a range of P with or
+without data streaming. As the baseline, average running times on the CPU are: 4.24 seconds on
+NIPS (K = 256) and 22.1 seconds on NYT (K = 128) for the parallel CGS, and 11.1 seconds
+(K = 128) on NIPS for the parallel CVB. Figure 3 shows the speedup of the parallel CGS (left)
+and the speedup of the parallel CVB (right) with the data partition efﬁciency η under the speedup.
+We note that when P > 30, more threads are deployed on a multiprocessor. Therefore data transfer
+between the device memory and the multiprocessor is better hidden by computation on the threads.
+As a result, we have extra speedup when the number of “processors” (thread blocks) is larger than
+the number of multiprocessors on the GPU.
+
+Figure 3: Speedup of parallel CGS (left) on NIPS and NYT, and speedup of parallel CVB (right)
+on NIPS. Average running times on the CPU are 4.24 seconds on NIPS and 22.1 seconds on NYT
+for the parallel CGS, and 11.1 seconds on NIPS for the parallel CVB, respectively. Although using
+data streaming reduces the speedup of parallel CVB due to the low bandwidth between the PC host
+memory and the GPU device memory, it enables us to use a GPU card to process large-volume data.
+
+7
+
+050100150200250300100012001400160018002000220024002600PerplexityIteration CGS Parallel CGS, P=10 Parallel CGS, P=3005010015020025030012001400160018002000220024002600PerplexityIteration m=1/P, P=10 CVB Parallel CVB, P=10 Parallel CVB, P=30050100150-6.82-6.80-6.78-6.76-6.74-6.72-6.70-6.68-6.66Variational lower boundIteration CVB, P=1 Parallel CVB, P=10 Parallel CVB, P=30P=10P=30P=6081216202428P=10P=30P=600.50.60.70.80.91.0 Speedup NYT, Streaming NIPS, Streaming NIPS, No Streaming  NYT NIPShP=10P=30P=6020406080100120140160180200220240P=10P=30P=600.50.60.70.80.91.0 Speedup Streaming No Streamingh The synchronization overhead is very small since P (cid:28)
+N and the speedup is largely determined by the maxi-
+mal number of nonzero elements in all partitioned sub-
+matrices. As a result, the speedup (when not using data
+streaming) is proportional to ηP . The bandwidth be-
+tween the PC host memory and the GPU device mem-
+ory is ∼ 1.0 GB/s, which is higher than the computa-
+tion bandwidth (size of data processed by the GPU per
+second) of the parallel CGS. Therefore, the speedup
+with or without data streaming is almost the same for
+the parallel CGS. But the speedup with or without data
+streaming differs dramatically for the parallel CVB,
+because its computation bandwidth is roughly ∼ 7.2
+GB/s for K = 128 due to large memory usage of γij ,
+higher than the maximal bandwidth that data stream-
+ing can provide. The high speedup of the parallel CVB
+without data streaming is due to a hardware supported
+exponential function and a high performance implementation of parallel reduction that is used to
+normalize γij calculated from (2). Figure 3 (right) shows that the larger the P , the smaller the
+speedup for the parallel CVB with data streaming. The reason is when P becomes large, the data
+streaming management becomes more complicated and introduces more latencies on data transfer.
+Figure 4 shows data partition efﬁciency η of various data partition algorithms for P = 10, 30, 60 on
+NIPS. “current” is the data partition algorithm proposed in section 3.3, “even” partitions documents
+and word vocabulary into roughly equal-sized subsets by setting jm = b mD
+P c and wn = b nW
+P c.
+“random” is a data partition obtained by randomly partitioning documents and words. We see that
+the proposed data partition algorithm outperforms the other algorithms.
+More than 20x speedup is achieved for both parallel algorithms with data streaming. The speedup
+of the parallel CGS enables us to run 1000 iterations (K=128) Gibbs sampling on the large NYT
+dataset within 1.5 hours, and it yields the same perplexity 3639 (S = 5) as the result obtained from
+30-hour training on a CPU.
+5 Related Works and Discussion
+
+Figure 4: data partition efﬁciency η of
+various data partition algorithms for P =
+10, 30, 60. Due to the negligible overheads
+for the synchronization steps, the speedup
+is proportional to η in practice.
+
+Our work is closely related to several previous works, including the distributed LDA by Newman
+et al. [8], asynchronous distributed LDA by Asuncion et al. [1] and the parallelized variational
+EM algorithm for LDA by Nallapati et al. [7]. For these works LDA training was parallelized on
+distributed CPU clusters and achieved impressive speedup. Unlike their works, ours shows how
+to use GPUs to achieve signiﬁcant, scalable speedup for LDA training while maintaining correct,
+accurate predictions.
+Masada et al. recently proposed a GPU implementation of CVB [6]. Masada et al. keep one copy
+of nwk while simply maintaining the same algorithmic structure for their GPU implementation as
+Newman et al. did on a CPU cluster. However, with the limited memory size of a GPU, compared
+to that of a CPU cluster, this can lead to memory access conﬂicts. This issue becomes severe when
+one performs many parallel jobs (threadblocks) and leads to wrong inference results and operation
+failure, as reported by Masada et al. Therefore, their method is not easily scalable due to memory
+access conﬂicts. Different from their approach, ours are scalable with more multiprocessors with the
+the proposed partitioning scheme and data streaming. They can also be used as general techniques
+to parallelize other machine learning models that involve sequential operations on matrix, such as
+online training of matrix factorization.
+
+Acknowledgements
+
+We thank Max Welling and David Newman for providing us with the link to the experimental data.
+We also thank the anonymous reviewers, Dong Zhang and Xianxing Zhang for their invaluable
+inputs. F. Yan conducted this research at Microsoft Research Asia. F. Yan and Y. Qi were supported
+by NSF IIS-0916443 and Microsoft Research.
+
+8
+
+P=10 P=30P=600.00.10.20.30.40.50.60.70.80.91.0h current  even  randomReferences
+[1] A. Asuncion, P. Smyth, and M. Welling. Asynchronous distributed learning of topic models. In
+D. Koller, D. Schuurmans, Y. Bengio, and L. Bottou, editors, NIPS, pages 81–88. MIT Press,
+2008.
+[2] A. Asuncion, M. Welling, P. Smyth, and Y. W. Teh. On smoothing and inference for topic
+models. In Proceedings of the International Conference on Uncertainty in Artiﬁcial Intelligence,
+2009.
+[3] S. Boyd and L. Vandenberghe. Convex Optimization. Cambridge University Press, March 2004.
+[4] T. L. Grifﬁths and M. Steyvers. Finding scientiﬁc topics. Proceedings of the National Academy
+Science, 101 (suppl. 1):5228–5235, April 2004.
+[5] F. Labonte, P. Mattson, W. Thies, I. Buck, C. Kozyrakis, and M. Horowitz. The stream vir-
+In PACT ’04: Proceedings of the 13th International Conference on Parallel
+tual machine.
+Architectures and Compilation Techniques, pages 267–277, Washington, DC, USA, 2004. IEEE
+Computer Society.
+[6] T. Masada, T. Hamada, Y. Shibata, and K. Oguri. Accelerating collapsed variational bayesian
+inference for latent Dirichlet allocation with Nvidia CUDA compatible devices. In IEA-AIE,
+2009.
+[7] R. Nallapati, W. Cohen, and J. Lafferty. Parallelized variational EM for latent Dirichlet alloca-
+tion: An experimental evaluation of speed and scalability. 2007.
+[8] D. Newman, A. Asuncion, P. Smyth, and M. Welling. Distributed inference for latent Dirichlet
+allocation. In NIPS, 2007.
+[9] Y. W. Teh, D. Newman, and M. Welling. A collapsed variational Bayesian inference algorithm
+for Latent Dirichlet allocation. In B. Sch ¨olkopf, J. C. Platt, and T. Hoffman, editors, NIPS, pages
+1353–1360. MIT Press, 2006.
+
+9
+
+

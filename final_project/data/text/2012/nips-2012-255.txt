@@ -1,0 +1,940 @@
+Why MCA? Nonlinear sparse coding with spike-and-
+slab prior for neurally plausible image encoding
+
+J ¨org Bornschein, Abdul-Saboor Sheikh,
+Jacquelyn A. Shelton, Philip Sterne,
+Frankfurt Institute for Advanced Studies
+Goethe-University Frankfurt, Germany
+{shelton, sterne, bornschein, sheikh}@fias.uni-frankfurt.de
+
+J ¨org L ¨ucke
+Frankfurt Institute for Advanced Studies
+Physics Dept., Goethe-University Frankfurt, Germany
+luecke@fias.uni-frankfurt.de
+
+Abstract
+
+Modelling natural images with sparse coding (SC) has faced two main challenges:
+ﬂexibly representing varying pixel intensities and realistically representing low-
+level image components. This paper proposes a novel multiple-cause generative
+model of low-level image statistics that generalizes the standard SC model in two
+crucial points: (1) it uses a spike-and-slab prior distribution for a more realistic
+representation of component absence/intensity, and (2) the model uses the highly
+nonlinear combination rule of maximal causes analysis (MCA) instead of a lin-
+ear combination. The major challenge is parameter optimization because a model
+with either (1) or (2) results in strongly multimodal posteriors. We show for the
+ﬁrst time that a model combining both improvements can be trained efﬁciently
+while retaining the rich structure of the posteriors. We design an exact piece-
+wise Gibbs sampling method and combine this with a variational method based
+on preselection of latent dimensions. This combined training scheme tackles both
+analytical and computational intractability and enables application of the model
+to a large number of observed and hidden dimensions. Applying the model to
+image patches we study the optimal encoding of images by simple cells in V1
+and compare the model’s predictions with in vivo neural recordings. In contrast
+to standard SC, we ﬁnd that the optimal prior favors asymmetric and bimodal ac-
+tivity of simple cells. Testing our model for consistency we ﬁnd that the average
+posterior is approximately equal to the prior. Furthermore, we ﬁnd that the model
+predicts a high percentage of globular receptive ﬁelds alongside Gabor-like ﬁelds.
+Similarly high percentages are observed in vivo. Our results thus argue in favor
+of improvements of the standard sparse coding model for simple cells by using
+ﬂexible priors and nonlinear combinations.
+
+1
+
+Introduction
+
+Sparse Coding (SC) is one of the most popular algorithms for feature learning and has become a
+standard approach in Machine Learning, Computational Neuroscience, Computer Vision, and other
+related ﬁelds. It was ﬁrst introduced as a model for the encoding of visual data in the primary visual
+cortex of mammals [1] and became the standard model to describe coding in simple cells. Following
+early recording studies [2] on simple cells, they were deﬁned to be cells responding to localized,
+oriented and bandpass visual stimuli – sparse coding offered an optimal encoding explanation of
+such responses by assuming that visual components are (a) independent, (b) linearly superimposed,
+
+1
+
+and (c) mostly inactive, with only a small subset of active components for a given image patch.
+More formally, sparse coding assumes that each observation y = (y1 , . . . , yD ) is associated with a
+(continuous or discrete) sparse latent variable s = (s1 , . . . , sH ), where sparsity implies that most of
+the components sh in s are zero or close-to zero. Each data point is generated according to the data
+p(y | Θ) = �s
+model
+(1)
+p(y | s, Θ) p(s | Θ) ds
+with �s integrating (or summing) over all hidden states and Θ denoting the model parameters. Typ-
+ically, p(y | s, Θ) is modelled as a Gaussian with a mean µ deﬁned as µ = �h shWh , i.e. as a
+linear superposition of basis vectors Wh ∈ RD . The most typical choice of prior over p(s | Θ) is a
+Laplace distribution (which corresponds to L1 regularization).
+The sparse coding generative model has remained essentially the same since its introduction, with
+most work focusing on efﬁcient inference of optimal model parameters Θ (e.g., [3, 4]), usually ex-
+ploiting unimodality of the resulting posterior probabilities. The standard form of the model offers
+many mathematically convenient advantages, but the inherent assumptions may not be appropriate
+if the goal is to accurately model realistic images. First, it has been pointed out that visual compo-
+nents – such as edges – are either present or absent and this is poorly modelled with a Laplace prior
+because it lacks exact zeros. Recently, spike-and-slab distributions have been a favored alternative
+(e.g. [5, 6, 7, 8]) as they enable the modelling of visual component absence/presence (the spike) as
+well as the component’s intensity distribution (the slab). Second, it has been pointed out that image
+components do not linearly superimpose to generate images, contrary to the standard sparse coding
+assumption. Alternatively, various nonlinear combinations of visual components have been investi-
+gated [9, 10, 11, 12]. Either modiﬁcation (spike-and-slab prior or nonlinearities) leads to multimodal
+posteriors, making parameter optimization difﬁcult. As a result these modiﬁcations have so far only
+been investigated separately. For linear sparse coding with a spike-and-slab prior the challenge for
+learning has been overcome by applying factored variational EM approaches [13, 5] or sampling
+[6]. Similarly, models with nonlinear superposition of components could be efﬁciently trained by
+applying a truncated variational EM approach [14, 12], but avoiding the analytical intractability
+introduced by using a continuous prior distribution.
+In this work we propose a sparse coding model that for the ﬁrst time combines both of these improve-
+ments – a spike-and-slab distribution and nonlinear combination of components – in order to form
+a more realistic model of images. We address the optimization of our model by using a combined
+approximate inference approach with preselection of latents (for truncated variational EM [14]) in
+combination with Gibbs sampling [15]. First, we show on artiﬁcial data that the method efﬁciently
+and accurately infers all model parameters, including data noise and sparsity. Second, using natu-
+ral image patches we show the model yields results consistent with in vivo recordings and that the
+model passes a consistency check which standard SC does not. Third, we show our model performs
+on par with other models on the functional benchmark tasks of denoising and inpainting.
+
+2 The Generative Model: Nonlinear Spike-and-Slab Sparse Coding
+
+(2)
+
+We formulate the multi-causal data generation process as the probabilistic generative model:
+h {shWdh }, σ2 ),
+p(yd | s, Θ) = N (yd ; max
+where maxh considers all H latent components and takes the h yielding the maximum value for
+shWdh , and where sh has a spike-and-slab distribution given by sh = bh zh and parameterized by:
+p(bh | Θ) = B(bh ; π) = π bh (1 − π)1−bh
+(3)
+p(zh | Θ) = N (zh ; µpr , σ2
+(4)
+pr ),
+in this notation the spike is deﬁned in Eq. 3 (parameterized by π ) and the slab is deﬁned in Eq. 4
+(parameterized by µpr and σpr ). The observation noise has a single parameter; σ . The columns of
+the matrix W = (Wdh ) are the generative ﬁelds, Wh , one associated with each latent variable sh .
+We denote the set of all parameters with Θ. We will be interested in working with the posterior over
+the latents given by
+p(y|s, θ) p(s|θ)
+�s� p(y|s� , θ) p(s� |θ) ds�
+2
+
+p(s|y, θ) =
+
+.
+
+(5)
+
+A
+generative ﬁelds
+
+B
+standard SC
+
+spike-and-slab SC
+(linear)
+
+spike-and-slab SC
+(non-linear)
+
+C
+
+D
+
+sum
+
+max
+
+Figure 1: Generation according to different sparse coding generative models using the same gen-
+erative ﬁelds. A 20 generative ﬁelds in the form of random straight lines. B Examples of patches
+generated according to three generative models all using the ﬁelds in A. Top row: standard linear
+sparse coding with Laplace prior. Middle row: linear sparse coding with spike-and-slab prior. Bot-
+tom row: spike-and-slab sparse coding with max superposition. The latter two use the same prior
+parameterization (with positive slab). Generated patches are individually scaled to ﬁll the color
+space (with zero ﬁxed to green). C A natural image with two patches highlighted (magniﬁcations
+show their preprocessed from). D Linear and nonlinear superposition of two single components for
+comparison with the actual superposition in C.
+
+As in standard sparse coding, the model assumes independent latents and given the latent variables,
+the observations are distributed according to a Gaussian distribution. Unlike standard sparse coding,
+the latent variables are not distributed according to a Laplace prior and the generative ﬁelds (or ba-
+sis functions) are not combined linearly. Fig. 1 illustrates the model differences between a Laplace
+prior and a spike-and-slab prior and the differences between linear and nonlinear superposition. As
+can be observed, standard sparse coding results in strong interference when basis functions overlap.
+For spike-and-slab sparse coding most components are exactly zero but interference between them
+remains strong because of their linear superposition. Combining a spike-and-slab prior with non-
+linear composition allows minimal interference between the bases and ensures that latents can be
+exactly zero, which creates very multimodal posteriors since data must be explained by either one
+cause or another. For comparison, the combination of two real image components is highlighted in
+Fig. 1C (lower patch). Linear and nonlinear superposition of two basis functions resembling single
+components is shown in Fig. 1D. This suggests that superposition deﬁned by max represents a better
+model of occluding components (compare [11, 12]).
+In this paper we use expectation maximization (EM) to estimate the model parameters Θ, and we use
+sampling after latent preselection [15] to represent the posterior distribution over the latent space.
+Optimization in the EM framework entails setting the free-energy to zero and solving for the model
+parameters (M-step equations) (e.g., [16]). As an example we obtain the following formula for the
+estimate of image noise:
+N DK �n �d �k �max
+d �2
+h� − y (n)
+h �Whd sk
+1
+where we average over all N observed data points, D observed dimensions, and K Gibbs samples.
+However, this notation is rather unwieldy for a simple underlying idea. As such we will use the
+following notation:
+d �∗ ,
+ˆσ2 = �Wdh sh − y (n)
+where we maximize for h and average over n and d. That is, we denote the expectation values � . �∗
+to mean the following:
+�f (s)�∗ = �n �s p(s|y(n) , Θ) f (s) δ (h is max) ds
+�s p(s|y(n) , Θ) δ(h is max) ds
+3
+
+ˆσ2 =
+
+(6)
+
+(7)
+
+(8)
+
+,
+
+,
+
+spike & slab prior
+p(s)
+
+linear combination
+data likelihood
+posterior
+p(s | yd )
+p(yd | s)
+
+point-wise maximum
+data likelihood
+posterior
+p(s | yd )
+p(yd | s)
+
+2
+s
+
+×
+
+∝
+
+×
+
+∝
+
+s1
+Figure 2: Illustration of a H=2-dimensional spike-and-slab prior over latents and the multimodal
+posterior distribution induced by this prior for both linear and nonlinear data likelihoods.
+
+,
+
+where δ is the indicator function denoting the domain to integrate over, namely where h is the
+maximum. This allows a condensed expression of the rest of the update equations:
+ˆWhd = �sh yd �∗
+ˆπ = �δ (s)�,
+�s2
+d �∗
+pr = �(sh − ˆµpr )2 �∗
+ˆµpr = �sh �∗ ,
+ˆσ2
+(10)
+where we observe that in order to optimize the parameters we need to calculate several expectation
+values with respect to the posterior distribution. As discussed however, the posterior distribution of
+a model with a spike-and-slab prior in both the linear and nonlinear cases is strongly multimodal
+and such posteriors are difﬁcult to infer and represent. This is illustrated in Fig. 2. Calculating
+expectations of this posterior is analytically intractable, thus we use Gibbs sampling to approximate
+the expectations.
+
+(9)
+
+3
+
+Inference: Exact Gibbs Sampling with Preselection of Latents
+
+In order to efﬁciently handle the intractabilities posed by our model and the complex posterior
+(multimodal, high dimensional) illustrated in Fig. 2, we take a combined approximate inference
+approach. Speciﬁcally we do exact Gibbs sampling from the posterior after we have preselected the
+most relevant set of latent states using a truncated variational form of EM. Preselection is not strictly
+necessary, but signiﬁcantly helps with the computational intractability faced in high dimensions. As
+such, we will ﬁrst descibe the sampling step and preselection only later.
+Gibbs Sampling. Our main technical contribution towards efﬁcient inference in this model is an
+exact Gibbs sampler for the multimodal posterior. Previous work has used Gibbs sampling in
+combination with spike-and-slab models [17], and for increased efﬁciency in sparse Bayesian in-
+ference [18]. Our aim is to construct a Markov chain with the target density given by the conditional
+posterior distribution:
+D�d=1
+We see from Eq. 11 that the distribution factorizes into D + 1 factors: a single factor for the prior
+and D factors for each likelihood. For the point-wise maximum nonlinear case we are considering,
+the likelihood of a single yd is a piecewise function deﬁned as follows:
+
+p(sh |sH \h , y, θ) ∝ p(sh |θ)
+
+p(yd |sh , sH \h , θ).
+
+(11)
+
+h� {Wdh� sh� }, σ2 )
+p(yd |sh , sH \h , θ) = N (yd ; max
+= 
+h� \h {Wdh� sh� }, σ2 )
+N (yd ; max
+��
+�
+�
+constant
+N (yd ; Wdh sh , σ2 )
+if sh ≥ Pd ,
+where the transition point is deﬁned as the point where shWdh becomes the maximal cause:
+h� \h {Wdh� sh� } / Wdh .
+Pd = max
+
+= exp(rd (sh ))
+
+= exp(ld (sh ))
+
+if sh < Pd
+
+(12)
+
+(13)
+
+(14)
+
+4
+
+A
+
+B
+
+C
+
+s
+d
+o
+o
+h
+l
+i
+e
+k
+i
+L
+g
+o
+L
+
+r
+o
+i
+r
+P
+g
+o
+L
+
+log(p(y1 | sh , s\h ))
+
+log(p(y2 | sh , s\h ))
+
+log(p(sh ))
+
+P1
+
+P2
+
+sh
+
+D
+
+E
+
+F
+
++
+
+exp
+
+� sh
+−∞
+
+∝ log(p(sh | y, s\h ))
+
+∝ p(sh | y, s\h )
+
+L
+o
+g
+P
+o
+s
+t
+e
+r
+i
+o
+r
+
+P
+o
+s
+t
+e
+r
+i
+o
+r
+
+C
+D
+F
+
+sh
+
+Figure 3: Illustration of the Gibbs sampler for an MCA-induced posterior. Left column:
+three
+contributing factors for the posterior ∝ p(sh | s\h , y, Θ) in logspace. A and B: Log likelihood
+functions each deﬁned by a transition point Pd and left and right pieces rd (sh ) and ld (sh ). C Log
+prior, which consists of an overall gaussian and the Dirac-peak at sh = 0. D Log posterior, the sum
+of functions A, B, and C consists of D + 1 pieces plus the Dirac-peak at sh = 0. E Exponentiation
+of the D log posterior. F CDF for sh from which we do inverse transform sampling.
+
+We refer to the two pieces of yd in Eq. 13 as the left piece of the function when sh < Pd and right
+piece when sh ≥ Pd . The left is constant w.r.t. sh because the data is explained by another cause
+when sh < Pd , and the right is a truncated Gaussian when considered a PDF of sh (see Fig. 3A).
+We take the logarithm of p(yd |sh , sH \h , θ), which transforms the equation into a left-piece constant
+and right-piece quadratic function that we can easily sum together. The sum of these D functions
+results in one function with D + 1 segments mi (sh ), with transition points Pd given by the indi-
+vidual functions. We ﬁrst sort the functions according to their transition points, denoted here by
+δ = argsortd (Pd ), such that we can efﬁciently calculate the summation over these functions:
+j=1 rδ(j ) (sh ) + �D
+mi (sh ) = �i−1
+for
+(15)
+1 ≤ i ≤ D + 1,
+u=i lδ(u) (sh )
+where the left and right pieces are referred to as li (sh ) and ri (sh ) (as in Eq. 13), respectively. Since
+all pieces li (sh ) and ri (sh ) are polynomials of 2nd degree, the result is still a 2nd degree polynomial.
+We incoorporate the prior in two steps. The Gaussian slab of the prior is taken into account by
+adding its 2nd degree polynomial to all the pieces mi (sh ), which also ensures that every piece is a
+Gaussian.
+To construct the piecewise cumulative distribution function (CDF), we relate each segment mi (sh )
+to the Gaussian ∝ exp(mi (sh )) it deﬁnes. Next, the Bernoulli component of the prior is accounted
+for by introducing the appropriate step into the CDF at sh = 0 (see Fig. 3F). Once the CDF is con-
+structed, we simulate each sh from the exact conditional distribution (sh ∼ p(sh |s\h = s\h , y, θ))
+by inverse transform sampling. Fig. 3 illustrates the entire process.
+Preselection. To reduce the computational load of inference in our model, we can optionally pre-
+select the most relevant latent variables before doing Gibbs sampling. This can be formulated as a
+variational approximation to exact inference [14] where the posterior distribution p(s | y (n) , Θ) is
+approximated by the distribution qn (s; Θ) which only has support on a subset Kn of the latent state
+space:
+p(s | y (n) , Θ)
+p(s | y (n) , Θ) ≈ qn (s; Θ) =
+(16)
+�s � ∈Kn
+p(s � | y (n) , Θ)
+where δ(s ∈ Kn ) = 1 if s ∈ Kn and zero otherwise. The subsets Kn are chosen in a data-driven
+way using a deterministic selection function, they vary per data point y (n) , and should contain most
+of the probability mass p(s | y) while also being signiﬁcantly smaller than the entire latent space.
+Using such subsets Kn , Eqn. 16 results in good approximations to the posteriors. We deﬁne Kn as
+Kn = {s | for all h �∈ I : sh = 0} where I contains the indices of the latents estimated to be most
+relevant for y (n) . To obtain these latent indices we use a selection function of the form:
+2 � ��Wh ��2
+Sh (y (n) ) = ��Wh − y (n) ��2
+(17)
+to select the H � < H highest scoring latents for I . This boils down to selecting the H � dictionary
+elements that are most similar to each datapoint, hence being most likely to have generated the
+datapoint. We then sample from this reduced latent set.
+
+δ(s ∈ Kn )
+
+5
+
+A
+
+C
+
+σ
+
+5
+
+2
+
+0
+
+0
+
+B
+
+D
+4.5
+4.0
+3.5
+π
+3.0
+H
+2.5
+2.0
+1.5
+0
+
+σgt= 2
+
+EMsteps
+
+30
+
+E
+
+r
+p
+σ
+
+5
+4
+3
+2
+1
+0
+
+0
+
+H πgt= 2
+
+EMsteps
+
+30
+
+F
+3.5
+
+2.0
+
+r
+p
+µ
+
+µpr gt= 2
+
+σpr gt= 0.5
+
+EMsteps
+
+30
+
+0.0
+0
+
+EMsteps
+
+30
+
+Figure 4: Results of 10 experimental runs with 30 EM iterations on the same artiﬁcial ground-truth
+data generated according to the model. We accurately recover ground-truth parameters which are
+plotted with dotted lines. A Random selection of data y(n) , B The set of learned generative ﬁelds
+Wh , C Data noise σ , D Sparsity H × π , E Prior standard dev. σpr , F Prior mean µpr .
+
+4 Experiments
+
+We ﬁrst investigate the performance of our algorithm on ground-truth artiﬁcial data. Second, we
+apply our model to natural image patches and compare with in vivo recording from various sources.
+Third, we investigate the applicability of our algorithm on functional benchmark tasks. All ex-
+periments were performed using a parallel implementation of the EM algorithm [19]. Small scale
+experiments were run on a single multicore machine, while larger scale experiments were typically
+run on a cluster with 320 CPU cores in parallel.
+For all experiments described, 1/3 of the samples drawn are used for burn-in, and 2/3 are the samples
+used for computations. We initialize our parameters by setting the σpr and σ equal to the standard
+deviation observed in the data, the prior mean µpr is initialized to the observed data mean. W is
+initialized at the observed data mean with additive Gaussian noise of the σ observed in the data, but
+we enforce the constraint that �Wdh � = 1 such that ∀h∈H �D
+d=1 Wdh = D , or that each Wdh is
+approximately equal to one.
+Artiﬁcial Data. The goal of the ﬁrst set of experiments is to verify that our model and inference
+method produce an algorithm that can (1) recover ground-truth parameters from data that is gen-
+erated according to the model and (2) that it reliably converges to locally optimal solutions. We
+generate ground-truth data with N = 2, 000 consisting of D = 5 × 5 = 25 observed and H = 10
+hidden dimensions according to our model: N images with overlapping ‘bars’ of varying intensities
+and with Gaussian observation noise of variance σgt = 2 (Fig. 4A). On average, each data point
+H . Results (Fig. 4B-F) show that our algorithm converges to globally opti-
+contains two bars, π = 2
+mal solutions and recovers the generating ground-truth parameters. Here we drew 30 samples from
+the posterior and set H � = H , but investigation of a range of sample number and H � values yields
+the same results, suggesting that our approximation parameters do not have an effect on our results
+(see Supp. Material for more experiments on this dataset).
+Natural Image Patches. We applied our model to N = 50, 000 image patches of 16 × 16 pixels.
+The patches were extracted from the Van Hateren natural image database [20] and subsequently
+preprocessed using pseudo-whitening [1]. We split the image patches into a positive and negative
+channel to ensure yd ≥ 0: each image patch ˜y of size ˜D = 16 × 16 is converted into a datapoint
+of size D = 2 ˜D by assigning yd = [ ˜yd ]+ and y ˜D+d = [− ˜yd ]+ , where [x]+ = x for x > 0 and
+[x]+ = 0 otherwise. This can be motivated by the transfer of visual information by center-on and
+center-off cells of the mammalian lateral geniculate nucleus (LGN). In a ﬁnal step, as a form of local
+contrast normalization, we scaled each image patch so that 0 ≤ yd ≤ 10.
+After 50 EM iterations with 100 samples per datapoint the model parameters had converged and
+the learned dictionary elements Wh represent a variety of Gabor-Wavelet and Difference of Gaus-
+sians (DoG) like shapes (see Fig. 5A). We observe a mean activation of µpr = 0.47, with standard
+deviation σpr = 0.13, i.e., we infer a strongly bimodal prior (Fig. 5D). The ﬁnal sparseness was
+πH = 6.2, which means that an average of roughly six latent variables were active in every image
+patch. The inferred observation noise was σ = 1.4. To quantitatively interpret the learned ﬁelds, we
+
+6
+
+A
+
+E
+
+C
+1.2
+
+1.0
+
+0.8
+y
+n
+
+0.6
+
+0.4
+
+0.2
+
+A
+C
+M
+-
+S
+S
+
+h
+c
+a
+g
+n
+i
+R
+.
+D
+
+r
+e
+k
+y
+t
+S
+l
+l
+e
+i
+N
+
+.
+l
+a
+
+.
+t
+a
+
+y
+e
+r
+s
+U
+
+µpr = 0.47
+
+σpr = 0.13
+
+πH = 6.2
+
+30
+
+25
+
+20
+
+15
+
+10
+
+5
+
+0
+
+B
+
+s
+F
+R
+r
+a
+l
+u
+b
+o
+l
+g
+%
+
+D
+)
+h
+s
+(
+p
+
+0.0
+
+0.2
+
+0.4
+
+sh
+
+0.6
+
+0.8
+
+0.0
+0.0
+
+0.2
+
+0.6
+
+0.8
+
+0.4
+nx
+
+)
+1
+s
+(
+p
+
+0.8
+0.6
+0.4
+0.2
+0.0
+
+)
+2
+s
+(
+p
+
+0.8
+0.6
+0.4
+0.2
+0.0
+
+)
+3
+s
+(
+p
+
+0.8
+0.6
+0.4
+0.2
+0.0
+
+0.0
+0.2
+0.4
+0.6
+0.8
+0.0
+0.2
+0.4
+0.6
+0.8
+0.0
+0.2
+0.4
+0.6
+0.8
+s3
+s2
+s3
+Figure 5: Results after training our model on N = 50, 000 image patches of size 16 × 16 using
+H=500 latent units. A Selection of inferred dictionary elements Wh . The full set of elements
+is shown in the supplementary material. B After ﬁtting with Gabor wavelets and DoG’s, 135 ﬁelds
+(27%) are classiﬁed as being globular. The fraction of globular ﬁelds measured in vivo are shown for
+comparison. C nx /ny Gabor statistics plot of estimated receptive ﬁelds (blue circles, see Supp. D
+Fig.D) overlayed with the distribution reported by Ringach (in vivo Macaque, red triangles). We
+intentionally exclude ﬁelds best ﬁt by DoG’s, removing the typical cluster observed at 0-0 (see
+Supp. D). D Visualization of the prior inferred by our model: On average πH = 6.2 dictionary
+elements are active per datapoint. E Histogram of the actual activation of three selected dictionary
+elements: A Gabor wavelet, a DoG and a ﬁeld encoding low-frequency input. The bimodal pattern
+closely resembles the prior activation inferred in D.
+
+perform reverse correlation on the learned generative ﬁelds and ﬁt the resulting estimated receptive
+ﬁelds with Gabor wavelets and DoGs (see Supp. D for details). Next, we classify the ﬁelds as either
+orientation-sensitive Gabor wavelets or ‘globular’ ﬁelds best matched by DoGs. In Fig. 5C) we then
+plot only the ﬁelds classiﬁed as Gabors, leaving out all DoG ﬁelds.
+Notably, the proportion of globular ﬁelds predicted by the model (Fig. 5B) is similarly high as those
+found in different species [21, 22, 23] (see next section for a discussion). Fig. 5D-E compares the
+optimal prior distribution with the average posterior distribution for several latent variables (with
+their associated generative ﬁelds shown in insets). It is a necessary condition of the correct model of
+the data that the posterior averaged over the datapoints y(n) matches the prior, since the following
+holds (compare, e.g., [24]):
+N �n p(s | y(n) , Θ) = p(s | Θ).
+1
+lim
+N→∞
+Our model satisﬁes this condition; the average posterior over these ﬁelds closely resembles the
+optimal prior, which is a test standard sparse coding fails (see [17] for a discussion).
+Functional Tasks. We also apply our model to the task of image inpainting and image denoising.
+Given that we propose our model to be able to realistically model low-level image statistics, we
+expect it to perform well on these tasks. Results show that our algorithm performs on par with the
+latest benchmarks obtained by other algorithms. See Supp. Material for details and examples.
+
+(18)
+
+5 Discussion
+
+In this work, we deﬁned and studied a sparse coding model that, for the ﬁrst time, combines a spike-
+and-slab prior with a nonlinear combination of dictionary elements. To address the optimization of
+our model, we designed an exact piecewise Gibbs sampling method combined with a variational
+method based on preselection of latent dimensions. This combined training scheme tackles both
+
+7
+
+analytical and computational intractability and enables application of the model to a large number of
+observed and hidden dimensions. The learning algorithm derived for the model enables the efﬁcient
+inference of all model parameters including sparsity and prior parameters.
+The spike-and-slab prior used in this study can parameterize prior distributions which are symmetric
+and unimodal (spike on top of the Guassian) as well as strongly bimodal distributions with the Gaus-
+sian mean being signiﬁcantly different from zero. However, inferring the correct prior distribution
+requires sophisticated inference and learning schemes. Standard sparse coding with MAP-based ap-
+proximation only optimizes the basis functions [25, 4]. Namely, the prior shape remains ﬁxed except
+for its weighting factor (the regularization parameter) which is typically only inferred indirectly (if at
+all) using cross-validation. Very few sparse coding approaches infer prior parameters directly. One
+example is an approach using a mixture-of-Gaussians (MoG) prior [17] which applies Gibbs sam-
+pling for inference. The MoG prior can model multimodality but in numerical experiments on image
+patches the mixture components were observed to converge to a monomodal prior – which may be
+caused by the assumed linear superposition or by the Gibbs sampler not mixing sufﬁciently. When
+the MoG prior was ﬁxed to be trimodal, no instructive generative ﬁelds were observed [17]. Another
+example of sparse coding with prior inference is a more recent approach which uses a parameterized
+student-t distribution as prior and applies sampling to infer the sparsity [26]. A student-t distribution
+cannot model multimodality, however. The work in [27] uses a trimodal prior for image patches but
+shape and sparsity remain ﬁxed, i.e. the study does not answer how optimal such a prior may be. In
+contrast, we have shown in this study that the prior shape and sparsity level can be inferred from im-
+age data. The resulting prior is strongly bimodal and control experiments conﬁrm a high consistency
+of the prior with the average posterior (Fig. 5D-E). Standard sparse coding approaches typically fail
+in such controls which may be taken as early evidence for bimodal or multimodal priors being more
+optimal (see [17]).
+Together with a bimodal prior, our model infers Gabor and difference-of-Gaussian (DoG) functions
+as the optimal basis functions for the used image patches. While Gabors are the standard outcome
+of sparse coding, DoGs have not been predicted by sparse coding until very recently. Indeed, DoG
+or ‘globular’ ﬁelds were identiﬁed as the main qualitative difference between experimental mea-
+surements of V1 simple cells and theoretical predictions [21]. A number of studies have since
+shown that globular ﬁelds can emerge in applications of computational models to image patches
+[28, 27, 29, 30, 31, 12, 32]. One study [29] has shown that globular ﬁelds can be obtained with stan-
+dard sparse coding by choosing speciﬁc values for overcompleteness and sparsity (i.e. prior shape
+and sparsity are not inferred from data). The studies [27, 31, 32] assume a restricted set of values for
+latent variables and yield relatively high proportion of globular ﬁelds suggesting that the emergence
+of globular ﬁelds is due to hard constraints on the latents. On the other hand, the studies [28, 30, 12]
+suggest that globular ﬁelds are a consequence of occlusion nonlinearities. Our study argues in favor
+of the occlusion interpretation for the emergence of globular ﬁelds because the model studied here
+shows that high percentages of globular ﬁelds emerge with a prior that is (a) inferred from data and
+(b) allows for a continuous distribution of latent values.
+In summary, the main results obtained by applying the novel model to preprocessed images are:
+(1) the observation that a bimodal prior is preferred over a unimodal one for optimal image coding,
+and (2) that high percentages of globular ﬁelds are predicted. The sparse bimodal prior is consistent
+with sparse and positive neural activtiy for the encoding of image components in V1, and the high
+percentage of globular ﬁelds is consistent with recent in vivo recordings of simple cells. Our model
+therefore links improvements on optimal image encoding to a high consistency with neural data.
+
+Acknowledgements. We acknowledge support by the German Research Foundation (DFG) in the project LU
+1196/4-2, by the German Federal Ministry of Education and Research (BMBF), project 01GQ0840, and by the
+LOEWE Neuronale Koordination Forschungsschwerpunkt Frankfurt (NeFF). Furthermore, we acknowledge
+support by the Frankfurt Center for Scientiﬁc Computing (CSC).
+
+References
+[1] B. Olshausen and D. Field. Emergence of simple-cell receptive ﬁeld properties by learning a sparse code
+for natural images. Nature, 381:607–9, 1996.
+
+[2] D. H. Hubel and T. N. Wiesel. Receptive ﬁelds of single neurones in the cat’s striate cortex. The Journal
+of Physiology, 1959.
+
+8
+
+In
+
+In NIPS
+
+In Advances in Neural
+
+[3] M. Seeger. Bayesian inference and optimal design for the sparse linear model. Journal of Machine
+Learning Research, 9:759–813, June 2008.
+[4] H. Lee, A. Battle, R. Raina, and A. Ng. Efﬁcient sparse coding algorithms.
+Information Processing Systems, volume 20, pages 801–08, 2007.
+[5] M. Titsias and M. L ´azaro-Gredilla. Spike and slab variational inference for multi-task and multiple kernel
+learning. In Advances in Neural Information Processing Systems, 2011.
+[6] S. Mohamed, K. Heller, and Z. Ghahramani. Evaluating Bayesian and L1 approaches for sparse unsuper-
+vised learning. In ICML, 2012.
+[7] I. Goodfellow, A. Courville, and Y. Bengio. Large-scale feature learning with spike-and-slab sparse
+coding. In ICML, 2012.
+[8] J ¨org L ¨ucke and Abdul-Saboor Sheikh. Closed-form EM for sparse coding and its application to source
+separation. In LVA/ICA, LNCS, pages 213–221. Springer, 2012.
+[9] E. Saund. A multiple cause mixture model for unsupervised learning. Neural Computation, 1995.
+[10] P. Dayan and R. S. Zemel. Competition and multiple cause models. Neural Computation, 1995.
+[11] J. L ¨ucke and M. Sahani. Maximal causes for non-linear component extraction. Journal of Machine
+Learning Research, 9:1227–67, 2008.
+[12] G. Puertas, J. Bornschein, and J. L ¨ucke. The maximal causes of natural scenes are edge ﬁlters.
+Advances in Neural Information Processing Systems, volume 23, pages 1939–47. 2010.
+[13] I. Goodfellow, A. Courville, and Y. Bengio. Spike-and-slab sparse coding for unsupervised feature dis-
+covery. In NIPS Workshop on Challenges in Learning Hierarchical Models. 2011.
+[14] J ¨org L ¨ucke and Julian Eggert. Expectation truncation and the beneﬁts of preselection in training generative
+models. Journal of Machine Learning Research, 11:2855–900, 2010.
+[15] J. Shelton, J. Bornschein, A.-S. Sheikh, P. Berkes, and J. L ¨ucke. Select and sample - a model of efﬁcient
+neural inference and learning. Advances in Neural Information Processing Systems, 24, 2011.
+[16] R. Neal and G. Hinton. A view of the EM algorithm that justiﬁes incremental, sparse, and other variants.
+In M. I. Jordan, editor, Learning in Graphical Models. Kluwer, 1998.
+[17] B. Olshausen and K. Millman. Learning sparse codes with a mixture-of-Gaussians prior. Advances in
+Neural Information Processing Systems, 12:841–847, 2000.
+[18] X. Tan, J. Li, and P. Stoica. Efﬁcient sparse Bayesian learning via Gibbs sampling. In ICASSP, pages
+3634–3637, 2010.
+[19] J. Bornschein, Z. Dai, and J. L ¨ucke. Approximate EM learning on large computer clusters.
+Workshop: LCCC. 2010.
+[20] J. H. van Hateren and A. van der Schaaf. Independent component ﬁlters of natural images compared with
+simple cells in primary visual cortex. Proceedings of the Royal Society of London B, 265:359–66, 1998.
+[21] D. Ringach. Spatial structure and symmetry of simple-cell receptive ﬁelds in macaque primary visual
+cortex. Journal of Neurophysiology, 88:455–63, 2002.
+[22] W. M. Usrey, M. P. Sceniak, and B. Chapman. Receptive Fields and Response Properties of Neurons in
+Layer 4 of Ferret Visual Cortex. Journal of Neurophysiology, 89:1003–1015, 2003.
+[23] C. Niell and M. Stryker. Highly Selective Receptive Fields in Mouse Visual Cortex. The Journal of
+Neuroscience, 28(30):7520–7536, 2008.
+[24] P. Berkes, G. Orban, M. Lengyel, and J. Fiser. Spontaneous Cortical Activity Reveals Hallmarks of an
+Optimal Internal Model of the Environment. Science, 331(6013):83–87, January 2011.
+[25] B. Olshausen and D. Field. Sparse coding with an overcomplete basis set: A strategy employed by V1?
+Vision Research, 37(23):3311–3325, December 1997.
+[26] P. Berkes, R. Turner, and M. Sahani. On sparsity and overcompleteness in image models. Advances in
+Neural Information Processing Systems, 21, 2008.
+[27] M. Rehn and F. Sommer. A network that uses few active neurones to code visual input predicts the diverse
+shapes of cortical receptive ﬁelds. Journal of Computational Neuroscience, 22(2):135–46, 2007.
+[28] J. L ¨ucke. A dynamical model for receptive ﬁeld self-organization in V1 cortical columns.
+In Proc.
+International Conference on Artiﬁcial Neural Networks, LNCS 4669, pages 389 – 398. Springer, 2007.
+[29] B. A. Olshausen, C. Cadieu, and D.K. Warland. Learning real and complex overcomplete representations
+from the statistics of natural images. Proc. SPIE, (7446), 2009.
+[30] J. L ¨ucke. Receptive ﬁeld self-organization in a model of the ﬁne-structure in V1 cortical columns. Neural
+Computation, 21(10):2805–45, 2009.
+[31] M. Henniges, G. Puertas, J. Bornschein, J. Eggert, and J. L ¨ucke. Binary Sparse Coding. In Proceedings
+LVA/ICA, LNCS 6365, pages 450–57. Springer, 2010.
+[32] J. Zylberberg, J. Murphy, and M. Deweese. A Sparse Coding Model with Synaptically Local Plasticity
+and Spiking Neurons Can Account for the Diverse Shapes of V1 Simple Cell Receptive Fields. PLoS
+Computational Biology, 7(10):e1002250, 2011.
+[33] M. Zhou, H. Chen, J. Paisley, L. Ren, G. Sapiro, and L. Carin. Non-parametric Bayesian dictionary
+learning for sparse image representations 1. In NIPS Workshop. 2009.
+
+9
+
+

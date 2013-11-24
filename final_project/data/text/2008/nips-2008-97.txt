@@ -1,0 +1,838 @@
+Online Metric Learning and Fast Similarity Search
+
+Prateek Jain, Brian Kulis, Inderjit S. Dhillon, and Kristen Grauman
+Department of Computer Sciences
+University of Texas at Austin
+Austin, TX 78712
+{pjain,kulis,inderjit,grauman}@cs.utexas.edu
+
+Abstract
+
+Metric learning algorithms can provide useful distance functions for a variety
+of domains, and recent work has shown good accuracy for problems where the
+learner can access all distance constraints at once. However, in many real appli-
+cations, constraints are only available incrementally, thus necessitating methods
+that can perform online updates to the learned metric. Existing online algorithms
+offer bounds on worst-case performance, but typically do not perform well in
+practice as compared to their ofﬂine counterparts. We prese nt a new online metric
+learning algorithm that updates a learned Mahalanobis metric based on LogDet
+regularization and gradient descent. We prove theoretical worst-case performance
+bounds, and empirically compare the proposed method against existing online
+metric learning algorithms. To further boost the practicality of our approach, we
+develop an online locality-sensitive hashing scheme which leads to efﬁcient up-
+dates to data structures used for fast approximate similarity search. We demon-
+strate our algorithm on multiple datasets and show that it outperforms relevant
+baselines.
+
+1 Introduction
+
+A number of recent techniques address the problem of metric learning, in which a distance function
+between data objects is learned based on given (or inferred) similarity constraints between exam-
+ples [4, 7, 11, 16, 5, 15]. Such algorithms have been applied to a variety of real-world learning
+tasks, ranging from object recognition and human body pose estimation [5, 9], to digit recogni-
+tion [7], and software support [4] applications. Most successful results have relied on having access
+to all constraints at the onset of the metric learning. However, in many real applications, the desired
+distance function may need to change gradually over time as additional information or constraints
+are received. For instance, in image search applications on the internet, online click-through data
+that is continually collected may impact the desired distance function. To address this need, recent
+work on online metric learning algorithms attempts to handle constraints that are received one at a
+time [13, 4]. Unfortunately, current methods suffer from a number of drawbacks, including speed,
+bound quality, and empirical performance.
+
+Further complicating this scenario is the fact that fast retrieval methods must be in place on top
+of the learned metrics for many applications dealing with large-scale databases. For example, in
+image search applications, relevant images within very large collections must be quickly returned
+to the user, and constraints and user queries may often be intermingled across time. Thus a good
+online metric learner must also be able to support fast similarity search routines. This is problematic
+since existing methods (e.g., locality-sensitive hashing [6, 1] or kd-trees) assume a static distance
+function, and are expensive to update when the underlying distance function changes.
+
+1
+
+The goal of this work is to make metric learning practical for real-world learning tasks in which both
+constraints and queries must be handled efﬁciently in an onl ine manner. To that end, we ﬁrst develop
+an online metric learning algorithm that uses LogDet regularization and exact gradient descent. The
+new algorithm is inspired by the metric learning algorithm studied in [4]; however, while the loss
+bounds for the latter method are dependent on the input data, our loss bounds are independent of
+the sequence of constraints given to the algorithm. Furthermore, unlike the Pseudo-metric Online
+Learning Algorithm (POLA) [13], another recent online technique, our algorithm requires no eigen-
+vector computation, making it considerably faster in practice. We further show how our algorithm
+can be integrated with large-scale approximate similarity search. We devise a method to incremen-
+tally update locality-sensitive hash keys during the updates of the metric learner, making it possible
+to perform accurate sub-linear time nearest neighbor searches over the data in an online manner.
+
+We compare our algorithm to related existing methods using a variety of standard data sets. We
+show that our method outperforms existing approaches, and even performs comparably to several
+ofﬂine metric learning algorithms. To evaluate our approac h for indexing a large-scale database, we
+include experiments with a set of 300,000 image patches; our online algorithm effectively learns to
+compare patches, and our hashing construction allows accurate fast retrieval for online queries.
+
+1.1 Related Work
+
+A number of recent techniques consider the metric learning problem [16, 7, 11, 4, 5]. Most work
+deals with learning Mahalanobis distances in an ofﬂine mann er, which often leads to expensive opti-
+mization algorithms. The POLA algorithm [13], on the other hand, is an approach for online learning
+of Mahalanobis metrics that optimizes a large-margin objective and has provable regret bounds, al-
+though eigenvector computation is required at each iteration to enforce positive de ﬁniteness, which
+can be slow in practice. The information-theoretic metric learning method of [4] includes an on-
+line variant that avoids eigenvector decomposition. However, because of the particular form of the
+online update, positive-de ﬁniteness still must be careful ly enforced, which impacts bound quality
+and empirical performance, making it undesirable for both theoretical and practical purposes. In
+contrast, our proposed algorithm has strong bounds, requires no extra work for enforcing positive
+de ﬁniteness, and can be implemented efﬁciently. There are a
+number of existing online algorithms
+for other machine learning problems outside of metric learning, e.g. [10, 2, 12].
+
+Fast search methods are becoming increasingly necessary for machine learning tasks that must cope
+with large databases. Locality-sensitive hashing [6] is an effective technique that performs approx-
+imate nearest neighbor searches in time that is sub-linear in the size of the database. Most existing
+work has considered hash functions for Lp norms [3], inner product similarity [1], and other stan-
+dard distances. While recent work has shown how to generate hash functions for (ofﬂine) learned
+Mahalanobis metrics [9], we are not aware of any existing technique that allows incremental updates
+to locality-sensitive hash keys for online database maintenance, as we propose in this work.
+2 Online Metric Learning
+In this section we introduce our model for online metric learning, develop an efﬁcient algorithm to
+implement it, and prove regret bounds.
+
+2.1 Formulation and Algorithm
+
+As in several existing metric learning methods, we restrict ourselves to learning a Mahalanobis
+distance function over our input data, which is a distance function parameterized by a d × d positive
+de ﬁnite matrix A. Given d-dimensional vectors u and v , the squared Mahalanobis distance between
+them is de ﬁned as
+
+dA (u, v) = (u − v)T A(u − v).
+Positive de ﬁniteness of A assures that the distance function will return positive distances. We may
+equivalently view such distance functions as applying a linear transformation to the input data and
+computing the squared Euclidean distance in the transformed space; this may be seen by factorizing
+the matrix A = GT G, and distributing G into the (u − v) terms.
+In general, one learns a Mahalanobis distance by learning the appropriate positive de ﬁnite matrix A
+based on constraints over the distance function. These constraints are typically distance or similarity
+ample, the distance between two points
+constraints that arise from supervised information —for ex
+in the same class should be “small”. In contrast to ofﬂine app
+roaches, which assume all constraints
+
+2
+
+are provided up front, online algorithms assume that constraints are received one at a time. That
+is, we assume that at time step t, there exists a current distance function parameterized by At . A
+constraint is received, encoded by the triple (ut , vt , yt ), where yt is the target distance between ut
+and vt (we restrict ourselves to distance constraints, though other constraints are possible). Using
+At , we ﬁrst predict the distance ˆyt = dAt (ut , vt ) using our current distance function, and incur a
+loss ℓ( ˆyt , yt ). Then we update our matrix from At to At+1 . The goal is to minimize the sum of
+the losses over all time steps, i.e. LA = Pt ℓ( ˆyt , yt). One common choice is the squared loss:
+ℓ( ˆyt , yt ) = 1
+2 ( ˆyt − yt )2 . We also consider a variant of the model where the input is a quadruple
+(ut , vt , yt , bt ), where bt = 1 if we require that the distance between ut and vt be less than or equal
+to yt , and bt = −1 if we require that the distance between ut and vt be greater than or equal to yt .
+In that case, the corresponding loss function is ℓ( ˆyt , yt , bt) = max(0, 1
+2 bt ( ˆyt − yt ))2 .
+A typical approach [10, 4, 13] for the above given online learning problem is to solve for At+1 by
+minimizing a regularized loss at each step:
+
+At+1 = argmin
+A≻0
+
+D(A, At ) + ηℓ(dA (ut , vt ), yt ),
+
+(2.1)
+
+where D(A, At ) is a regularization function and ηt > 0 is the regularization parameter. As in [4],
+we use the LogDet divergence Dℓd (A, At ) as the regularization function. It is de ﬁned over positive
+de ﬁnite matrices and is given by Dℓd (A, At ) = tr(AA−1
+) − log det(AA−1
+) − d. This divergence
+t
+t
+has previously been shown to be useful in the context of metric learning [4].
+It has a number
+of desirable properties for metric learning, including scale-invariance, automatic enforcement of
+positive de ﬁniteness, and a maximum-likelihood interpret ation.
+Existing approaches solve for At+1 by approximating the gradient of the loss function,
+i.e.
+ℓ′ (dA (ut , vt ), yt ) is approximated by ℓ′ (dAt (ut , vt ), yt ) [10, 13, 4]. While for some regulariza-
+tion functions (e.g. Frobenius divergence, von-Neumann divergence) such a scheme works out well,
+for LogDet regularization it can lead to non-de ﬁnite matric es for which the regularization function
+is not even de ﬁned. This results in a scheme that has to adapt t he regularization parameter in order
+to maintain positive de ﬁniteness [4].
+In contrast, our algorithm proceeds by exactly solving for the updated parameters At+1 that mini-
+mize (2.1). Since we use the exact gradient, our analysis will become more involved; however, the
+resulting algorithm will have several advantages over existing methods for online metric learning.
+Using straightforward algebra and the Sherman-Morrison inverse formula, we can show that the
+resulting solution to the minimization of (2.1) is:
+
+,
+
+(2.2)
+
+, and so ¯y =
+
+T
+η( ¯y − yt )Atzt z
+t At
+At+1 = At −
+T
+1 + η( ¯y − yt )z
+t At zt
+t At+1zt . The detailed derivation will appear in
+where zt = ut − vt and ¯y = dAt+1 (ut , vt ) = z
+T
+a longer version. It is not immediately clear that this update can be applied, since ¯y is a function
+of At+1 . However, by multiplying the update in (2.2) on the left by z
+t and on the right by zt and
+T
+t Atzt , we obtain the following:
+noting that ˆyt = z
+T
+ηyt ˆyt − 1 + p(ηyt ˆyt − 1)2 + 4η ˆy 2
+η( ¯y − yt ) ˆy 2
+t
+t
+¯y = ˆyt −
+1 + η( ¯y − yt ) ˆyt
+2η ˆyt
+We can solve directly for ¯y using this formula, and then plug this into the update (2.2). For the case
+when the input is a quadruple and the loss function is the squared hinge loss, we only perform the
+update (2.2) if the new constraint is violated.
+It is possible to show that the resulting matrix At+1 is positive de ﬁnite; the proof appears in our
+longer version. The fact that this update maintains positive de ﬁniteness is a key advantage of our
+method over existing methods; POLA, for example, requires projection to the positive semide ﬁnite
+cone via an eigendecomposition. The ﬁnal loss bound in [4] de pends on the regularization parameter
+ηt from each iteration and is in turn dependent on the sequence of constraints, an undesirable prop-
+erty for online algorithms. In contrast, by minimizing the function ft we designate above in (2.1),
+our algorithm’s updates automatically maintain positive de ﬁniteness. This means that the regulariza-
+tion parameter η need not be changed according to the current constraint, and the resulting bounds
+(Section 2.2) and empirical performance are notably stronger.
+
+.
+
+(2.3)
+
+3
+
+We refer to our algorithm as LogDet Exact Gradient Online (LEGO), and use this name throughout
+to distinguish it from POLA [13] (which uses a Frobenius regularization) and the Information The-
+oretic Metric Learning (ITML)-Online algorithm [4] (which uses an approximation to the gradient).
+
+2.2 Analysis
+
+We now brie ﬂy analyze the regret bounds for our online metric learning algorithm. Due to space
+issues, we do not present the full proofs; please see the longer version for further details.
+
+To evaluate the online learner’s quality, we want to compare the loss of the online algorithm (which
+has access to one constraint at a time in sequence) to the loss of the best possible ofﬂine algorithm
+(which has access to all constraints at once). Let ˆdt = dA∗ (ut , vt ) be the learned distance between
+points ut and vt with a ﬁxed positive de ﬁnite matrix A∗ , and let LA∗ = Pt ℓ( ˆdt , yt ) be the loss
+suffered over all t time steps. Note that the loss LA∗ is with respect to a single matrix A∗ , whereas
+LA (Section 2.1) is with respect to a matrix that is being updated every time step. Let A∗ be the
+optimal ofﬂine solution, i.e. it minimizes total loss incur red (LA∗ ). The goal is to demonstrate that
+the loss of the online algorithm LA is competitive with the loss of any ofﬂine algorithm. To that end,
+we now show that LA ≤ c1LA∗ + c2 , where c1 and c2 are constants.
+In the result below, we assume that the length of the data points is bounded: kuk2
+2 ≤ R for all u.
+The following key lemma shows that we can bound the loss at each step of the algorithm:
+Lemma 2.1. At each step t,
+
+1
+2
+
+1
+βt (dA∗ (ut , vt ) − yt )2 ≤ Dld (A∗ , At ) − Dld (A∗ , At+1 ),
+αt ( ˆyt − yt )2 −
+2
+η
+where 0 ≤ αt ≤
+η (cid:19)2 , βt = η , and A∗ is the optimal ofﬂine solution.
+1+η(cid:18) R
+2 +q R2
+4 + 1
+Proof. See longer version.
+
++
+
++
+
+Theorem 2.2.
++ s R2
++ s R2
+η (cid:19)2(cid:19)Dld (A∗ , A0 ),
+η (cid:19)2(cid:19)LA∗ + (cid:18) 1
++ (cid:18) R
+LA ≤ (cid:18)1 + η(cid:18) R
+1
+1
+4
+2
+4
+2
+η
+where LA = Pt ℓ( ˆyt , yt ) is the loss incurred by the series of matrices At generated by Equa-
+tion (2.3), A0 ≻ 0 is the initial matrix, and A∗ is the optimal ofﬂine solution.
+Proof. The bound is obtained by summing the loss at each step using Lemma 2.1:
+Xt (cid:18) 1
+βt (dA∗ (ut , vt ) − yt )2(cid:19) ≤ Xt (cid:18)Dld (A∗ , At ) − Dld (A∗ , At+1 )(cid:19).
+1
+αt ( ˆyt − yt )2 −
+2
+2
+The result follows by plugging in the appropriate αt and βt , and observing that the right-hand side
+telescopes to Dld (A∗ , A0 ) − Dld (A∗ , At+1 ) ≤ Dld (A∗ , A0 ) since Dld (A∗ , At+1 ) ≥ 0.
+For the squared hinge loss ℓ( ˆyt , yt , bt) = max(0, bt ( ˆyt − yt ))2 , the corresponding algorithm has the
+same bound.
+The regularization parameter affects the tradeoff between LA∗ and Dld (A∗ , A0 ): as η gets larger,
+the coefﬁcient of LA∗ grows while the coefﬁcient of Dld (A∗ , A0 ) shrinks.
+In most scenarios,
+R is small; for example, in the case when R = 2 and η = 1, then the bound is LA ≤
+(4 + √2)LA∗ + 2(4 + √2)Dld (A∗ , A0 ). Furthermore, in the case when there exists an ofﬂine
+solution with zero error, i.e., LA∗ = 0, then with a sufﬁciently large regularization parameter, w e
+know that LA ≤ 2R2Dld (A∗ , A0 ). This bound is analogous to the bound proven in Theorem 1 of
+the POLA method [13]. Note, however, that our bound is much more favorable to scaling of the op-
+timal solution A∗ , since the bound of POLA has a kA∗k2
+F term while our bound uses Dld (A∗ , A0 ):
+if we scale the optimal solution by c, then the Dld (A∗ , A0 ) term will scale by O(c), whereas kA∗k2
+F
+will scale by O(c2 ). Similarly, our bound is tighter than that provided by the ITML-Online algo-
+rithm since, in the ITML-Online algorithm, the regularization parameter ηt for step t is dependent
+on the input data. An adversary can always provide an input (ut , vt , yt) so that the regularization
+
+4
+
+parameter has to be decreased arbitrarily; that is, the need to maintain positive de ﬁninteness for each
+update can prevent ITML-Online from making progress towards an optimal metric.
+
+In summary, we have proven a regret bound for the proposed LEGO algorithm, an online metric
+learning algorithm based on LogDet regularization and gradient descent. Our algorithm automati-
+cally enforces positive de ﬁniteness every iteration and is
+simple to implement. The bound is compa-
+rable to POLA’s bound but is more favorable to scaling, and is stronger than ITML-Online’s bound.
+
+3 Fast Online Similarity Searches
+
+In many applications, metric learning is used in conjunction with nearest-neighbor searching, and
+data structures to facilitate such searches are essential. For online metric learning to be practical
+for large-scale retrieval applications, we must be able to efﬁciently index the data as updates to the
+metric are performed. This poses a problem for most fast similarity searching algorithms, since each
+update to the online algorithm would require a costly update to their data structures.
+
+Our goal is to avoid expensive naive updates, where all database items are re-inserted into the search
+structure. We employ locality-sensitive hashing to enable fast queries; but rather than re-hash all
+database examples every time an online constraint alters the metric, we show how to incorporate
+a second level of hashing that determines which hash bits are changing during the metric learning
+updates. This allows us to avoid costly exhaustive updates to the hash keys, though occasional
+updating is required after substantial changes to the metric are accumulated.
+
+3.1 Background: Locality-Sensitive Hashing
+Locality-sensitive hashing (LSH) [6, 1] produces a binary hash key H (u) = [h1 (u)h2 (u)...hb (u)]
+for every data point. Each individual bit hi (u) is obtained by applying the locality sensitive hash
+function hi to input u. To allow sub-linear time approximate similarity search for a similarity
+function ‘sim’, a locality-sensitive hash function must satisfy the following property: P r[hi (u) =
+hi (v)] = sim(u, v), where ‘sim’ returns values between 0 and 1. This means that the more similar
+examples are, the more likely they are to collide in the hash table.
+
+A LSH function when ‘sim’ is the inner product was developed in [1], in which a hash bit is the sign
+of an input’s inner product with a random hyperplane. For Mahalanobis distances, the similarity
+function of interest is sim(u, v) = u
+T Av . The hash function in [1] was extended to accommodate
+a Mahalanobis similarity function in [9]: A can be decomposed as GT G, and the similarity function
+is then equivalently ˜u
+T ˜v , where ˜u = Gu and ˜v = Gv . Hence, a valid LSH function for u
+T Av is:
+hr,A(u) = (cid:26) 1,
+if r
+T Gu ≥ 0
+otherwise,
+0,
+where r is the normal to a random hyperplane. To perform sub-linear time nearest neighbor searches,
+a hash key is produced for all n data points in our database. Given a query, its hash key is formed
+and then, an appropriate data structure can be used to extract potential nearest neighbors (see [6, 1]
+for details). Typically, the methods search only O(n1/(1+ǫ) ) of the data points, where ǫ > 0, to
+retrieve the (1 + ǫ)-nearest neighbors with high probability.
+
+(3.1)
+
+3.2 Online Hashing Updates
+
+The approach described thus far is not immediately amenable to online updates. We can imagine
+producing a series of LSH functions hr1 ,A , ..., hrb ,A , and storing the corresponding hash keys for
+each data point in our database. However, the hash functions as given in (3.1) are dependent on the
+Mahalanobis distance; when we update our matrix At to At+1 , the corresponding hash functions,
+parameterized by Gt , must also change. To update all hash keys in the database would require
+O(nd) time, which may be prohibitive. In the following we propose a more efﬁcient approach.
+T
+Recall the update for A: At+1 = At − η( ¯y−yt )At ztz
+t At
+, which we will write as At+1 = At +
+1+η( ¯y−yt ) ˆyt
+t At , where βt = −η( ¯y − yt )/(1 + η( ¯y − yt ) ˆyt ). Let GT
+t Gt = At . Then At+1 =
+T
+βtAt ztz
+is I + αtGtzt z
+t )Gt . The square-root of I + βtGtzt z
+t , where
+GT
+t GT
+t GT
+t GT
+T
+T
+T
+t (I + βtGtzt z
+t
+αt = (p1 + βt z
+t At zt ). As a result, Gt+1 = Gt+αtGt ztz
+t At . The corresponding
+T
+T
+T
+t At zt−1)/(z
+update to (3.1) is to ﬁnd the sign of
+T Gt+1x = r
+
+T Gtu + αtr
+
+r
+
+T Gt ztz
+T
+t Atu.
+
+(3.2)
+
+5
+
+r
+
+Suppose that the hash functions have been updated in full at some time step t1 in the past.
+Now at time t, we want to determine which hash bits have ﬂipped since
+t1 , or more pre-
+T Gt has changed from positive to negative, or vice
+cisely, which examples’ product with some r
+T Gt1 u) 6= sign(r
+T Gtu), or equiv-
+versa. This amounts to determining all bits such that sign(r
+T Gtu) ≤ 0. Expanding the update given in (3.2), we can write r
+T Gtu as
+alently, (r
+T Gt1 u)(r
+T Gt1 u + Pt−1
+ℓ Aℓu. Therefore, ﬁnding the bits that have changed sign is equiva -
+T Gℓzℓz
+T
+αℓr
+ℓ=t1
+T Gt1 u)(cid:18) Pt−1
+ℓ Aℓu(cid:19) ≤ 0. We can
+lent to ﬁnding all u such that (r
+T Gt1 u)2 + (r
+T
+T Gℓzℓz
+αℓr
+ℓ=t1
+use a second level of locality-sensitive hashing to approximately ﬁnd all such u. De ﬁne a vec-
+¯q = [−1; − Pt−1
+ℓ Gℓ ]. Then the
+T Gt1 u)u] and a “query ”
+tor ¯u = [(r
+T Aℓzℓz
+T
+T Gt1 u)2 ; (r
+αℓr
+ℓ=t1
+bits that have changed sign can be approximately identiﬁed b y ﬁnding all examples
+¯u such that
+T ¯u ≥ 0. In other words, we look for all ¯u that have a large inner product with ¯q , which translates
+¯q
+the problem to a similarity search problem. This may be solved approximately using the locality-
+sensitive hashing scheme given in [1] for inner product similarity. Note that ﬁnding ¯u for each r can
+be computationally expensive, so we search ¯u for only a randomly selected subset of the vectors r .
+In summary, when performing online metric learning updates, instead of updating all the hash keys
+at every step (which costs O(nd)), we delay updating the hash keys and instead determine approxi-
+mately which bits have changed in the stored entries in the hash table since the last update. When we
+have a nearest-neighbor query, we can quickly determine which bits have changed, and then use this
+information to ﬁnd a query’s approximate nearest neighbors using the current metric. Once many of
+the bits have changed, we perform a full update to our hash functions.
+
+Finally, we note that the above can be extended to the case where computations are done in kernel
+space. We omit details due to lack of space.
+4 Experimental Results
+In this section we evaluate the proposed algorithm (LEGO) over a variety of data sets, and examine
+both its online metric learning accuracy as well as the quality of its online similarity search updates.
+As baselines, we consider the most relevant techniques from the literature: the online metric learners
+POLA [13] and ITML-Online [4]. We also evaluate a baseline ofﬂine metric learner associated with
+our method. For all metric learners, we gauge improvements relative to the original (non-learned)
+Euclidean distance, and our classiﬁcation error is measure d with the k-nearest neighbor algorithm.
+First we consider the same collection of UCI data sets used in [4]. For each data set, we provide the
+online algorithms with 10,000 randomly-selected constraints, and generate their target distances as
+in [4] —for same-class pairs, the target distance is set to be
+equal to the 5th percentile of all distances
+in the data, while for different-class pairs, the 95th percentile is used. To tune the regularization
+parameter η for POLA and LEGO, we apply a pre-training phase using 1,000 constraints. (This is not
+required for ITML-Online, which automatically sets the regularization parameter at each iteration
+to guarantee positive de ﬁniteness). The ﬁnal metric ( AT ) obtained by each online algorithm is used
+for testing (T is the total number of time-steps). The left plot of Figure 1 shows the k-nn error rates
+for all ﬁve data sets. LEGO outperforms the Euclidean baseli ne as well as the other online learners,
+and even approaches the accuracy of the ofﬂine method (see [4 ] for additional comparable ofﬂine
+learning results using [7, 15]). LEGO and ITML-Online have comparable running times. However,
+our approach has a signiﬁcant speed advantage over POLA on th ese data sets: on average, learning
+with LEGO is 16.6 times faster, most likely due to the extra projection step required by POLA.
+
+Next we evaluate our approach on a handwritten digit classiﬁ cation task, reproducing the experiment
+used to test POLA in [13]. We use the same settings given in that paper. Using the MNIST data set,
+we pose a binary classiﬁcation problem between each pair of d igits (45 problems in all). The training
+and test sets consist of 10,000 examples each. For each problem, 1,000 constraints are chosen and
+the ﬁnal metric obtained is used for testing. The center plot of Figure 1 compares the test error
+between POLA and LEGO. Note that LEGO beats or matches POLA’s test error in 33/45 (73.33%)
+of the classiﬁcation problems. Based on the additional base lines provided in [13], this indicates that
+our approach also fares well compared to other ofﬂine metric learners on this data set.
+
+We next consider a set of image patches from the Photo Tourism project [14], where user photos
+from Flickr are used to generate 3-d reconstructions of various tourist landmarks. Forming the
+reconstructions requires solving for the correspondence between local patches from multiple images
+of the same scene. We use the publicly available data set that contains about 300,000 total patches
+
+6
+
+r
+o
+r
+r
+E
+ 
+N
+N
+−
+k
+
+0.45
+
+0.4
+
+0.35
+
+0.3
+
+0.25
+
+0.2
+
+0.15
+
+0.1
+
+0.05
+
+0
+
+ 
+
+UCI data sets (order of bars = order of legend)
+
+MNIST data set
+
+ 
+
+ITML Offline
+LEGO
+ITML Online
+POLA
+Baseline Euclidean
+
+0.04
+
+0.035
+
+0.03
+
+0.025
+
+0.02
+
+0.015
+
+0.01
+
+0.005
+
+r
+o
+r
+r
+E
+ 
+A
+L
+O
+P
+
+1
+
+0.95
+
+0.9
+
+0.85
+
+0.8
+
+0.75
+
+0.7
+
+0.65
+
+s
+e
+v
+i
+t
+i
+s
+o
+P
+ 
+e
+u
+r
+T
+
+PhotoTourism Dataset
+
+LEGO
+ITML Offline
+POLA
+ITML Online
+Baseline Euclidean
+
+0
+0.6
+0.015
+0.025
+0.02
+0
+0.005
+0.01
+0.03
+0.035
+0.04
+Wine
+Iris
+Bal−Scale
+Ionosphere
+Soybean
+0.15
+0
+0.05
+0.1
+0.2
+LEGO Error
+False Positives
+Figure 1: Comparison with existing online metric learning methods. Left: On the UCI data sets, our method
+(LEGO) outperforms both the Euclidean distance baseline as well as existing metric learning methods, and
+even approaches the accuracy of the ofﬂine algorithm. Center: Comparison of errors for LEGO and POLA
+on 45 binary classi ﬁcation problems using the MNIST data; LE GO matches or outperforms POLA on 33 of the
+45 total problems. Right: On the Photo Tourism data, our online algorithm signi ﬁcantl y outperforms the L2
+baseline and ITML-Online, does well relative to POLA, and nearly matches the accuracy of the ofﬂine method.
+
+0.25
+
+0.3
+
+from images of three landmarks1. Each patch has a dimensionality of 4096, so for efﬁciency we
+apply all algorithms in kernel space, and use a linear kernel. The goal is to learn a metric that
+measures the distance between image patches better than L2 , so that patches of the same 3-d scene
+point will be matched together, and (ideally) others will not. Since the database is large, we can also
+use it to demonstrate our online hash table updates. Following [8], we add random jitter (scaling,
+rotations, shifts) to all patches, and generate 50,000 patch constraints (50% matching and 50% non-
+matching patches) from a mix of the Trevi and Halfdome images. We test with 100,000 patch pairs
+from the Notre Dame portion of the data set, and measure accuracy with precision and recall.
+
+The right plot of Figure 1 shows that LEGO and POLA are able to learn a distance function that
+signiﬁcantly outperforms the baseline squared Euclidean d istance. However, LEGO is more accurate
+than POLA, and again nearly matches the performance of the ofﬂine metric learning algorithm. On
+the other hand, the ITML-Online algorithm does not improve beyond the baseline. We attribute
+the poor accuracy of ITML-Online to its need to continually adjust the regularization parameter to
+maintain positive de ﬁniteness; in practice, this often lea ds to signiﬁcant drops in the regularization
+parameter, which prevents the method from improving over the Euclidean baseline. In terms of
+training time, on this data LEGO is 1.42 times faster than POLA (on average over 10 runs).
+
+Finally, we present results using our online metric learning algorithm together with our online hash
+table updates described in Section 3.2 for the Photo Tourism data. For our ﬁrst experiment, we
+provide each method with 50,000 patch constraints, and then search for nearest neighbors for 10,000
+test points sampled from the Notre Dame images. Figure 2 (left plot) shows the recall as a function
+of the number of patches retrieved for four variations: LEGO with a linear scan, LEGO with our
+LSH updates, the L2 baseline with a linear scan, and L2 with our LSH updates. The results show
+that the accuracy achieved by our LEGO+LSH algorithm is comparable to the LEGO+linear scan
+(and similarly, L2+LSH is comparable to L2+linear scan), thus validating the effectiveness of our
+online hashing scheme. Moreover, LEGO+LSH needs to search only 10% of the database, which
+translates to an approximate speedup factor of 4.7 over the linear scan for this data set.
+
+Next we show that LEGO+LSH performs accurate and efﬁcient re trievals in the case where con-
+straints and queries are interleaved in any order. Such a scenario is useful in many applications: for
+example, an image retrieval system such as Flickr continually acquires new image tags from users
+(which could be mapped to similarity constraints), but must also continually support intermittent
+user queries. For the Photo Tourism setting, it would be useful in practice to allow new constraints
+indicating true-match patch pairs to stream in while users continually add photos that should partic-
+ipate in new 3-d reconstructions with the improved match distance functions. To experiment with
+this scenario, we randomly mix online additions of 50,000 constraints with 10,000 queries, and mea-
+sure performance by the recall value for 300 retrieved nearest neighbor examples. We recompute the
+hash-bits for all database examples if we detect changes in more than 10% of the database examples.
+Figure 2 (right plot) compares the average recall value for various methods after each query. As
+expected, as more constraints are provided, the LEGO-based accuracies all improve (in contrast to
+the static L2 baseline, as seen by the straight line in the plot). Our method achieves similar accuracy
+to both the linear scan method (LEGO Linear) as well as the naive LSH method where the hash
+table is fully recomputed after every constraint update (LEGO Naive LSH). The curves stack up
+
+1 http://phototour.cs.washington.edu/patches/default.htm
+
+7
+
+0.8
+
+0.78
+
+0.76
+
+0.74
+
+0.72
+
+0.7
+
+0.68
+
+0.66
+
+0.64
+
+0.62
+
+l
+l
+a
+c
+e
+R
+
+ 
+
+0.74
+
+0.72
+
+0.7
+
+0.68
+
+0.66
+
+0.64
+
+l
+l
+a
+c
+e
+R
+ 
+e
+g
+a
+r
+e
+v
+A
+
+L
+ Linear Scan
+2
+L
+ LSH
+2
+LEGO Linear Scan
+LEGO LSH
+
+ 
+
+LEGO LSH
+LEGO Linear Scan
+LEGO Naive LSH
+L
+ Linear Scan
+2
+
+0.62
+ 
+ 
+100
+300
+800
+700
+600
+500
+400
+200
+900
+1000
+4000
+6000
+0
+2000
+8000
+10000
+Number of nearest neighbors (N)
+Number of queries
+Figure 2: Results with online hashing updates. The left plot shows the recall value for increasing numbers of
+nearest neighbors retrieved. ‘LEGO LSH’ denotes LEGO metric learning in conjunction with online searches
+using our LSH updates, ‘LEGO Linear’ denotes LEGO learning with linear scan searches. L2 denotes the
+baseline Euclidean distance. The right plot shows the average recall values for all methods at different time
+instances as more queries are made and more constraints are added. Our online similarity search updates make
+it possible to efﬁciently interleave online learning and qu erying. See text for details.
+
+appropriately given the levels of approximation: LEGO Linear yields the upper bound in terms of
+accuracy, LEGO Naive LSH with its exhaustive updates is slightly behind that, followed by our
+LEGO LSH with its partial and dynamic updates. In reward for this minor accuracy loss, however,
+our method provides a speedup factor of 3.8 over the naive LSH update scheme. (In this case the
+naive LSH scheme is actually slower than a linear scan, as updating the hash tables after every update
+incurs a large overhead cost.) For larger data sets, we can expect even larger speed improvements.
+Conclusions: We have developed an online metric learning algorithm together with a method to
+perform online updates to fast similarity search structures, and have demonstrated their applicability
+and advantages on a variety of data sets. We have proven regret bounds for our online learner that
+offer improved reliability over state-of-the-art methods in terms of regret bounds, and empirical
+performance. A disadvantage of our algorithm is that the LSH parameters, e.g. ǫ and the number of
+hash-bits, need to be selected manually, and may depend on the ﬁnal application. For future work,
+we hope to tune the LSH parameters automatically using a deeper theoretical analysis of our hash
+key updates in conjunction with the relevant statistics of the online similarity search task at hand.
+
+Acknowledgments: This research was supported in part by NSF grant CCF-0431257, NSF-
+ITR award IIS-0325116, NSF grant IIS-0713142, NSF CAREER award 0747356, Microsoft
+Research, and the Henry Luce Foundation.
+References
+[1] M. Charikar. Similarity Estimation Techniques from Rounding Algorithms. In STOC, 2002.
+[2] L. Cheng, S. V. N. Vishwanathan, D. Schuurmans, S. Wang, and T. Caelli. Implicit Online Learning with
+Kernels. In NIPS, 2006.
+[3] M. Datar, N. Immorlica, P. Indyk, and V. Mirrokni. Locality-Sensitive Hashing Scheme Based on p-Stable
+Distributions. In SOCG, 2004.
+[4] J. Davis, B. Kulis, P. Jain, S. Sra, and I. Dhillon. Information-Theoretic Metric Learning. In ICML, 2007.
+[5] A. Frome, Y. Singer, and J. Malik. Image retrieval and classi ﬁcation using local distance functions. In
+NIPS, 2007.
+[6] A. Gionis, P. Indyk, and R. Motwani. Similarity Search in High Dimensions via Hashing. In VLDB, 1999.
+[7] A. Globerson and S. Roweis. Metric Learning by Collapsing Classes. In NIPS, 2005.
+[8] G. Hua, M. Brown, and S. Winder. Discriminant embedding for local image descriptors. In ICCV, 2007.
+[9] P. Jain, B. Kulis, and K. Grauman. Fast Image Search for Learned Metrics. In CVPR, 2008.
+[10] J. Kivinen and M. K. Warmuth. Exponentiated Gradient Versus Gradient Descent for Linear Predictors.
+Inf. Comput., 132(1):1–63, 1997.
+[11] M. Schultz and T. Joachims. Learning a Distance Metric from Relative Comparisons. In NIPS, 2003.
+[12] S. Shalev-Shwartz and Y. Singer. Online Learning meets Optimization in the Dual. In COLT, 2006.
+[13] S. Shalev-Shwartz, Y. Singer, and A. Ng. Online and Batch Learning of Pseudo-metrics. In ICML, 2004.
+[14] N. Snavely, S. Seitz, and R. Szeliski. Photo Tourism: Exploring Photo Collections in 3D. In SIGGRAPH
+Conference Proceedings, pages 835–846, New York, NY, USA, 2006. ACM Press. ISBN 1-59 593-364-6.
+[15] K. Weinberger, J. Blitzer, and L. Saul. Distance Metric Learning for Large Margin Nearest Neighbor
+Classi ﬁcation. In NIPS, 2006.
+[16] E. Xing, A. Ng, M. Jordan, and S. Russell. Distance Metric Learning, with Application to Clustering with
+Side-Information. In NIPS, 2002.
+
+8
+
+

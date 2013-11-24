@@ -1,0 +1,594 @@
+Factoring nonnegative matrices with linear programs
+
+Victor Bittorf
+bittorf@cs.wisc.edu
+
+Benjamin Recht
+brecht@cs.wisc.edu
+Computer Sciences
+University of Wisconsin
+
+Christopher R ´e
+chrisre@cs.wisc.edu
+
+Joel A. Tropp
+Computing and Mathematical Sciences
+California Institute of Technology
+tropp@cms.caltech.edu
+
+Abstract
+
+This paper describes a new approach, based on linear programming, for com-
+puting nonnegative matrix factorizations (NMFs). The key idea is a data-driven
+model for the factorization where the most salient features in the data are used to
+express the remaining features. More precisely, given a data matrix X , the algo-
+rithm identiﬁes a matrix C that satisﬁes X ≈ CX and some linear constraints.
+The constraints are chosen to ensure that the matrix C selects features; these fea-
+tures can then be used to ﬁnd a low-rank NMF of X . A theoretical analysis
+demonstrates that this approach has guarantees similar to those of the recent NMF
+algorithm of Arora et al. (2012). In contrast with this earlier work, the proposed
+method extends to more general noise models and leads to efﬁcient, scalable al-
+gorithms. Experiments with synthetic and real datasets provide evidence that the
+new approach is also superior in practice. An optimized C++ implementation can
+factor a multigigabyte matrix in a matter of minutes.
+
+1
+
+Introduction
+
+Nonnegative matrix factorization (NMF) is a popular approach for selecting features in data [16–18,
+23]. Many machine-learning and data-mining software packages (including Matlab [3], R [12], and
+Oracle Data Mining [1]) now include heuristic computational methods for NMF. Nevertheless, we
+still have limited theoretical understanding of when these heuristics are correct.
+The difﬁculty in developing rigorous methods for NMF stems from the fact that the problem is
+computationally challenging. Indeed, Vavasis has shown that NMF is NP-Hard [27]; see [4] for
+further worst-case hardness results. As a consequence, we must instate additional assumptions on
+the data if we hope to compute nonnegative matrix factorizations in practice.
+In this spirit, Arora, Ge, Kannan, and Moitra (AGKM) have exhibited a polynomial-time algorithm
+for NMF that is provably correct—provided that the data is drawn from an appropriate model, based
+on ideas from [8]. The AGKM result describes one circumstance where we can be sure that NMF
+algorithms are capable of producing meaningful answers. This work has the potential to make an
+impact in machine learning because proper feature selection is an important preprocessing step for
+many other techniques. Even so, the actual impact is damped by the fact that the AGKM algorithm
+is too computationally expensive for large-scale problems and is not tolerant to departures from the
+modeling assumptions. Thus, for NMF, there remains a gap between the theoretical exercise and the
+actual practice of machine learning.
+
+1
+
+The present work presents a scalable, robust algorithm that can successfully solve the NMF problem
+under appropriate hypotheses. Our ﬁrst contribution is a new formulation of the nonnegative feature
+selection problem that only requires the solution of a single linear program. Second, we provide
+a theoretical analysis of this algorithm. This argument shows that our method succeeds under the
+same modeling assumptions as the AGKM algorithm with an additional margin constraint that is
+common in machine learning. We prove that if there exists a unique, well-deﬁned model, then we
+can recover this model accurately; our error bound improves substantially on the error bound for
+the AGKM algorithm in the high SNR regime. One may argue that NMF only “makes sense” (i.e.,
+is well posed) when a unique solution exists, and so we believe our result has independent interest.
+Furthermore, our algorithm can be adapted for a wide class of noise models.
+In addition to these theoretical contributions, our work also includes a major algorithmic and experi-
+mental component. Our formulation of NMF allows us to exploit methods from operations research
+and database systems to design solvers that scale to extremely large datasets. We develop an efﬁcient
+stochastic gradient descent (SGD) algorithm that is (at least) two orders of magnitude faster than the
+approach of AGKM when both are implemented in Matlab. We describe a parallel implementation
+of our SGD algorithm that can robustly factor matrices with 105 features and 106 examples in a few
+minutes on a multicore workstation.
+Our formulation of NMF uses a data-driven modeling approach to simplify the factorization prob-
+lem. More precisely, we search for a small collection of rows from the data matrix that can be
+used to express the other rows. This type of approach appears in a number of other factorization
+problems, including rank-revealing QR [15], interpolative decomposition [20], subspace cluster-
+ing [10, 24], dictionary learning [11], and others. Our computational techniques can be adapted to
+address large-scale instances of these problems as well.
+
+2 Separable Nonnegative Matrix Factorizations and Hott Topics
+
+Notation. For a matrix M and indices i and j , we write Mi· for the ith row of M and M·j for the
+j th column of M . We write Mij for the (i, j ) entry.
+Let Y be a nonnegative f × n data matrix with columns indexing examples and rows indexing
+features. Exact NMF seeks a factorization Y = F W where the feature matrix F is f × r , where
+the weight matrix W is r × n, and both factors are nonnegative. Typically, r (cid:28) min{f , n}.
+Unless stated otherwise, we assume that each row of the data matrix Y is normalized so it sums to
+one. Under this hypothesis, we may also assume that each row of F and of W also sums to one [4].
+It is notoriously difﬁcult to solve the NMF problem. Vavasis showed that it is NP-complete to decide
+whether a matrix admits a rank-r nonnegative factorization [27]. AGKM proved that an exact NMF
+algorithm can be used to solve 3-SAT in subexponential time [4].
+The literature contains some mathematical analysis of NMF that can be used to motivate algorithmic
+development. Thomas [25] developed a necessary and sufﬁcient condition for the existence of a
+rank-r NMF. More recently, Donoho and Stodden [8] obtained a related sufﬁcient condition for
+uniqueness. AGKM exhibited an algorithm that can produce a nonnegative matrix factorization
+under a weaker sufﬁcient condition. To state their results, we need a deﬁnition.
+Deﬁnition 2.1 A set of vectors {v1 , . . . , vr } ⊂ Rd is simplicial if no vector vi lies in the convex
+hull of {vj : j (cid:54)= i}. The set of vectors is α-robust simplicial if, for each i, the (cid:96)1 distance from vi
+to the convex hull of {vj : j (cid:54)= i} is at least α. Figure 1 illustrates these concepts.
+
+These ideas support the uniqueness results of Donoho and Stodden and the AGKM algorithm. In-
+deed, we can ﬁnd an NMF of Y efﬁciently if Y contains a set of r rows that is simplicial and whose
+convex hull contains the remaining rows.
+(cid:20) Ir
+(cid:21)
+Deﬁnition 2.2 An NMF Y = F W is called separable if the rows of W are simplicial and there is
+a permutation matrix Π such that
+M
+
+ΠF =
+
+(1)
+
+.
+
+2
+
+Algorithm 1: AGKM: Approximably Separable
+Nonnegative Matrix Factorization [4]
+1: Initialize R = ∅.
+2: Compute the f × f matrix D with Dij =
+(cid:107)Xi· − Xj ·(cid:107)1 .
+3: for k = 1, . . . f do
+Find the set Nk of rows that are at least
+4:
+5/α + 2 away from Xk· .
+Compute the distance δk of Xk· from
+conv({Xj ·
+: j ∈ Nk }).
+if δk > 2, add k to the set R.
+6:
+7: end for
+8: Cluster the rows in R as follows: j and k are
+in the same cluster if Djk ≤ 10/α + 6.
+9: Choose one element from each cluster to
+yield W .
+10: F = arg minZ∈Rf ×r (cid:107)X − ZW (cid:107)∞,1
+
+5:
+
+Figure 1: Numbered circles are hott topics. Their
+convex hull (orange) contains the other topics (small
+circles), so the data admits a separable NMF. The ar-
+row d1 marks the (cid:96)1 distance from hott topic (1) to the
+convex hull of the other two hott topics; deﬁnitions of
+d2 and d3 are similar. The hott topics are α-robustly
+simplicial when each di ≥ α.
+
+(cid:107)∆(cid:107)∞,1 := max
+1≤i≤f
+
+To compute a separable factorization of Y , we must ﬁrst identify a simplicial set of rows from Y .
+Afterward, we compute weights that express the remaining rows as convex combinations of this
+distinguished set. We call the simplicial rows hott and the corresponding features hott topics.
+This model allows us to express all the features for a particular instance if we know the values of
+the instance at the simplicial rows. This assumption can be justiﬁed in a variety of applications. For
+example, in text, knowledge of a few keywords may be sufﬁcient to reconstruct counts of the other
+words in a document. In vision, localized features can be used to predict gestures. In audio data, a
+few bins of the spectrogram may allow us to reconstruct the remaining bins.
+While a nonnegative matrix one encounters in practice might not admit a separable factorization, it
+may be well-approximated by a nonnnegative matrix with separable factorization. AGKM derived an
+algorithm for nonnegative matrix factorization of a matrix that is well-approximated by a separable
+factorization. To state their result, we introduce a norm on f × n matrices:
+n(cid:88)
+j=1
+Theorem 2.3 (AGKM [4]) Let  and α be nonnegative constants satisfying  ≤ α2
+20+13α . Let X be
+a nonnegative data matrix. Assume X = Y + ∆ where Y is a nonnegative matrix whose rows
+(cid:13)(cid:13)(cid:13)X − ˆF ˆW
+(cid:13)(cid:13)(cid:13)∞,1
+have unit (cid:96)1 norm, where Y = F W is a rank-r separable factorization in which the rows of W
+are α-robust simplicial, and where (cid:107)∆(cid:107)∞,1 ≤ . Then Algorithm 1 ﬁnds a rank-r nonnegative
+≤ 10/α + 7.
+factorization ˆF ˆW that satisﬁes the error bound
+In particular, the AGKM algorithm computes the factorization exactly when  = 0. Although
+this method is guaranteed to run in polynomial time, it has many undesirable features. First, the
+algorithm requires a priori knowledge of the parameters α and . It may be possible to calculate
+, but we can only estimate α if we know which rows are hott. Second, the algorithm computes
+all (cid:96)1 distances between rows at a cost of O(f 2n). Third, for every row in the matrix, we must
+determine its distance to the convex hull of the rows that lie at a sufﬁcient distance; this step requires
+us to solve a linear program for each row of the matrix at a cost of Ω(f n). Finally, this method is
+intimately linked to the choice of the error norm (cid:107)·(cid:107)∞,1 . It is not obvious how to adapt the algorithm
+for other noise models. We present a new approach, based on linear programming, that overcomes
+these drawbacks.
+
+|∆ij | .
+
+3 Main Theoretical Results: NMF by Linear Programming
+
+This paper shows that we can factor an approximately separable nonnegative matrix by solving a
+linear program. A major advantage of this formulation is that it scales to very large data sets.
+
+3
+
+213213d3d2d1d1Algorithm 2 Separable Nonnegative Matrix Factorization by Linear Programming
+Require: An f × n nonnegative matrix Y with a rank-r separable NMF.
+Ensure: An f × r matrix F and r × n matrix W with F ≥ 0, W ≥ 0, and Y = F W .
+1: Find the unique C ∈ Φ(Y ) to minimize pT diag(C ) where p is any vector with distinct values.
+2: Let I = {i : Cii = 1} and set W = YI · and F = C·I .
+
+Y = ΠT
+
+ΠY =: C Y
+
+Here is the key observation: Suppose that Y is any f × n nonnegative matrix that admits a rank-r
+(cid:21)
+(cid:20) Ir
+separable factorization Y = F W . If we pad F with zeros to form an f × f matrix, we have
+0
+M 0
+We call the matrix C factorization localizing. Note that any factorization localizing matrix C is an
+element of the polyhedral set
+Φ(Y ) := {C ≥ 0 : C Y = Y , Tr(C ) = r, Cj j ≤ 1 ∀j, Cij ≤ Cj j ∀i, j }.
+Thus, to ﬁnd an exact NMF of Y , it sufﬁces to ﬁnd a feasible element of C ∈ Φ(Y ) whose
+diagonal is integral. This task can be accomplished by linear programming. Once we have such
+a C , we construct W by extracting the rows of X that correspond to the indices i where Cii =
+1. We construct the feature matrix F by extracting the nonzero columns of C . This approach is
+summarized in Algorithm 2. In turn, we can prove the following result.
+
+Theorem 3.1 Suppose Y is a nonnegative matrix with a rank-r separable factorization Y = F W .
+Then Algorithm 2 constructs a rank-r nonnegative matrix factorization of Y .
+
+As the theorem suggests, we can isolate the rows of Y that yield a simplicial factorization by solving
+a single linear program. The factor F can be found by extracting columns of C .
+
+3.1 Robustness to Noise
+
+Φτ (X ) :=
+
+Suppose we observe a nonnegative matrix X whose rows sum to one. Assume that X = Y + ∆
+where Y is a nonnegative matrix whose rows sum to one, which has a rank-r separable factorization
+Y = F W such that the rows of W are α-robust simplicial, and where (cid:107)∆(cid:107)∞,1 ≤ . Deﬁne the
+(cid:110)
+(cid:111)
+polyhedral set
+C ≥ 0 : (cid:107)CX − X (cid:107)∞,1 ≤ τ , Tr(C ) = r, Cj j ≤ 1 ∀j, Cij ≤ Cj j ∀i, j
+The set Φ(X ) consists of matrices C that approximately locate a factorization of X . We can prove
+the following result.
+(cid:13)(cid:13)(cid:13)X − ˆF ˆW
+(cid:13)(cid:13)(cid:13)∞,1
+Theorem 3.2 Suppose that X satisﬁes the assumptions stated in the previous paragraph. Further-
+more, assume that for every row Yj,· that is not hott, we have the margin constraint (cid:107)Yj,·−Yi,·(cid:107) ≥ d0
+≤ 2
+for all hott rows i. Then we can ﬁnd a nonnegative factorization satisfying
+provided that  < min{αd0 ,α2 }
+. Furthermore, this factorization correctly identiﬁes the hott topics
+9(r+1)
+appearing in the separable factorization of Y .
+Algorithm 3 requires the solution of two linear programs. The ﬁrst minimizes a cost vector over
+(cid:13)(cid:13)(cid:13)X − Z ˆW
+(cid:13)(cid:13)(cid:13)∞,1
+Φ2 (X ). This lets us ﬁnd ˆW . Afterward, the matrix ˆF can be found by setting
+Our robustness result requires a margin-type constraint assuming that the original conﬁguration
+consists either of duplicate hott topics, or topics that are reasonably far away from the hott topics. On
+the other hand, under such a margin constraint, we can construct a considerably better approximation
+that guaranteed by the AGKM algorithm. Moreover, unlike AGKM, our algorithm does not need to
+know the parameter α.
+
+ˆF = arg min
+Z≥0
+
+.
+
+(2)
+
+4
+
+Algorithm 3 Approximably Separable Nonnegative Matrix Factorization by Linear Programming
+Require: An f × n nonnegative matrix X that satisﬁes the hypotheses of Theorem 3.2.
+Ensure: An f × r matrix F and r × n matrix W with F ≥ 0, W ≥ 0, and (cid:107)X − F W (cid:107)∞,1 ≤ 2.
+1: Find C ∈ Φ2 (X ) that minimizes pT diag C where p is any vector with distinct values.
+2: Let I = {i : Cii = 1} and set W = XI · .
+3: Set F = arg minZ∈Rf ×r (cid:107)X − ZW (cid:107)∞,1
+
+The proofs of Theorems 3.1 and 3.2 can be found in the b version of this paper [6]. The main idea
+is to show that we can only represent a hott topic efﬁciently using the hott topic itself. Some earlier
+versions of this paper contained incomplete arguments, which we have remedied. For a signifcantly
+stronger robustness analysis of Algorithm 3, see the recent paper [13].
+Having established these theoretical guarantees, it now remains to develop an algorithm to solve
+the LP. Off-the-shelf LP solvers may sufﬁce for moderate-size problems, but for large-scale matrix
+factorization problems, their running time is prohibitive, as we show in Section 5. In Section 4, we
+turn to describe how to solve Algorithm 3 efﬁciently for large data sets.
+
+3.2 Related Work
+
+Localizing factorizations via column or row subset selection is a popular alternative to direct fac-
+torization methods such as the SVD. Interpolative decomposition such as Rank-Revealing QR [15]
+and CUR [20] have favorable efﬁciency properties as compared to factorizations (such as SVD) that
+are not based on exemplars. Factorization localization has been used in subspace clustering and has
+been shown to be robust to outliers [10, 24].
+In recent work on dictionary learning, Esser et al. and Elhamifar et al. have proposed a factorization
+localization solution to nonnegative matrix factorization using group sparsity techniques [9, 11].
+Esser et al. prove asymptotic exact recovery in a restricted noise model, but this result requires
+preprocessing to remove duplicate or near-duplicate rows. Elhamifar shows exact representative
+recovery in the noiseless setting assuming no hott topics are duplicated. Our work here improves
+upon this work in several aspects, enabling ﬁnite sample error bounds, the elimination of any need
+to preprocess the data, and algorithmic implementations that scale to very large data sets.
+
+4
+
+Incremental Gradient Algorithms for NMF
+
+The rudiments of our fast implementation rely on two standard optimization techniques: dual de-
+composition and incremental gradient descent. Both techniques are described in depth in Chapters
+3.4 and 7.8 of Bertsekas and Tstisklis [5].
+We aim to minimize pT diag(C ) subject to C ∈ Φτ (X ). To proceed, form the Lagrangian
+f(cid:88)
+L(C , β , w) = pT diag(C ) + β (Tr(C ) − r) +
+wi ((cid:107)Xi· − [CX ]i·(cid:107)1 − τ )
+i=1
+with multipliers β and w ≥ 0. Note that we do not dualize out all of the constraints. The remaining
+ones appear in the constraint set Φ0 = {C : C ≥ 0, diag(C ) ≤ 1, and Cij ≤ Cj j for all i, j }.
+Dual subgradient ascent solves this problem by alternating between minimizing the Lagrangian over
+the constraint set Φ0 , and then taking a subgradient step with respect to the dual variables
+wi ← wi + s ((cid:107)Xi· − [C (cid:63)X ]i·(cid:107)1 − τ )
+and β ← β + s(Tr(C (cid:63) ) − r)
+where C (cid:63) is the minimizer of the Lagrangian over Φ0 . The update of wi makes very little difference
+in the solution quality, so we typically only update β .
+ .
+ (cid:88)
+We minimize the Lagrangian using projected incremental gradient descent. Note that we can rewrite
+n(cid:88)
+the Lagrangian as
+j∈supp(X·k )
+k=1
+
+wj (cid:107)Xjk − [CX ]jk (cid:107)1 + µj (pj + β )Cj j
+
+L(C , β , w) = −τ 1T w − β r +
+
+5
+
+Algorithm 4 HOTTO P IXX: Approximate Separable NMF by Incremental Gradient Descent
+Require: An f × n nonnegative matrix X . Primal and dual stepsizes sp and sd .
+Ensure: An f × r matrix F and r × n matrix W with F ≥ 0, W ≥ 0, and (cid:107)X − F W (cid:107)∞,1 ≤ 2.
+1: Pick a cost p with distinct entries.
+2: Initialize C = 0, β = 0
+3: for t = 1, . . . , Nepochs do
+for i = 1, . . . n do
+4:
+Choose k uniformly at random from [n].
+5:
+C ← C + sp · sign(X·k − CX·k )X T·k − sp diag(µ ◦ (β1 − p)).
+6:
+end for
+7:
+Project C onto Φ0 .
+8:
+β ← β + sd (Tr(C ) − r)
+9:
+10: end for
+11: Let I = {i : Cii = 1} and set W = XI · .
+12: Set F = arg minZ∈Rf ×r (cid:107)X − ZW (cid:107)∞,1
+
+Here, supp(x) is the set indexing the entries where x is nonzero, and µj is the number of nonzeros
+in row j divided by n. The incremental gradient method chooses one of the n summands at random
+and follows its subgradient. We then project the iterate onto the constraint set Φ0 . The projection
+onto Φ0 can be performed in the time required to sort the individual columns of C plus a linear-time
+operation. The full procedure is described in the extended version of this paper [6]. In the case
+where we expect a unique solution, we can drop the constraint Cij ≤ Cj j , resulting in a simple
+clipping procedure: set all negative items to zero and set any diagonal entry exceeding one to one.
+In practice, we perform a tradeoff. Since the constraint Cij ≤ Cj j is used solely for symmetry
+breaking, we have found empirically that we only need to project onto Φ0 every n iterations or so.
+This incremental iteration is repeated n times in a phase called an epoch. After each epoch, we
+update the dual variables and quit after we believe we have identiﬁed the large elements of the
+diagonal of C . Just as before, once we have identiﬁed the hott rows, we can form W by selecting
+these rows of X . We can ﬁnd F just as before, by solving (2). Note that this minimization can
+also be computed by incremental subgradient descent. The full procedure, called HOTTO P IXX, is
+described in Algorithm 4.
+
+4.1 Sparsity and Computational Enhancements for Large Scale.
+
+For small-scale problems, HOTTO P IXX can be implemented in a few lines of Matlab code. But for
+the very large data sets studied in Section 5, we take advantage of natural parallelism and a host
+of low-level optimizations that are also enabled by our formulation. As in any numerical program,
+memory layout and cache behavior can be critical factors for performance. We use standard tech-
+niques: in-memory clustering to increase prefetching opportunities, padded data structures for better
+cache alignment, and compiler directives to allow the Intel compiler to apply vectorization.
+Note that the incremental gradient step (step 6 in Algorithm 4) only modiﬁes the entries of C where
+X·k is nonzero. Thus, we can parallelize the algorithm with respect to updating either the rows
+or the columns of C . We store X in large contiguous blocks of memory to encourage hardware
+prefetching. In contrast, we choose a dense representation of our localizing matrix C ; this choice
+trades space for runtime performance.
+Each worker thread is assigned a number of rows of C so that all rows ﬁt in the shared L3 cache.
+Then, each worker thread repeatedly scans X while marking updates to multiple rows of C . We
+repeat this process until all rows of C are scanned, similar to the classical block-nested loop join in
+relational databases [22].
+
+5 Experiments
+
+Except for the speedup curves, all of the experiments were run on an identical conﬁguration: a dual
+Xeon X650 (6 cores each) machine with 128GB of RAM. The kernel is Linux 2.6.32-131.
+
+6
+
+Figure 2: Performance proﬁles for synthetic data. (a) (∞, 1)-norm error for 40 × 400 sized instances and
+(b) all instances. (c) is the performance proﬁle for running time on all instances. RMSE performance proﬁles
+for the (d) small scale and (e) medium scale experiments. (f) (∞, 1)-norm error for the η ≥ 1. In the noisy
+examples, even 4 epochs of HOTTO P IXX is sufﬁcient to obtain competitive reconstruction error.
+
+In small-scale, synthetic experiments, we compared HOTTO P IXX to the AGKM algorithm and the
+linear programming formulation of Algorithm 3 implemented in Matlab. Both AGKM and Algo-
+rithm 3 were run using CVX [14] coupled to the SDPT3 solver [26]. We ran HOTTO P IXX for 50
+epochs with primal stepsize 1e-1 and dual stepsize 1e-2. Once the hott topics were identiﬁed, we ﬁt
+F using two cleaning epochs of incremental gradient descent for all three algorithms.
+To generate our instances, we sampled r hott topics uniformly from the unit simplex in Rn . These
+topics were duplicated d times. We generated the remaining f − r(d + 1) rows to be random convex
+combinations of the hott topics, with the combinations selected uniformly at random. We then
+added noise with (∞, 1)-norm error bounded by η ·
+α2
+20+13α . Recall that AGKM algorithm is only
+guaranteed to work for η < 1. We ran with f ∈ {40, 80, 160}, n ∈ {400, 800, 1600}, r ∈ {3, 5, 10},
+d ∈ {0, 1, 2}, and η ∈ {0.25, 0.95, 4, 10, 100}. Each experiment was repeated 5 times.
+Because we ran over 2000 experiments with 405 different parameter settings, it is convenient to use
+the performance proﬁles to compare the performance of the different algorithms [7]. Let P be the
+set of experiments and A denote the set of different algorithms we are comparing. Let Qa (p) be
+the value of some performance metric of the experiment p ∈ P for algorithm a ∈ A. Then the
+performance proﬁle at τ for a particular algorithm is the fraction of the experiments where the value
+of Qa (p) lies within a factor of τ of the minimal value of minb∈A Qb (p). That is,
+# {p ∈ P : Qa (p) ≤ τ mina(cid:48)∈A Qa(cid:48) (p)}
+#(P )
+In a performance proﬁle, the higher a curve corresponding to an algorithm, the more often it outper-
+forms the other algorithms. This gives a convenient way to contrast algorithms visually.
+Our performance proﬁles are shown in Figure 2. The ﬁrst two ﬁgures correspond to experiments
+with f = 40 and n = 400. The third ﬁgure is for the synthetic experiments with all other values
+of f and n. In terms of (∞, 1)-norm error, the linear programming solver typically achieves the
+lowest error. However, using SDPT3, it is prohibitively slow to factor larger matrices. On the other
+hand, HOTTO P IXX achieves better noise performance than the AGKM algorithm in much less time.
+Moreover, the AGKM algorithm must be fed the values of  and α in order to run. HOTTO P IXX does
+not require this information and still achieves about the same error performance.
+We also display a graph for running only four epochs (hott (fast)). This algorithm is by far the fastest
+algorithm, but does not achieve as optimal a noise performance. For very high levels of noise,
+however, it achieves a lower reconstruction error than the AGKM algorithm, whose performance
+
+Pa (τ ) =
+
+.
+
+7
+
+020406000.20.40.60.81τPr(error≤τ errormin)  (a)hotthott (fast)hott (lp)AGKM020406000.20.40.60.81τPr(error≤τ errormin)  (b)hotthott (fast)AGKM010020030000.20.40.60.81τPr(time≤τ timemin)  (c)hotthott (fast)AGKM020406000.20.40.60.81τPr(RMSE≤τ RMSEmin)  (d)hotthott (fast)hott (lp)AGKM020406000.20.40.60.81τPr(RMSE≤τ RMSEmin)  (e)hotthott (fast)AGKM020406000.20.40.60.81τPr(error≤τ errormin)  (f)hotthott (fast)AGKMdata set
+jumbo
+clueweb
+RCV1
+
+features
+1600
+44739
+47153
+
+documents
+64000
+351849
+781265
+
+nonzeros
+1.02e8
+1.94e7
+5.92e7
+
+size (GB)
+2.7
+0.27
+1.14
+
+time (s)
+338
+478
+430
+
+Table 1: Description of the large data sets. Time is to ﬁnd 100 hott topics on the 12 core machines.
+
+Figure 3: (left) The speedup over a serial implementation for HOTTO P IXX on the jumbo and clueweb data
+sets. Note the superlinear speedup for up to 20 threads. (middle) The RMSE for the clueweb data set. (right)
+The test error on RCV1 CCAT class versus the number of hott topics. The horizontal line indicates the test
+error achieved using all of the features.
+
+degrades once η approaches or exceeds 1 (Figure 2(f)). We also provide performance proﬁles for
+the root-mean-square error of the nonnegative matrix factorizations (Figure 2 (d) and (e)). The
+performance is qualitatively similar to that for the (∞, 1)-norm.
+We also coded HOTTO P IXX in C++, using the design principles described in Section 4.1, and ran on
+three large data sets. We generated a large synthetic example (jumbo) as above with r = 100. We
+generated a co-occurrence matrix of people and places from the ClueWeb09 Dataset [2], normalized
+by TFIDF. We also used HOTTO P IXX to select features from the RCV1 data set to recognize the
+class CCAT [19]. The statistics for these data sets can be found in Table 1.
+In Figure 3 (left), we plot the speed-up over a serial implementation. In contrast to other parallel
+methods that exhibit memory contention [21], we see superlinear speed-ups for up to 20 threads
+due to hardware prefetching and cache effects. All three of our large data sets can be trained in
+minutes, showing that we can scale HOTTO P IXX on both synthetic and real data. Our algorithm is
+able to correctly identify the hott topics on the jumbo set. For clueweb, we plot the RMSE Figure 3
+(middle). This curve rolls off quickly for the ﬁrst few hundred topics, demonstrating that our algo-
+rithm may be useful for dimensionality reduction in Natural Language Processing applications. For
+RCV1, we trained an SVM on the set of features extracted by HOTTO P IXX and plot the misclassiﬁ-
+cation error versus the number of topics in Figure 3 (right). With 1500 hott topics, we achieve 7%
+misclassiﬁcation error as compared to 5.5% with the entire set of features.
+
+6 Discussion
+
+This paper provides an algorithmic and theoretical framework for analyzing and deploying any fac-
+torization problem that can be posed as a linear (or convex) factorization localizing program. Future
+work should investigate the applicability of HOTTO P IXX to other factorization localizing algorithms,
+such as subspace clustering, and should revisit earlier theoretical bounds on such prior art.
+
+Acknowledgments
+
+The authors would like to thank Sanjeev Arora, Michael Ferris, Rong Ge, Nicolas Gillis, Ankur
+Moitra, and Stephen Wright for helpful suggestions. BR is generously supported by ONR award
+N00014-11-1-0723, NSF award CCF-1139953, and a Sloan Research Fellowship. CR is generously
+supported by NSF CAREER award under IIS-1054009, ONR award N000141210041, and gifts or
+research awards from American Family Insurance, Google, Greenplum, and Oracle. JAT is gener-
+ously supported by ONR award N00014-11-1002, AFOSR award FA9550-09-1-0643, and a Sloan
+Research Fellowship.
+
+8
+
+010203040010203040threadsspeedup  jumboclueweb0500100015002000250046810121416number of topicsRMSE01000200030004000500051015202530number of topicsclass errorIn Proceedings of the IEEE Conference on
+
+References
+[1] docs.oracle.com/cd/B28359_01/datamine.111/b28129/algo_nmf.htm.
+[2] lemurproject.org/clueweb09/.
+[3] www.mathworks.com/help/toolbox/stats/nnmf.html.
+[4] S. Arora, R. Ge, R. Kannan, and A. Moitra. Computing a nonnegative matrix factorization – provably. To
+appear in STOC 2012. Preprint available at \arxiv.org/abs/1111.0952, 2011.
+[5] D. P. Bertsekas and J. N. Tsitsiklis. Parallel and Distributed Computation: Numerical Methods. Athena
+Scientiﬁc, Belmont, MA, 1997.
+[6] V. Bittorf, B. Recht, C. R ´e, and J. A. Tropp. Factoring nonnegative matrices with linear programs. Tech-
+nical Report. Available at arxiv.org/1206.1270, 2012.
+[7] E. D. Dolan and J. J. Mor ´e. Benchmarking optimization software with performance proﬁles. Mathemati-
+cal Programming, Series A, 91:201–213, 2002.
+[8] D. Donoho and V. Stodden. When does non-negative matrix factorization give a correct decomposition
+into parts? In Advances in Neural Information Processing Systems, 2003.
+[9] E. Elhamifar, G. Sapiro, and R. Vidal. See all by looking at a few: Sparse modeling for ﬁnding represen-
+tative objects. In Proceedings of CVPR, 2012.
+[10] E. Elhamifar and R. Vidal. Sparse subspace clustering.
+Computer Vision and Pattern Recognition, 2009.
+[11] E. Esser, M. M ¨oller, S. Osher, G. Sapiro, and J. Xin. A convex model for non-negative matrix factorization
+IEEE Transactions on Image Processing, 2012. To
+and dimensionality reduction on physical space.
+appear. Preprint available at arxiv.org/abs/1102.0844.
+[12] R. Gaujoux and C. Seoighe. NMF: A ﬂexible R package for nonnegative matrix factorization. BMC
+Bioinformatics, 11:367, 2010. doi:10.1186/1471-2105-11-367.
+[13] N. Gillis. Robustness analysis of hotttopixx, a linear programming model for factoring nonnegative ma-
+trices. arxiv.org/1211.6687, 2012.
+[14] M. Grant and S. Boyd. CVX: Matlab software for disciplined convex programming, version 1.21. http:
+//cvxr.com/cvx, May 2010.
+[15] M. Gu and S. C. Eisenstat. Efﬁcient algorithms for computing a strong rank-revealing QR factorization.
+SIAM Journal on Scientiﬁc Computing, 17:848–869, 1996.
+[16] T. Hofmann. Probabilistic latent semantic indexing. In Proceedings of the 22nd Annual International
+SIGIR Conference on Research and Development in Information Retrieval, 1999.
+[17] D. D. Lee and H. S. Seung. Learning the parts of objects by non-negative matrix factorization. Nature,
+401:788–791, 1999.
+[18] D. D. Lee and H. S. Seung. Algorithms for non-negative matrix factorization. In Advances in Neural
+Information Processing Systems, 2001.
+[19] D. Lewis, Y. Yang, T. Rose, and F. Li. RCV1: A new benchmark collection for text categorization
+research. Journal of Machine Learning Research, 5:361–397, 2004.
+[20] M. W. Mahoney and P. Drineas. CUR matrix decompositions for improved data analysis. Proceedings of
+the National Academy of Sciences, 106:697–702, 2009.
+[21] F. Niu, B. Recht, C. R ´e, and S. J. Wright. HOGWILD!: A lock-free approach to parallelizing stochastic
+gradient descent. In Advances in Neural Information Processing Systems, 2011.
+[22] L. D. Shapiro. Join processing in database systems with large main memories. ACM Transactions on
+Database Systems, 11(3):239–264, 1986.
+[23] P. Smaragdis. Non-negative matrix factorization for polyphonic music transcription. In IEEE Workshop
+on Applications of Signal Processing to Audio and Acoustics, pages 177–180, 2003.
+[24] M. Soltanolkotabi and E. J. Cand `es. A geometric analysis of subspace clustering with outliers. Preprint
+available at arxiv.org/abs/1112.4258, 2011.
+[25] L. B. Thomas. Problem 73-14, rank factorization of nonnegative matrices. SIAM Review, 16(3):393–394,
+1974.
+SDPT3:
+T ¨ut ¨unc ¨u.
+and R. H.
+Todd,
+Toh, M.
+[26] K. C.
+ware
+programming.
+semideﬁnite-quadratic-linear
+for
+package
+http://www.math.nus.edu.sg/˜mattohkc/sdpt3.html.
+[27] S. A. Vavasis. On the complexity of nonnegative matrix factorization. SIAM Joural on Optimization,
+20(3):1364–1377, 2009.
+
+A MATLAB
+Available
+
+soft-
+from
+
+9
+
+

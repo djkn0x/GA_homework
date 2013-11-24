@@ -1,0 +1,2362 @@
+Hashing Algorithms for Large-Scale Learning
+
+Ping Li
+Cornell University
+pingli@cornell.edu
+
+Anshumali Shrivastava
+Cornell University
+anshu@cs.cornell.edu
+
+Joshua Moore
+Cornell University
+jlmo@cs.cornell.edu
+
+Arnd Christian K ¨onig
+Microsoft Research
+chrisko@microsoft.com
+Abstract
+Minwise hashing is a standard technique in the context of search for efﬁciently
+computing set similarities. The recent development of b-bit minwise hashing pro-
+vides a substantial improvement by storing only the lowest b bits of each hashed
+value.
+In this paper, we demonstrate that b-bit minwise hashing can be natu-
+rally integrated with linear learning algorithms such as linear SVM and logistic
+regression, to solve large-scale and high-dimensional statistical learning tasks, es-
+pecially when the data do not ﬁt in memory. We compare b-bit minwise hashing
+with the Count-Min (CM) and Vowpal Wabbit (VW) algorithms, which have es-
+sentially the same variances as random projections. Our theoretical and empirical
+comparisons illustrate that b-bit minwise hashing is signiﬁcantly more accurate (at
+the same storage cost) than VW (and random projections) for binary data.
+
+1 Introduction
+With the advent of the Internet, many machine learning applications are faced with very large and
+inherently high-dimensional datasets, resulting in challenges in scaling up training algorithms and
+storing the data. Especially in the context of search and machine translation, corpus sizes used in
+industrial practice have long exceeded the main memory capacity of single machine. For example,
+[33] discusses training sets with 1011 items and 109 distinct features, requiring novel algorithmic
+approaches and architectures. As a consequence, there has been a renewed emphasis on scaling up
+machine learning techniques by using massively parallel architectures; however, methods relying
+solely on parallelism can be expensive (both with regards to hardware requirements and energy
+costs) and often induce signiﬁcant additional communicati on and data distribution overhead.
+
+This work approaches the challenges posed by large datasets by leveraging techniques from the area
+of similarity search [2], where similar increases in data sizes have made the storage and computa-
+tional requirements for computing exact distances prohibitive, thus making data representations that
+allow compact storage and efﬁcient approximate similarity computation necessary.
+
+The method of b-bit minwise hashing [26 –28] is a recent progress for efﬁcie
+ntly (in both time and
+space) computing resemblances among extremely high-dimensional (e.g., 264 ) binary vectors. In
+this paper, we show that b-bit minwise hashing can be seamlessly integrated with linear Support
+Vector Machine (SVM) [13, 18, 20, 31, 35] and logistic regression solvers.
+1.1 Ultra High-Dimensional Large Datasets and Memory Bottlenecks
+
+In the context of search, a standard procedure to represent documents (e.g., Web pages) is to use
+w-shingles (i.e., w contiguous words), where w ≥ 5 in several studies [6, 7, 14]. This procedure can
+generate datasets of extremely high dimensions. For example, suppose we only consider 105 com-
+mon English words. Using w = 5 may require the size of dictionary Ω to be D = |Ω| = 1025 = 283 .
+In practice, D = 264 often sufﬁces, as the number of available documents may not b e large enough
+to exhaust the dictionary. For w-shingle data, normally only abscence/presence (0/1) information
+is used, as it is known that word frequency distributions within documents approximately follow
+a power-law [3], meaning that most single terms occur rarely, thereby making a w-shingle is un-
+likely to occur more than once in a document. Interestingly, even when the data are not too high-
+dimensional, empirical studies [8, 17, 19] achieved good performance with binary-quantized data.
+
+When the data can ﬁt in memory, linear SVM training is often ex tremely efﬁcient after the data are
+loaded into the memory. It is however often the case that, for very large datasets, the data loading
+
+1
+
+time dominates the computing time for solving the SVM problem [35]. A more severe problem
+arises when the data can not ﬁt in memory. This situation can b e common in practice. The publicly
+available webspam dataset (in LIBSVM format) needs about 24GB disk space, which exceeds the
+memory capacity of many desktop PCs. Note that webspam, which contains only 350,000 docu-
+ments represented by 3-shingles, is still very small compared to industry applications [33].
+
+1.2 Our Proposal
+We propose a solution which leverages b-bit minwise hashing. Our approach assumes the data
+vectors are binary, high-dimensional, and relatively sparse, which is generally true of text documents
+represented via shingles. We apply b-bit minwise hashing to obtain a compact representation of the
+original data. In order to use the technique for efﬁcient lea rning, we have to address several issues:
+• We need to prove that the matrices generated by b-bit minwise hashing are positive de ﬁnite,
+which will provide the solid foundation for our proposed solution.
+• If we use b-bit minwise hashing to estimate the resemblance, which is nonlinear, how can
+we effectively convert this nonlinear problem into a linear problem?
+• Compared to other hashing techniques such as random projections, Count-Min (CM)
+sketch [11], or Vowpal Wabbit (VW) [32, 34], does our approach exhibits advantages?
+It turns out that our proof in the next section that b-bit hashing matrices are positive de ﬁnite naturally
+provides the construction for converting the otherwise nonlinear SVM problem into linear SVM.
+2 Review of Minwise Hashing and b-Bit Minwise Hashing
+Minwise hashing [6, 7] has been successfully applied to a wide range of real-world problems [4, 6, 7,
+9, 10, 12, 15, 16, 30], for efﬁciently computing set similari ties. Minwise hashing mainly works well
+with binary data, which can be viewed either as 0/1 vectors or as sets. Given two sets, S1 , S2 ⊆
+Ω = {0, 1, 2, ..., D − 1}, a widely used measure of similarity is the resemblance R:
+|S1 ∩ S2 |
+a
+where f1 = |S1 |, f2 = |S2 |, a = |S1 ∩ S2 |.
+R =
+=
+,
+f1 + f2 − a
+|S1 ∪ S2 |
+Applying a random permutation π : Ω → Ω on S1 and S2 , the collision probability is simply
+|S1 ∩ S2 |
+Pr (min(π (S1 )) = min(π (S2 ))) =
+= R.
+|S1 ∪ S2 |
+One can repeat the permutation k times: π1 , π2 , ..., πk to estimate R without bias. The common
+practice is to store each hashed value, e.g., min(π(S1 )) and min(π(S2 )), using 64 bits [14]. The
+storage (and computational) cost will be prohibitive in truly large-scale (industry) applications [29].
+b-bit minwise hashing [27] provides a strikingly simple solution to this (storage and computational)
+problem by storing only the lowest b bits (instead of 64 bits) of each hashed value.
+
+(1)
+
+(2)
+
+(z (b)
+For convenience, denote z1 = min (π (S1 )) and z2 = min (π (S2 )), and denote z (b)
+2 ) the
+1
+integer value corresponding to the lowest b bits of of z1 (z2 ). For example, if z1 = 7, then z (2)
+1 = 3.
+Theorem 1 [27] Assume D is large.
+Pb = Pr “z (b)
+2 ” = C1,b + (1 − C2,b ) R
+1 = z (b)
+f1
+f2
+D
+D
+
+, f1 = |S1 |, f2 = |S2 |
+
+r2 =
+
+r1 =
+
+(3)
+
+,
+
+C1,b = A1,b
+
++ A2,b
+
+r2
+r1 + r2
+r1 [1 − r1 ]2b
+−1
+1 − [1 − r1 ]2b ,
+
+A1,b =
+
+r1
+r1 + r2
+
+,
+
+C2,b = A1,b
+
+A2,b =
+
+r2
+r1 + r2
+
+,
+
++ A2,b
+
+r1
+r1 + r2
+r2 [1 − r2 ]2b
+−1
+1 − [1 − r2 ]2b .(cid:3)
+
+This (approximate) formula (3) is remarkably accurate, even for very small D; see Figure 1 in [25].
+We can then estimate Pb (and R) from k independent permutations:
+Var “ ˆPb ”
+[1 − C2,b ]2 =
+
+[C1,b + (1 − C2,b )R] [1 − C1,b − (1 − C2,b )R]
+[1 − C2,b ]2
+
+ˆPb − C1,b
+1 − C2,b
+
+Var “ ˆRb ” =
+
+ˆRb =
+
+(4)
+
+1
+k
+
+,
+
+It turns out that our method only needs ˆPb for linear learning, i.e., no need to explicitly estimate R.
+
+2
+
+Mij = 1{zi = zj } =
+
+1{zi = t} × 1{zj = t},
+
+3 Kernels from Minwise Hashing b-Bit Minwise Hashing
+De ﬁnition : A symmetric n × n matrix K satisfying Pij cicj Kij ≥ 0, for all real vectors c is called
+positive de ﬁnite (PD) . Note that here we do not differentiate PD from nonnegative de ﬁnite .
+Theorem 2 Consider n sets S1 , ..., Sn ⊆ Ω = {0, 1, ..., D − 1}. Apply one permutation π to each
+set. De ﬁne zi = min{π(Si )} and z (b)
+the lowest b bits of zi . The following three matrices are PD.
+i
+1. The resemblance matrix R ∈ Rn×n , whose (i, j )-th entry is the resemblance between set
+Si and set Sj : Rij = |Si∩Sj |
+|Si∩Sj |
+|Si∪Sj | =
+|Si |+|Sj |−|Si∩Sj | .
+2. The minwise hashing matrix M ∈ Rn×n : Mij = 1{zi = zj }.
+j o.
+ij = 1 nz (b)
+i = z (b)
+3. The b-bit minwise hashing matrix M(b) ∈ Rn×n : M (b)
+Consequently, consider k independent permutations and denote M(b)
+(s) the b-bit minwise hashing
+M(b)
+matrix generated by the s-th permutation. Then the summation Pk
+(s) is also PD.
+s=1
+Proof: A matrix A is PD if it can be written as an inner product BTB. Because
+D−1
+X
+t=0
+Mij is the inner product of two D-dim vectors. Thus, M is PD. Similarly, M(b) is PD because
+ij = P2b
+M (b)
+t=0 1{z (b)
+i = t} × 1{z (b)
+−1
+j = t}. R is PD because Rij = Pr{Mij = 1} = E (Mij ) and
+Mij is the (i, j )-th element of the PD matrix M. Note that the expectation is a linear operation. (cid:3)
+4 Integrating b-Bit Minwise Hashing with (Linear) Learning Algorithms
+Linear algorithms such as linear SVM and logistic regression have become very powerful and ex-
+tremely popular. Representative software packages include SVMperf [20], Pegasos [31], Bottou’s
+SGD SVM [5], and LIBLINEAR [13]. Given a dataset {(xi , yi )}n
+i=1 , xi ∈ RD , yi ∈ {−1, 1}. The
+L2 -regularized linear SVM solves the following optimization problem):
+n
+X
+i=1
+and the L2 -regularized logistic regression solves a similar problem:
+n
+X
+i=1
+Here C > 0 is a regularization parameter. Since our purpose is to demonstrate the effectiveness of
+our proposed scheme using b-bit hashing, we simply provide results for a wide range of C values
+and assume that the best performance is achievable if we conduct cross-validations.
+In our approach, we apply k random permutations on each feature vector xi and store the lowest b
+bits of each hashed value. This way, we obtain a new dataset which can be stored using merely nbk
+bits. At run-time, we expand each new data point into a 2b × k-length vector with exactly k 1’s.
+For example, suppose k = 3 and the hashed values are originally {12013, 25964, 20191}, whose bi-
+nary digits are {010111011101101, 110010101101100, 100111011011111}. Consider b = 2. Then
+the binary digits are stored as {01, 00, 11} (which corresponds to {1, 0, 3} in decimals). At run-time,
+we need to expand them into a vector of length 2bk = 12, to be {0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0},
+which will be the new feature vector fed to a solver such as LIBLINEAR. Clearly, this expansion is
+directly inspired by the proof that the b-bit minwise hashing matrix is PD in Theorem 2.
+5 Experimental Results on Webspam Dataset
+Our experiment settings closely follow the work in [35]. They conducted experiments on three
+datasets, of which only the webspam dataset is public and reasonably high-dimensional (n =
+350000, D = 16609143). Therefore, our experiments focus on webspam. Following [35], we
+randomly selected 20% of samples for testing and used the remaining 80% samples for training.
+We chose LIBLINEAR as the workhorse to demonstrate the effectiveness of our algorithm. All
+experiments were conducted on workstations with Xeon(R) CPU (W5590@3.33GHz) and 48GB
+
+log “1 + e−yiw
+
+max n1 − yiw
+
+T
+
+xi ” .
+
+T
+
+xi , 0o ,
+
+T
+
+w
+
+w + C
+
+T
+
+w
+
+w + C
+
+min
+w
+
+1
+2
+
+min
+w
+
+1
+2
+
+(5)
+
+(6)
+
+(7)
+
+3
+
+RAM, under Windows 7 System. Thus, in our case, the original data (about 24GB in LIBSVM
+format) ﬁt in memory. In applications when the data do not ﬁt i
+n memory, we expect that b-bit
+hashing will be even more substantially advantageous, because the hashed data are relatively very
+small. In fact, our experimental results will show that for this dataset, using k = 200 and b = 8 can
+achieve similar testing accuracies as using the original data. The effective storage for the reduced
+dataset (with 350K examples, using k = 200 and b = 8) would be merely about 70MB.
+
+5.1 Experimental Results on Nonlinear (Kernel) SVM
+We implemented a new resemblance kernel function and tried to use LIBSVM to train an SVM using
+the webspam dataset. The training time well exceeded 24 hours. Fortunately, using b-bit minswise
+hashing to estimate the resemblance kernels provides a substantial improvement. For example, with
+k = 150, b = 4, and C = 1, the training time is about 5185 seconds and the testing accuracy is quite
+close to the best results given by LIBLINEAR on the original webspam data.
+
+5.2 Experimental Results on Linear SVM
+There is an important tuning parameter C . To capture the best performance and ensure repeatability,
+we experimented with a wide range of C values (from 10−3 to 102 ) with ﬁne spacings in [0.1, 10].
+We experimented with k = 10 to k = 500, and b = 1, 2, 4, 6, 8, 10, and 16. Figure 1 (average)
+and Figure 2 (std, standard deviation) provide the test accuracies. Figure 1 demonstrates that using
+b ≥ 8 and k ≥ 200 achieves similar test accuracies as using the original data. Since our method
+is randomized, we repeated every experiment 50 times. We report both the mean and std values.
+Figure 2 illustrates that the stds are very small, especially with b ≥ 4. In other words, our algorithm
+produces stable predictions. For this dataset, the best performances were usually achieved at C ≥ 1.
+100
+100
+100
+100
+b = 8,10,16
+b = 6,8,10,16
+6
+b = 8,10,16
+98
+98
+98
+98
+b = 4
+96
+96
+96
+96
+94
+94
+94
+94
+92
+92
+92
+92
+90
+90
+90
+90
+88
+88
+88
+88
+86
+86
+86
+86
+84
+84
+84
+84
+82
+82
+82
+82
+80
+80
+80
+80
+10−3
+10−3
+10−3
+10−3
+
+b = 1
+svm: k = 50
+Spam: Accuracy
+100
+102
+101
+
+Spam: Accuracy
+100
+102
+101
+
+svm: k = 30
+Spam: Accuracy
+
+svm: k = 100
+
+svm: k = 150
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+b = 6
+b = 4
+
+8
+b = 6
+
+b = 10,16
+
+10−2
+
+10−1
+
+10−1
+
+10−2
+
+10−2
+
+10−1
+
+10−1
+
+10−2
+
+101
+
+100
+
+102
+
+b = 2
+
+b = 1
+
+b = 4
+
+b = 2
+
+b = 1
+
+b = 2
+
+b = 1
+
+b = 4
+
+b = 2
+
+6
+
+4
+
+4
+
+C
+
+C
+
+C
+
+Spam: Accuracy
+100
+102
+101
+
+C
+
+4
+
+4
+
+b = 4
+
+b = 2
+
+b = 1
+
+b = 6,8,10,16
+
+b = 6,8,10,16
+
+b = 6,8,10,16
+
+b = 4
+b = 2
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+100
+100
+100
+98
+98
+98
+98
+96
+96
+96
+96
+94
+94
+94
+94
+92
+92
+92
+92
+90
+90
+90
+90
+88
+88
+88
+88
+86
+86
+86
+86
+84
+84
+84
+84
+82
+82
+82
+82
+Spam: Accuracy
+Spam: Accuracy
+Spam: Accuracy
+Spam: Accuracy
+80
+80
+80
+80
+10−3
+10−2
+10−1
+100
+102
+101
+10−3
+10−2
+10−1
+100
+102
+101
+10−3
+10−2
+10−1
+100
+102
+101
+10−3
+10−2
+10−1
+100
+102
+101
+C
+C
+C
+C
+Figure 1: SVM test accuracy (averaged over 50 repetitions). With k ≥ 200 and b ≥ 8. b-bit
+hashing achieves very similar accuracies as using the original data (dashed, red if color is available).
+
+b = 4
+b = 2
+b = 1
+
+svm: k = 200
+
+svm: k = 300
+
+svm: k = 500
+
+svm: k = 400
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+b = 4
+b = 2
+
+b = 6,8,10,16
+
+b = 1
+
+b = 1
+
+4
+
+4
+
+100
+
+10−1
+
+b = 1
+
+b = 2
+
+b = 4
+
+b = 6
+b = 8
+b = 10,16
+
+100
+
+10−1
+
+b = 1
+
+b = 2
+
+b = 4
+b = 6
+
+)
+%
+ 
+d
+t
+s
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+
+10−1
+
+b = 1
+
+b = 2
+
+b = 4
+
+)
+%
+ 
+d
+t
+s
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+
+10−1
+
+b = 1
+
+b = 2
+b = 4
+
+b = 6
+b = 8
+10
+b = 16
+
+)
+%
+ 
+d
+t
+s
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+)
+%
+ 
+d
+t
+s
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+svm: k = 100
+svm: k = 200
+svm: k = 500
+svm: k = 50
+Spam accuracy (std)
+Spam accuracy (std)
+Spam accuracy (std)
+Spam accuracy (std)
+10−2
+10−2
+10−2
+10−2
+10−3
+100
+10−1
+10−2
+101
+102
+10−3
+100
+10−1
+10−2
+101
+102
+10−3
+100
+10−1
+10−2
+101
+102
+10−3
+100
+10−1
+10−2
+101
+102
+C
+C
+C
+C
+Figure 2: SVM test accuracy (std). The standard deviations are computed from 50 repetitions.
+When b ≥ 8, the standard deviations become extremely small (e.g., 0.02%).
+Compared with the original training time (about 100 seconds), Figure 3 (upper panels) shows that
+our method only needs about 3 seconds (near C = 1). Note that our reported training time did not
+include data loading (about 12 minutes for the original data and 10 seconds for the hashed data).
+
+b = 6,8,10,16
+
+b = 8,10,16
+
+Compared with the original testing time (about 150 seconds), Figure 3 (bottom panels) shows that
+our method needs merely about 2 seconds. Note that the testing time includes both the data loading
+time, as designed by LIBLINEAR. The efﬁciency of testing may be very important in practice, for
+example, when the classiﬁer is deployed in a user-facing app lication (such as search), while the cost
+of training or preprocessing may be less critical and can be conducted off-line.
+
+4
+
+svm: k = 50
+Spam: Training time
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+svm: k =100
+Spam: Training time
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+svm: k = 200
+Spam: Training time
+
+b = 16
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+svm: k = 500
+Spam: Training time
+
+b = 16
+
+b = 10
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+10−2
+
+10−1
+
+C
+
+100
+
+101
+
+102
+
+svm: k = 50
+Spam: Testing time
+
+100
+10−3
+
+1000
+
+100
+
+10
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+t
+s
+e
+T
+
+100
+10−3
+
+1000
+
+100
+
+10
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+t
+s
+e
+T
+
+10−2
+
+10−1
+
+C
+
+100
+
+101
+
+102
+
+svm: k = 100
+Spam: Testing time
+
+10−2
+
+10−1
+
+C
+
+100
+
+101
+
+102
+
+svm: k = 200
+Spam: Testing time
+
+100
+10−3
+
+1000
+
+100
+
+10
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+t
+s
+e
+T
+
+100
+10−3
+
+1000
+
+100
+
+10
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+t
+s
+e
+T
+
+10−2
+
+10−1
+
+C
+
+100
+
+101
+
+102
+
+svm: k = 500
+Spam: Testing time
+
+2
+2
+2
+2
+1
+1
+1
+1
+10−3
+102
+101
+100
+10−1
+10−2
+10−3
+102
+101
+100
+10−1
+10−2
+10−3
+102
+101
+100
+10−1
+10−2
+10−3
+102
+101
+100
+10−1
+10−2
+C
+C
+C
+C
+Figure 3: SVM training time (upper panels) and testing time (bottom panels). The original costs
+are plotted using dashed (red, if color is available) curves.
+
+5.3 Experimental Results on Logistic Regression
+Figure 4 presents the test accuracies and training time using logistic regression. Again, with k ≥ 200
+and b ≥ 8, b-bit minwise hashing can achieve similar test accuracies as using the original data. The
+training time is substantially reduced, from about 1000 seconds to about 30 seconds only.
+
+b = 8,10,16
+
+b = 8,10,16
+
+b = 6,8,10,16
+
+b = 6
+b = 4
+
+b = 2
+
+b = 1
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+98
+96
+94
+92
+90
+88
+86
+84
+82
+80
+10−3
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+b = 6,8,10,16
+
+4
+
+b = 4
+b = 2
+b = 1
+
+b = 4
+
+b = 2
+
+b = 1
+
+logit: k = 500
+
+Spam: Accuracy
+100
+102
+101
+
+C
+
+10−2
+
+10−1
+
+b = 16
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+98
+96
+94
+92
+90
+88
+86
+84
+82
+80
+10−3
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+b = 1
+logit: k = 50
+Spam: Accuracy
+100
+101
+
+C
+
+102
+
+10−2
+
+10−1
+
+logit: k = 100
+
+Spam: Accuracy
+100
+102
+101
+
+C
+
+10−2
+
+10−1
+
+logit: k = 200
+
+Spam: Accuracy
+100
+102
+101
+
+C
+
+10−2
+
+10−1
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+98
+96
+94
+92
+90
+88
+86
+84
+82
+80
+10−3
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+b = 6
+b = 4
+
+b = 2
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+100
+98
+96
+94
+92
+90
+88
+86
+84
+82
+80
+10−3
+
+103
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+logit: k = 200
+logit: k = 100
+logit: k = 50
+logit: k = 500
+Spam: Training time
+Spam: Training time
+Spam: Training time
+Spam: Training time
+100
+100
+100
+100
+10−3
+10−3
+102
+101
+100
+10−1
+10−2
+10−3
+102
+101
+100
+10−1
+10−2
+102
+101
+100
+10−1
+10−2
+10−3
+101
+100
+10−1
+10−2
+C
+C
+C
+C
+Figure 4: Logistic regression test accuracy (upper panels) and training time (bottom panels).
+
+102
+
+In summary, it appears b-bit hashing is highly effective in reducing the data size and speeding up the
+training (and testing), for both SVM and logistic regression. We notice that when using b = 16, the
+training time can be much larger than using b ≤ 8. Interestingly, we ﬁnd that b-bit hashing can be
+easily combined with Vowpal Wabbit (VW) [34] to further reduce the training time when b is large.
+6 Random Projections, Count-Min (CM) Sketch, and Vowpal Wabbit (VW)
+Random projections [1, 24], Count-Min (CM) sketch [11], and Vowpal Wabbit (VW) [32, 34], as
+popular hashing algorithms for estimating inner products for high-dimensional datasets, are naturally
+applicable in large-scale learning. In fact, those methods are not limited to binary data. Interestingly,
+the three methods all have essentially the same variances. Note that in this paper, we use ”VW“
+particularly for the hashing algorithm in [34], not the in ﬂu ential “VW” online learning platform.
+6.1 Random Projections
+Denote the ﬁrst two rows of a data matrix by u1 , u2 ∈ RD . The task is to estimate the inner
+product a = PD
+i=1 u1,iu2,i . The general idea is to multiply the data vectors by a random matrix
+{rij } ∈ RD×k , where rij is sampled i.i.d. from the following generic distribution with [24]
+E (rij ) = 0, V ar(rij ) = 1, E (r3
+ij ) = 0, E (r4
+(8)
+ij ) = s, s ≥ 1.
+ij ) = s − 1 ≥ 0. This generates two k-dim vectors, v1 and v2 :
+Note that V ar(r2
+ij ) − E 2 (r2
+ij ) = E (r4
+D
+D
+Xi=1
+Xi=1
+(9)
+j = 1, 2, ..., k
+v2,j =
+v1,j =
+
+u1,irij ,
+
+u2,irij ,
+
+5
+
+and the “sparse projection ” distribution speciﬁed as
+
+The general family of distributions (8) includes the standard normal distribution (in this case, s = 3)
+with prob. 1
+rij = √s × 
+1
+2s
+with prob. 1 − 1
+0
+s
+−1 with prob. 1
+
+2s
+[24] provided the following unbiased estimator ˆarp,s of a and the general variance formula:
+E (ˆarp,s ) = a =
+
+D
+Xi=1
+2,i#
+k " D
+D
+D
+1
+Xi=1
+Xi=1
+Xi=1
+u2
+1,iu2
+u2
+2,i + a2 + (s − 3)
+which means s = 1 achieves the smallest variance. The only elementary distribution we know that
+satisﬁes (8) with s = 1 is the two point distribution in {−1, 1} with equal probabilities.
+[23] proposed an improved estimator for random projections as the solution to a cubic equation.
+Because it can not be written as an inner product, that estimator can not be used for linear learning.
+
+k
+Xj=1
+V ar(ˆarp,s ) =
+
+v1,j v2,j ,
+
+u1,iu2,i ,
+
+ˆarp,s =
+
+u2
+1,i
+
+(11)
+
+(10)
+
+1
+k
+
+w2,j =
+
+, we can write the hashed data as
+
+6.2 Count-Min (CM) Sketch and Vowpal Wabbit (VW)
+Again, in this paper, “VW” always refers to the hashing algor
+ithm in [34]. VW may be viewed as
+a “bias-corrected ” version of the Count-Min (CM) sketch [11 ]. In the original CM algorithm, the
+key step is to independently and uniformly hash elements of the data vectors to k buckets and the
+hashed value is the sum of the elements in the bucket. That is h(i) = j with probability 1
+k , where
+if h(i) = j
+j ∈ {1, 2, ..., k}. By writing Iij = (cid:26) 1
+otherwise
+0
+D
+D
+Xi=1
+Xi=1
+w1,j =
+u1,iIij ,
+The estimate ˆacm = Pk
+j=1 w1,j w2,j is (severely) biased for estimating inner products. The original
+paper [11] suggested a “count-min ” step for positive data, b y generating multiple independent esti-
+mates ˆacm and taking the minimum as the ﬁnal estimate. That step can red uce but can not remove
+i=1 u2,i(cid:17).
+k−1 (cid:16)ˆacm − 1
+i=1 u1,i PD
+k PD
+the bias. Note that the bias can be easily removed by using k
+[34] proposed a creative method for bias-correction, which consists of pre-multiplying (element-
+wise) the original data vectors with a random vector whose entries are sampled i.i.d. from the two-
+point distribution in {−1, 1} with equal probabilities. Here, we consider the general distribution (8).
+After applying multiplication and hashing on u1 and u2 , the resultant vectors g1 and g2 are
+D
+D
+Xi=1
+Xi=1
+i ) = s. We have the following Lemma.
+where E (ri ) = 0, E (r2
+i ) = 0, E (r4
+i ) = 1, E (r3
+
+j = 1, 2, ..., k
+
+u1,iri Iij ,
+
+u2,iri Iij ,
+
+g1,j =
+
+g2,j =
+
+u2,iIij
+
+(13)
+
+(12)
+
+Theorem 3
+
+ˆavw ,s =
+
+g1,j g2,j ,
+
+E (ˆavw ,s ) =
+
+u1,iu2,i = a,
+
+k
+Xj=1
+V ar(ˆavw ,s ) = (s − 1)
+
+D
+Xi=1
+2,i# (cid:3)
+k " D
+D
+D
+D
+1
+Xi=1
+Xi=1
+Xi=1
+Xi=1
+1,iu2
+u2
+Interestingly, the variance (15) says we do need s = 1, otherwise the additional term (s −
+1) PD
+2,i will not vanish even as the sample size k → ∞. In other words, the choice of
+i=1 u2
+1,iu2
+random distribution in VW is essentially the only option if we want to remove the bias by pre-
+multiplying the data vectors (element-wise) with a vector of random variables. Of course, once we
+let s = 1, the variance (15) becomes identical to the variance of random projections (11).
+
+u2
+2,i + a2 − 2
+
+1,iu2
+u2
+2,i +
+
+u2
+1,i
+
+(14)
+
+(15)
+
+6
+
+10,100
+
+C  = 0.01
+
+C  = 0.01
+
+1,10,100
+0.1
+
+C  = 0.01
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+10,100
+
+1
+C = 0.1
+
+C  = 1
+C  = 0.1
+
+C  = 0.01
+
+10
+
+C  = 1
+C  = 0.1
+
+7 Comparing b-Bit Minwise Hashing with VW (and Random Projections)
+We implemented VW and experimented it on the same webspam dataset. Figure 5 shows that b-bit
+minwise hashing is substantially more accurate (at the same sample size k) and requires signiﬁcantly
+less training time (to achieve the same accuracy). Basically, for 8-bit minwise hashing with k = 200
+achieves similar test accuracies as VW with k = 104 ∼ 106 (note that we only stored the non-zeros).
+103
+103
+100
+100
+100
+98
+98
+96
+96
+94
+94
+92
+92
+90
+90
+88
+88
+86
+86
+84
+84
+82
+82
+80
+80
+101
+101
+
+logit: VW vs b = 8 hashing
+Spam: Accuracy
+102
+104
+103
+
+svm: VW vs b = 8 hashing
+Spam: Accuracy
+102
+104
+103
+
+logit: VW vs b = 8 hashing
+Spam: Training time
+102
+105
+104
+103
+
+svm: VW vs b = 8 hashing
+C  = 100
+
+C  = 1,0.1,0.01
+102
+103
+
+k
+k
+k
+k
+Figure 5: The dashed (red if color is available) curves represent b-bit minwise hashing results (only
+for k ≤ 500) while solid curves for VW. We display results for C = 0.01, 0.1, 1, 10, 100.
+This empirical ﬁnding is not surprising, because the varian ce of b-bit hashing is usually substantially
+smaller than the variance of VW (and random projections). In the technical report (arXiv:1106.0967,
+which also includes the complete proofs of the theorems presented in this paper), we show that, at
+the same storage cost, b-bit hashing usually improves VW by 10- to 100-fold, by assuming each
+sample of VW needs 32 bits to store. Of course, even if VW only stores each sample using 16 bits,
+an improvement of 5- to 50-fold would still be very substantial.
+
+Spam: Training time
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+104
+
+105
+
+106
+
+101
+
+100
+10,1.0,0.1
+
+C  = 0.01
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+102
+
+101
+
+100
+
+105
+
+106
+
+C  = 100
+
+C  = 10
+
+105
+
+106
+
+C  = 1,0.1,0.01
+
+C  = 100,10,1
+
+C  = 0.1,0.01
+
+C  = 10
+
+102
+
+100
+
+106
+
+There is one interesting issue here. Unlike random projections (and minwise hashing), VW is a
+sparsity-preserving algorithm, meaning that in the resultant sample vector of length k , the number
+of non-zeros will not exceed the number of non-zeros in the original vector. In fact, it is easy to see
+k (cid:1)c
+that the fraction of zeros in the resultant vector would be (at least) (cid:0)1 − 1
+k (cid:1), where c
+≈ exp (cid:0)− c
+is the number of non-zeros in the original data vector. In this paper, we mainly focus on the scenario
+in which c ≫ k , i.e., we use b-bit minwise hashing or VW for the purpose of data reduction.
+However, in some cases, we care about c ≪ k , because VW is also an excellent tool for compact
+indexing. In fact, our b-bit minwise hashing scheme for linear learning may face such an issue.
+
+8 Combining b-Bit Minwise Hashing with VW
+In Figures 3 and 4, when b = 16, the training time becomes substantially larger than b ≤ 8. Recall
+that in the run-time, we expand the b-bit minwise hashed data to sparse binary vectors of length 2bk
+with exactly k 1’s. When b = 16, the vectors are very sparse. On the other hand, once we have
+expanded the vectors, the task is merely computing inner products, for which we can use VW.
+
+Therefore, in the run-time, after we have generated the sparse binary vectors of length 2bk , we hash
+them using VW with sample size m (to differentiate from k). How large should m be? Theorem 4
+may provide an insight. Recall Section 2 provides the estimator, denoted by ˆRb , of the resemblance
+R, using b-bit minwise hashing. Now, suppose we ﬁrst apply VW hashing w ith size m on the binary
+vector of length 2bk before estimating R, which will introduce some additional randomness. We
+denote the new estimator by ˆRb,vw . Theorem 4 provides its theoretical variance.
+
+100
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+95
+
+90
+
+3
+
+8
+
+2
+
+1
+
+0
+
+100
+
+)
+%
+(
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+95
+
+90
+
+8
+
+3
+
+2
+
+1
+
+0
+
+SVM:  16−bit hashing + VW, k = 200
+Spam:Accuracy
+100
+10−1
+
+10−2
+
+101
+
+85
+10−3
+
+102
+
+85
+10−3
+
+Logit: 16−bit hashing +VW, k = 200
+Spam: Accuracy
+10−2
+100
+10−1
+
+101
+
+102
+
+102
+
+101
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+SVM:  16−bit hashing + VW, k = 200
+
+0
+
+3
+
+8
+
+2
+
+1
+
+8
+
+1
+0
+
+102
+
+101
+
+8
+1
+
+0
+
+)
+c
+e
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+i
+a
+r
+T
+
+100
+10−3
+
+Spam:Training Time
+101
+100
+10−1
+
+10−2
+
+102
+
+100
+10−3
+
+0
+
+8
+
+Logit: 16−bit hashing +VW, k = 200
+Spam: Training Time
+10−2
+101
+100
+10−1
+
+102
+
+C
+C
+C
+C
+Figure 6: We apply VW hashing on top of the binary vectors (of length 2bk) generated by b-bit
+hashing, with size m = 20k , 21k , 22k , 23k , 28k , for k = 200 and b = 16. The numbers on the solid
+curves (0, 1, 2, 3, 8) are the exponents. The dashed (red if color if available) curves are the results
+from only using b-bit hashing. When m = 28k , this method achieves similar test accuracies (left
+panels) while substantially reducing the training time (right panels).
+
+7
+
+Theorem 4
+
+1
+m
+
+(16)
+
+(cid:19) ,
+[1 − C2,b ]2 (cid:18)1 + P 2
+1
+Var (cid:16) ˆRb,vw (cid:17) = V ar (cid:16) ˆRb(cid:17) +
+b −
+where V ar (cid:16) ˆRb(cid:17) = 1
+Pb (1−Pb )
+[1−C2,b ]2 is given by (4) and C2,b is the constant de ﬁned in Theorem 1. (cid:3)
+k
+Compared to the original variance V ar “ ˆRb ”, the additional term in (16) can be relatively large, if
+m is small. Therefore, we should choose m ≫ k and m ≪ 2bk . If b = 16, then m = 28k may be a
+good trade-off. Figure 8 provides an empirical study to verify this intuition.
+
+Pb (1 + Pb )
+k
+
+9 Limitations
+While using b-bit minwise hashing for training linear algorithms is successful on the webspam
+dataset, it is important to understand the following three major limitations of the algorithm:
+
+(A): Our method is designed for binary (0/1) sparse data. (B): Our method requires an expensive
+preprocessing step for generating k permutations of the data. For most applications, we expect the
+preprocessing cost is not a major issue because the preprocessing can be conducted off-line (or com-
+bined with the data-collection step) and is easily parallelizable. However, even if the speed is not a
+concern, the energy consumption might be an issue, especially considering (b-bit) minwise hashing
+is mainly used for industry applications. In addition, testing an new unprocessed data vector (e.g.,
+a new document) will be expensive. (C): Our method performs only reasonably well in terms of
+dimension reduction. The processed data need to be mapped into binary vectors in 2b × k dimen-
+sions, which is usually not small. (Note that the storage cost is just bk bits.) For example, for the
+webspam dataset, using b = 8 and k = 200 seems to sufﬁce and 28 × 200 = 51200 is quite large,
+although it is much smaller than the original dimension of 16 million. It would be desirable if we
+can further reduce the dimension, because the dimension determines the storage cost of the model
+and (moderately) increases the training time for batch learning algorithms such as LIBLINEAR.
+
+In hopes of ﬁxing the above limitations, we experimented wit h an implementation using another
+hashing technique named Conditional Random Sampling (CRS)
+[21, 22], which is not limited to
+binary data and requires only one permutation of the original data (i.e., no expensive preprocessing).
+We achieved some limited success. For example, CRS compares favorably to VW in terms of stor-
+age (to achieve the same accuracy) on the webspam dataset. However, so far CRS can not compete
+with b-bit minwise hashing for linear learning (in terms of training speed, storage cost, and model
+size). The reason is because even though the estimator of CRS is an inner product, the normalization
+factors (i.e, the effective sample size of CRS) to ensure unbiased estimates substantially differ pair-
+wise (which is a signiﬁcant advantage in other applications ). In our implementation, we could not
+to use fully correct normalization factors, which lead to severe bias of the inner product estimates
+and less than satisfactory performance of linear learning compared to b-bit minwise hashing.
+
+10 Conclusion
+As data sizes continue to grow faster than the memory and computational power, statistical learning
+tasks in industrial practice are increasingly faced with training datasets that exceed the resources on
+a single server. A number of approaches have been proposed that address this by either scaling out
+the training process or partitioning the data, but both solutions can be expensive.
+
+In this paper, we propose a compact representation of sparse, binary data sets based on b-bit minwise
+hashing, which can be naturally integrated with linear learning algorithms such as linear SVM and
+logistic regression, leading to dramatic improvements in training time and/or resource requirements.
+We also compare b-bit minwise hashing with the Count-Min (CM) sketch and Vowpal Wabbit (VW)
+algorithms, which, according to our analysis, all have (essentially) the same variances as random
+projections [24]. Our theoretical and empirical comparisons illustrate that b-bit minwise hashing is
+signiﬁcantly more accurate (at the same storage) for binary data. There are various limitations (e.g.,
+expensive preprocessing) in our proposed method, leaving ample room for future research.
+
+Acknowledgement
+This work is supported by NSF (DMS-0808864), ONR (YIP-N000140910911), and a grant from
+Microsoft. We thank John Langford and Tong Zhang for helping us better understand the VW hash-
+ing algorithm, and Chih-Jen Lin for his patient explanation of LIBLINEAR package and datasets.
+
+8
+
+IEEE
+
+References
+[1] Dimitris Achlioptas. Database-friendly random projections: Johnson-Lindenstrauss with binary coins. Journal of Computer and System
+Sciences, 66(4):671–687, 2003.
+[2] Alexandr Andoni and Piotr Indyk. Near-optimal hashing algorithms for approximate nearest neighbor in high dimensions. In Commun.
+ACM, volume 51, pages 117–122, 2008.
+[3] Harald Baayen. Word Frequency Distributions, volume 18 of Text, Speech and Language Technology. Kulver Academic Publishers,
+2001.
+[4] Michael Bendersky and W. Bruce Croft. Finding text reuse on the web. In WSDM, pages 262–271, Barcelona, Spain, 2009.
+[5] Leon Bottou. http://leon.bottou.org/projects/sgd.
+[6] Andrei Z. Broder. On the resemblance and containment of documents. In the Compression and Complexity of Sequences, pages 21–29,
+Positano, Italy, 1997.
+[7] Andrei Z. Broder, Steven C. Glassman, Mark S. Manasse, and Geoffrey Zweig. Syntactic clustering of the web. In WWW, pages 1157 –
+1166, Santa Clara, CA, 1997.
+[8] Olivier Chapelle, Patrick Haffner, and Vladimir N. Vapnik. Support vector machines for histogram-based image classiﬁcation.
+Trans. Neural Networks, 10(5):1055–1064, 1999.
+[9] Ludmila Cherkasova, Kave Eshghi, Charles B. Morrey III, Joseph Tucek, and Alistair C. Veitch. Applying syntactic similarity algorithms
+for enterprise information management. In KDD, pages 1087–1096, Paris, France, 2009.
+[10] Flavio Chierichetti, Ravi Kumar, Silvio Lattanzi, Michael Mitzenmacher, Alessandro Panconesi, and Prabhakar Raghavan. On com-
+pressing social networks. In KDD, pages 219–228, Paris, France, 2009.
+[11] Graham Cormode and S. Muthukrishnan. An improved data stream summary: the count-min sketch and its applications. Journal of
+Algorithm, 55(1):58–75, 2005.
+[12] Yon Dourisboure, Filippo Geraci, and Marco Pellegrini. Extraction and classiﬁcation of dense implicit communiti es in the web graph.
+ACM Trans. Web, 3(2):1–36, 2009.
+[13] Rong-En Fan, Kai-Wei Chang, Cho-Jui Hsieh, Xiang-Rui Wang, and Chih-Jen Lin. Liblinear: A library for large linear classiﬁcation.
+Journal of Machine Learning Research, 9:1871–1874, 2008.
+[14] Dennis Fetterly, Mark Manasse, Marc Najork, and Janet L. Wiener. A large-scale study of the evolution of web pages. In WWW, pages
+669–678, Budapest, Hungary, 2003.
+[15] George Forman, Kave Eshghi, and Jaap Suermondt. Efﬁcie nt detection of large-scale redundancy in enterprise ﬁle sy stems. SIGOPS
+Oper. Syst. Rev., 43(1):84–91, 2009.
+[16] Sreenivas Gollapudi and Aneesh Sharma. An axiomatic approach for result diversiﬁcation. In WWW, pages 381–390, Madrid, Spain,
+2009.
+[17] Matthias Hein and Olivier Bousquet. Hilbertian metrics and positive de ﬁnite kernels on probability measures.
+136–143, Barbados, 2005.
+[18] Cho-Jui Hsieh, Kai-Wei Chang, Chih-Jen Lin, S. Sathiya Keerthi, and S. Sundararajan. A dual coordinate descent method for large-scale
+linear svm. In Proceedings of the 25th international conference on Machine learning, ICML, pages 408–415, 2008.
+[19] Yugang Jiang, Chongwah Ngo, and Jun Yang. Towards optimal bag-of-features for object categorization and semantic video retrieval. In
+CIVR, pages 494–501, Amsterdam, Netherlands, 2007.
+[20] Thorsten Joachims. Training linear svms in linear time. In KDD, pages 217–226, Pittsburgh, PA, 2006.
+[21] Ping Li and Kenneth W. Church. Using sketches to estimate associations. In HLT/EMNLP, pages 708–715, Vancouver, BC, Canada,
+2005 (The full paper appeared in Commputational Linguistics in 2007).
+[22] Ping Li, Kenneth W. Church, and Trevor J. Hastie. Conditional random sampling: A sketch-based sampling technique for sparse data. In
+NIPS, pages 873–880, Vancouver, BC, Canada, 2006 (Newer results appeared in NIPS 2008.
+[23] Ping Li, Trevor J. Hastie, and Kenneth W. Church. Improving random projections using marginal information. In COLT, pages 635–649,
+Pittsburgh, PA, 2006.
+[24] Ping Li, Trevor J. Hastie, and Kenneth W. Church. Very sparse random projections. In KDD, pages 287–296, Philadelphia, PA, 2006.
+[25] Ping Li and Arnd Christian K ¨onig. Theory and applications b-bit minwise hashing. In Commun. ACM, 2011.
+[26] Ping Li and Arnd Christian K ¨onig. Accurate estimators for improving minwise hashing and b-bit minwise hashing. Technical report,
+2011 (arXiv:1108.0895).
+[27] Ping Li and Arnd Christian K ¨onig. b-bit minwise hashing. In WWW, pages 671–680, Raleigh, NC, 2010.
+[28] Ping Li, Arnd Christian K ¨onig, and Wenhao Gui. b-bit minwise hashing for estimating three-way similarities. In NIPS, Vancouver, BC,
+2010.
+[29] Gurmeet Singh Manku, Arvind Jain, and Anish Das Sarma. Detecting Near-Duplicates for Web-Crawling. In WWW, Banff, Alberta,
+Canada, 2007.
+[30] Marc Najork, Sreenivas Gollapudi, and Rina Panigrahy. Less is more: sampling the neighborhood graph makes salsa better and faster.
+In WSDM, pages 242–251, Barcelona, Spain, 2009.
+[31] Shai Shalev-Shwartz, Yoram Singer, and Nathan Srebro. Pegasos: Primal estimated sub-gradient solver for svm.
+807–814, Corvalis, Oregon, 2007.
+[32] Qinfeng Shi, James Petterson, Gideon Dror, John Langford, Alex Smola, and S.V.N. Vishwanathan. Hash kernels for structured data.
+Journal of Machine Learning Research, 10:2615–2637, 2009.
+[33] Simon
+large
+practical
+a
+Tong.
+Lessons
+learned
+developing
+http://googleresearch.blogspot.com/2010/04/lessons-learned-developing-practical.html, 2008.
+[34] Kilian Weinberger, Anirban Dasgupta, John Langford, Alex Smola, and Josh Attenberg. Feature hashing for large scale multitask
+learning. In ICML, pages 1113–1120, 2009.
+[35] Hsiang-Fu Yu, Cho-Jui Hsieh, Kai-Wei Chang, and Chih-Jen Lin. Large linear classiﬁcation when data cannot ﬁt in mem ory. In KDD,
+pages 833–842, 2010.
+
+In AISTATS, pages
+
+In ICML, pages
+
+learning
+
+system.
+
+scale
+
+machine
+
+9
+
+

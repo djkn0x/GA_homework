@@ -1,0 +1,858 @@
+Structured Prediction via the Extragradient
+Method
+
+Ben Taskar
+Computer Science
+UC Berkeley, Berkeley, CA 94720
+taskar@cs.berkeley.edu
+
+Simon Lacoste-Julien
+Computer Science
+UC Berkeley, Berkeley, CA 94720
+slacoste@cs.berkeley.edu
+
+Michael I. Jordan
+Computer Science and Statistics
+UC Berkeley, Berkeley, CA 94720
+jordan@cs.berkeley.edu
+
+Abstract
+
+We present a simple and scalable algorithm for large-margin estima-
+tion of structured models, including an important class of Markov net-
+works and combinatorial models. We formulate the estimation problem
+as a convex-concave saddle-point problem and apply the extragradient
+method, yielding an algorithm with linear convergence using simple gra-
+dient and projection calculations. The projection step can be solved us-
+ing combinatorial algorithms for min-cost quadratic ﬂo w. This makes the
+approach an efﬁcient alternative to formulations based on reductions to
+a quadratic program (QP). We present experiments on two very different
+structured prediction tasks: 3D image segmentation and word alignment,
+illustrating the favorable scaling properties of our algorithm.
+
+1 Introduction
+The scope of discriminative learning methods has been expanding to encompass prediction
+tasks with increasingly complex structure. Much of this recent development builds upon
+graphical models to capture sequential, spatial, recursive or relational structure, but as we
+will discuss in this paper, the structured prediction problem is broader still. For graphical
+models, two major approaches to discriminative estimation have been explored: (1) maxi-
+mum conditional likelihood [13] and (2) maximum margin [6, 1, 20]. For the broader class
+of models that we consider here, the conditional likelihood approach is intractable, but the
+large margin formulation yields tractable convex problems.
+
+We interpret the term structured output model very broadly, as a compact scoring scheme
+over a (possibly very large) set of combinatorial structures and a method for ﬁnding the
+highest scoring structure. In graphical models, the scoring scheme is embodied in a prob-
+ability distribution over possible assignments of the prediction variables as a function of
+input variables. In models based on combinatorial problems, the scoring scheme is usu-
+ally a simple sum of weights associated with vertices, edges, or other components of a
+structure; these weights are often represented as parametric functions of a set of features.
+Given training instances labeled by desired structured outputs (e.g., matchings) and a set of
+
+features that parameterize the scoring function, the learning problem is to ﬁnd parameters
+such that the highest scoring outputs are as close as possible to the desired outputs.
+
+Example of prediction tasks solved via combinatorial optimization problems include bipar-
+tite and non-bipartite matching in alignment of 2D shapes [5], word alignment in natural
+language translation [14] and disul ﬁde connectivity prediction for proteins [3]. All of these
+problems can be formulated in terms of a tractable optimization problem. There are also
+interesting subfamilies of graphical models for which large-margin methods are tractable
+whereas likelihood-based methods are not; an example is the class of Markov random ﬁelds
+with restricted potentials used for object segmentation in vision [12, 2].
+
+Tractability is not necessarily sufﬁcient
+to obtain algorithms that work effectively in prac-
+tice. In particular, although the problem of large margin estimation can be formulated as a
+quadratic program (QP) in several cases of interest [2, 19], and although this formulation
+exploits enough of the problem structure so as to achieve a polynomial representation in
+terms of the number of variables and constraints, off-the-shelf QP solvers scale poorly with
+problem and training sample size for these models. To solve large-scale machine learning
+problems, researchers often turn to simple gradient-based algorithms, in which each indi-
+vidual step is cheap in terms of computation and memory. Examples of this approach in the
+structured prediction setting include the Structured Sequential Minimal Optimization algo-
+rithm [20, 18] and the Structured Exponentiated Gradient algorithm [4]. These algorithms
+are ﬁrst-order methods for solving QPs arising from low-treewidth Markov random ﬁelds
+and other decomposable models. They are able to scale to signi ﬁcantly larger problems
+than off-the-shelf QP solvers. However, they are limited in scope in that they rely on dy-
+namic programming to compute essential quantities such as gradients. They do not extend
+to models in which dynamic programming is not applicable, for example, to problems such
+as matchings and min-cuts.
+
+In this paper, we present an estimation methodology for structured prediction problems
+that does not require a general-purpose QP solver. We propose a saddle-point formulation
+which allows us to exploit simple gradient-based methods [11] with linear convergence
+guarantees. Moreover, we show that the key computational step in these methods—a
+cer-
+tain projection operation—inherits
+the favorable computational complexity of the underly-
+ing optimization problem. This important result makes our approach viable computation-
+ally. In particular, for matchings and min-cuts, projection involves a min-cost quadratic
+ﬂo w computation, a problem for which efﬁcient, highly-specialized algorithms are avail-
+able. We illustrate the effectiveness of this approach on two very different large-scale
+structured prediction tasks: 3D image segmentation and word alignment in translation.
+
+2 Structured models
+We begin by discussing two special cases of the general framework that we subsequently
+present: (1) a class of Markov networks used for segmentation, and (2) a bipartite matching
+model for word alignment. Despite signi ﬁcant differences in the setup for these models,
+they share the property that in both cases the problem of ﬁnding the highest-scoring output
+can be formulated as a linear program (LP).
+Markov networks. We consider a special class of Markov networks, common in vision
+applications, in which inference reduces to a tractable min-cut problem [7]. Focusing on
+binary variables, y = fy1 ; : : : ; yN g, and pairwise potentials, we deﬁne a joint distribution
+over f0; 1gN via P (y) / Qj2V (cid:30)j (yj ) Qjk2E (cid:30)jk (yj ; yk ), where (V ; E ) is an undirected
+graph, and where f(cid:30)j (yj ); j 2 V g are the node potentials and f(cid:30)jk (yj ; yk ); j k 2 E g are
+the edge potentials.
+
+In image segmentation (see Fig. 1(a)), the node potentials capture local evidence about
+the label of a pixel or laser scan point. Edges usually connect nearby pixels in an image,
+and serve to correlate their labels. Assuming that such correlations tend to be positive
+
+(cid:3)(cid:9) (cid:4) (cid:5)
+
+(cid:1)(cid:2)(cid:3)(cid:4)
+(cid:4)(cid:2) (cid:8)
+(cid:11) (cid:3)(cid:4) (cid:8)
+(cid:6) (cid:4)
+
+(cid:10) (cid:4) (cid:5)
+
+(cid:4)(cid:2) (cid:8)
+(cid:6) (cid:3) (cid:15)
+(cid:20)
+
+(cid:18) (cid:4) (cid:17)
+
+(cid:6) (cid:4)
+(cid:13) (cid:25)(cid:4)
+(cid:18) (cid:26)(cid:22)
+
+(cid:5) (cid:4) (cid:6)
+
+(cid:20)
+
+(cid:5) (cid:4) (cid:5)
+
+(cid:11) (cid:4) (cid:5)
+
+(b)
+(a)
+Figure 1: Examples of structured prediction applications: (a) articulated object segmenta-
+tion and (b) word alignment in machine translation.
+
+sjk zjk
+
+s:t:
+
+(1)
+
+zj (cid:0) zk (cid:20) zjk ; zk (cid:0) zj (cid:20) zjk ; 8j k 2 E :
+
+(connected nodes tend to have the same label), we restrict the form of edge potentials to be
+of the form (cid:30)jk (yj ; yk ) = expf(cid:0)sjk 1I(yj 6= yk )g, where sjk is a non-negative penalty for
+assigning yj and yk different labels. Expressing node potentials as (cid:30)j (yj ) = expfsj yj g,
+we have P (y) / exp nPj2V sj yj (cid:0) Pjk2E sjk 1I(yj 6= yk )o. Under this restriction of the
+potentials, it is known that the problem of computing the maximizing assignment, y (cid:3) =
+arg max P (y j x), has a tractable formulation as a min-cut problem [7]. In particular, we
+obtain the following LP:
+0(cid:20)z(cid:20)1 X
+sj zj (cid:0) X
+max
+j2V
+jk2E
+In this LP, a continuous variable zj is a relaxation of the binary variable yj . Note that the
+constraints are equivalent to jzj (cid:0) zk j (cid:20) zjk . Because sjk is positive, zjk = jzk (cid:0) zj j at the
+maximum, which is equivalent to 1I(zj 6= zk ) if the zj ; zk variables are binary. An integral
+optimal solution always exists, as the constraint matrix is totally unimodular [17] (that is,
+the relaxation is not an approximation).
+We can parametrize the node and edge weights sj and sjk in terms of user-provided features
+xj and xjk associated with the nodes and edges. In particular, in 3D range data, xj might be
+spin image features or spatial occupancy histograms of a point j , while xjk might include
+the distance between points j and k , the dot-product of their normals, etc. The simplest
+model of dependence is a linear combination of features: sj = w>
+n fn (xj ) and sjk =
+e fe (xjk ), where wn and we are node and edge parameters, and fn and fe are node and
+w>
+edge feature mappings, of dimension dn and de , respectively. To ensure non-negativity
+of sjk , we assume the edge features fe to be non-negative and restrict we (cid:21) 0. This
+constraint is easily incorporated into the formulation we present below. We assume that
+the feature mappings f are provided by the user and our goal is to estimate parameters
+w from labeled data. We abbreviate the score assigned to a labeling y for an input x as
+e fe (xjk ), where yjk = 1I(yj 6= yk ).
+n fn (xj ) (cid:0) Pjk2E yjkw>
+w> f (x; y) = Pj yj w>
+Matchings. Consider modeling the task of word alignment of parallel bilingual sen-
+tences (see Fig. 1(b)) as a maximum weight bipartite matching problem, where the nodes
+V = V s [ V t correspond to the words in the “source”
+sentence (V s ) and the “tar get ” sen-
+tence (V t ) and the edges E = fj k : j 2 V s ; k 2 V t g correspond to possible alignments
+between them. For simplicity, assume that each word aligns to one or zero words in the
+other sentence. The edge weight sjk represents the degree to which word j in one sentence
+can translate into the word k in the other sentence. Our objective is to ﬁnd an alignment that
+maximizes the sum of edge scores. We represent a matching using a set of binary variables
+
+(cid:5)
+(cid:6)
+(cid:7)
+(cid:10)
+(cid:5)
+(cid:12)
+(cid:10)
+(cid:13)
+(cid:13)
+(cid:14)
+(cid:10)
+(cid:13)
+(cid:15)
+(cid:15)
+(cid:8)
+(cid:9)
+(cid:16)
+(cid:7)
+(cid:14)
+(cid:8)
+(cid:8)
+(cid:6)
+(cid:7)
+(cid:17)
+(cid:9)
+(cid:12)
+(cid:8)
+(cid:18)
+(cid:7)
+(cid:7)
+(cid:9)
+(cid:8)
+(cid:19)
+(cid:7)
+(cid:11)
+(cid:18)
+(cid:13)
+(cid:11)
+(cid:13)
+(cid:21)
+(cid:9)
+(cid:7)
+(cid:22)
+(cid:8)
+(cid:12)
+(cid:8)
+(cid:15)
+(cid:8)
+(cid:6)
+(cid:9)
+(cid:13)
+(cid:17)
+(cid:22)
+(cid:8)
+(cid:15)
+(cid:15)
+(cid:8)
+(cid:6)
+(cid:11)
+(cid:18)
+(cid:13)
+(cid:11)
+(cid:13)
+(cid:6)
+(cid:13)
+(cid:9)
+(cid:6)
+(cid:23)
+(cid:7)
+(cid:24)
+(cid:17)
+(cid:8)
+(cid:15)
+(cid:8)
+(cid:15)
+(cid:8)
+(cid:7)
+(cid:10)
+(cid:11)
+(cid:17)
+(cid:12)
+(cid:8)
+(cid:7)
+(cid:11)
+(cid:8)
+(cid:18)
+(cid:10)
+(cid:8)
+(cid:13)
+(cid:9)
+(cid:7)
+(cid:12)
+(cid:8)
+(cid:7)
+(cid:15)
+(cid:8)
+(cid:6)
+(cid:7)
+(cid:12)
+(cid:18)
+(cid:13)
+yjk that are set to 1 if word j is assigned to word k in the other sentence, and 0 otherwise.
+The score of an assignment is the sum of edge scores: s(y) = Pjk2E sjk yjk . The max-
+imum weight bipartite matching problem, arg maxy2Y s(y), can be found by solving the
+following LP:
+
+0(cid:20)z(cid:20)1 X
+max
+jk2E
+
+sjk zjk
+
+s:t: X
+j2V s
+
+zjk (cid:20) 1; 8k 2 V t ; X
+k2V t
+
+zjk (cid:20) 1; 8j 2 V s ;
+
+(2)
+
+where again the continuous variables zjk correspond to the relaxation of the binary vari-
+ables yjk . As in the min-cut problem, this LP is guaranteed to have integral solutions for
+any scoring function s(y) [17].
+For word alignment, the scores sjk can be deﬁned in terms of the word pair j k and input
+features associated with xjk . We can include the identity of the two words, relative position
+in the respective sentences, part-of-speech tags, string similarity (for detecting cognates),
+etc. We let sjk = w> f (xjk ) for some user-provided feature mapping f and abbreviate
+w> f (x; y) = Pjk yjkw> f (xjk ).
+General structure. More generally, we consider prediction problems in which the in-
+put x 2 X is an arbitrary structured object and the output is a vector of values y =
+(y1 ; : : : ; yLx ), for example, a matching or a cut in the graph. We assume that the length
+Lx and the structure of y depend deterministically on the input x. In our word alignment
+example, the output space is deﬁned by the length of the two sentences. Denote the output
+space for a given input x as Y (x) and the entire output space as Y = Sx2X Y (x).
+Consider the class of structured prediction models H deﬁned by the linear family: hw (x) =
+arg maxy2Y (x) w> f (x; y); where f (x; y) is a vector of functions f : X (cid:2) Y 7! IRn . This
+formulation is very general. Indeed, it is too general for our purposes—for many f ; Y pairs,
+ﬁnding the optimal y is intractable. Below, we specialize to the class of models in which
+the arg max problem can be solved in polynomial time using linear programming (and
+more generally, convex optimization); this is still a very large class of models.
+
+3 Max-margin estimation
+i=1 , where each instance consists
+We assume a set of training instances S = f(xi ; yi )gm
+of a structured object xi (such as a graph) and a target solution yi (such as a matching).
+Consider learning the parameters w in the conditional likelihood setting. We can deﬁne
+1
+02Y (x) expfw> f (x; y0 )g,
+Zw (x) expfw> f (x; y)g, where Zw (x) = Py
+Pw (y j x) =
+and maximize the conditional log-likelihood Pi log Pw (yi j xi ), perhaps with additional
+regularization of the parameters w. However, computing the partition function Zw (x)
+is #P-complete [23, 10] for the two structured prediction problems we presented above,
+matchings and min-cuts. Instead, we adopt the max-margin formulation of [20], which
+directly seeks to ﬁnd parameters w such that: yi = arg maxy
+w> f (xi ; y0
+i );
+8i;
+i2Yi
+0
+where Yi = Y (xi ) and yi denotes the appropriate vector of variables for example i. The
+solution space Yi depends on the structured object xi ; for example, the space of possible
+matchings depends on the precise set of nodes and edges in the graph.
+
+As in univariate prediction, we measure the error of prediction using a loss function
+i ). To obtain a convex formulation, we upper bound the loss ‘(yi ; hw (xi )) using
+‘(yi ; y0
+i )] (cid:0) w> fi (yi ); where ‘i (y0
+i ),
+the hinge function: maxy
+i2Yi [w> fi (y0
+i ) + ‘i (y0
+i ) = ‘(yi ; y0
+0
+and fi (y0
+i ). Minimizing this upper bound will force the true structure yi to be
+i ) = f (xi ; y0
+optimal with respect to w for each instance i. We add a standard L2 weight penalty jjwjj2
+2C :
+
+min
+w2W
+
+jjwjj2
+2C
+
++ X
+i
+
+max
+i2Yi
+0
+y
+
+i ) + ‘i (y0
+[w> fi (y0
+i )] (cid:0) w> fi (yi );
+
+(3)
+
+where C is a regularization parameter and W is the space of allowed weights (for example,
+W = IRn or W = IRn
++ ). Note that this formulation is equivalent to the standard formulation
+using slack variables (cid:24) and slack penalty C presented in [20, 19].
+The key to solving Eq.
+(3) efﬁciently
+is the loss-augmented inference problem,
+i )]. This optimization problem has precisely the same form as
+i2Yi [w> fi (y0
+i ) + ‘i (y0
+maxy
+0
+i )—
+the prediction problem whose parameters we are trying to learn — maxy
+i2Yi w> fi (y0
+0
+but with an additional term corresponding to the loss function. Tractability of the loss-
+i ), but
+augmented inference thus depends not only on the tractability of maxy
+i2Yi w> fi (y0
+0
+also on the form of the loss term ‘i (y0
+i ). A natural choice in this regard is the Hamming
+distance, which simply counts the number of variables in which a candidate solution y 0
+i
+differs from the target output yi . In general, we need only assume that the loss function
+decomposes over the variables in yi .
+For example, in the case of bipartite matchings the Hamming loss counts the number of
+different edges in the matchings yi and y0
+i and can be written as: ‘H
+i (y0
+i ) = Pjk yi;jk +
+i;jk )yi;jk : Thus the loss-augmented matching problem for example i can be
+Pjk (1 (cid:0) 2y 0
+written as an LP similar to Eq. (2) (without the constant term Pjk yi;jk ):
+zi;jk (cid:20) 1; X
+s:t: X
+0(cid:20)z(cid:20)1 X
+zi;jk [w> f (xi;jk ) + 1 (cid:0) 2yi;jk ]
+max
+j
+k
+jk
+
+zi;jk (cid:20) 1:
+
+i ) as an LP, maxzi2Zi w>Fizi , where
+Generally, when we can express maxy
+i2Yi w> fi (y0
+0
+Zi = fzi : Ai zi (cid:20) bi ; zi (cid:21) 0g, for appropriately deﬁned constraints Ai ; bi and fea-
+ture matrix Fi , we have a similar LP for the loss-augmented inference for each exam-
+ple i: di + maxzi2Zi (w>Fi + ci )>zi for appropriately deﬁned di ; Fi ; ci ; Ai ; bi . Let
+z = fz1 ; : : : ; zm g, Z = Z1 (cid:2) : : : (cid:2) Zm .
+We could proceed by making use of Lagrangian duality, which yields a joint convex opti-
+mization problem; this is the approach described in [19]. Instead we take a different tack
+here, posing the problem in its natural saddle-point form:
+
+max
+z2Z
+
+jjwjj2
+2C
+
+(4)
+
+min
+w2W
+
++ X
+(cid:2)w>Fi zi + c>
+i zi (cid:0) w> fi (yi )(cid:3) :
+i
+As we discuss in the following section, this approach allows us to exploit the structure of
+W and Z separately, allowing for efﬁcient
+solutions for a wider range of structure spaces.
+4 Extragradient method
+The key operations of the method we present below are gradient calculations and Euclidean
+projections. We let L(w; z) = jjwjj2
+i zi (cid:0) w> fi (yi )(cid:3) ; with gradients
+2C + Pi (cid:2)w>Fi zi + c>
+given by: rwL(w; z) = w
+C + Pi Fizi (cid:0) fi (yi ) and rzi L(w; z) = F>
+i w + ci . We denote
+the projection of a vector zi onto Zi as (cid:25)Zi (zi ) = arg minz
+i (cid:0) zi jj and similarly,
+i2Zi jjz0
+0
+the projection onto W as (cid:25)W (w0 ) = arg minw2W jjw0 (cid:0) wjj.
+A well-known solution strategy for saddle-point optimization is provided by the extragra-
+dient method [11]. An iteration of the extragradient method consists of two very simple
+steps, prediction (w; z) ! (wp ; zp ) and correction (wp ; zp ) ! (wc ; zc ):
+zp
+wp = (cid:25)W (w (cid:0) (cid:12)rwL(w; z));
+i = (cid:25)Zi (zi + (cid:12)rzi L(w; z));
+wc = (cid:25)W (w (cid:0) (cid:12)rwL(wp ; zp ));
+i = (cid:25)Zi (zi + (cid:12)rzi L(wp ; zp ));
+zc
+where (cid:12) is an appropriately chosen step size. The algorithm starts with a feasible point
+w = 0, zi ’s that correspond to the assignments yi ’s and step size (cid:12) = 1. After each pre-
+p ;z
+p )jj
+diction step, it computes r = (cid:12) jjrL(w;z)(cid:0)rL(w
+: If r is greater than a threshold (cid:23) , the
+p jj+jjz(cid:0)z
+p jj)
+(jjw(cid:0)w
+
+(5)
+(6)
+
+step size is decreased using an Armijo type rule: (cid:12) = (2=3)(cid:12) min(1; 1=r), and a new pre-
+diction step is computed until r (cid:20) (cid:23) , where (cid:23) 2 (0; 1) is a parameter of the algorithm. Once
+a suitable (cid:12) is found, the correction step is taken and (w c ; zc ) becomes the new (w; z). The
+method is guaranteed to converge linearly to a solution w(cid:3) ; z(cid:3) [11, 9]. See the longer ver-
+sion of this paper at http://www.cs.berkeley.edu/˜taskar/extragradient.pdf
+for details. By comparison, Exponentiated Gradient [4] has sublinear convergence rate
+guarantees, while Structured SMO [18] has none.
+
+The key step inﬂuencing the efﬁcienc y of the algorithm is the Euclidean projection onto
+the feasible sets W and Zi . In case W = IRn , the projection is the identity operation;
+projecting onto IRn
++ consists of clipping negative weights to zero. Additional problem-
+speciﬁc constraints on the weight space can be efﬁciently incorporated in this step (although
+linear convergence guarantees only hold for polyhedral W ). In case of word alignment, Z i
+is the convex hull of bipartite matchings and the problem reduces to the much-studied
+minimum cost quadratic ﬂo w problem. The projection zi = (cid:25)Zi (z0
+i ) is given by
+1
+2
+
+i;jk (cid:0) zi;jk )2
+(z 0
+
+zi;jk (cid:20) 1:
+
+0(cid:20)z(cid:20)1 X
+min
+jk
+
+s:t: X
+j
+
+zi;jk (cid:20) 1; X
+k
+
+We use a standard reduction of bipartite matching to min-cost ﬂo w by introducing a source
+node s linked to all the nodes in V s
+sentence), and a sink node t
+i (words in the “source”
+linked from all the nodes in V t
+i (words in the “tar get ” sentence), using edges of capacity 1
+and cost 0. The original edges j k have a quadratic cost 1
+i;jk (cid:0) zi;jk )2 and capacity 1.
+2 (z 0
+Minimum (quadratic) cost ﬂo w from s to t is the projection of z 0
+i onto Zi .
+The reduction of the projection to minimum quadratic cost
+ﬂo w for the min-cut
+is shown in the longer version of the paper. Algorithms for solving
+polytope Zi
+as those for solving regular min-cost ﬂo w prob-
+this problem are nearly as efﬁcient
+lems.
+In case of word alignment,
+the running time scales with the cube of the
+sentence length. We use publicly-available code for solving this problem [8] (see
+http://www.math.washington.edu/ ˜tseng/netflowg_nl/ ).
+5 Experiments
+We investigate two structured models we described above: bipartite matchings for word
+alignments and restricted potential Markov nets for 3D segmentation. A commercial QP-
+solver, MOSEK, runs out of memory on the problems we describe below using the QP
+formulation [19]. We compared the extragradient method with the averaged perceptron
+algorithm [6]. A question which arises in practice is how to choose the regularization
+parameter C . The typical approach is to run the algorithm for several values of the reg-
+ularization parameter and pick the best model using a validation set. For the averaged
+perceptron, a standard method is to run the algorithm tracking its performance on a valida-
+tion set, and selecting the model with best performance. We use the same training regime
+for the extragradient by running it with C = 1.
+Object segmentation. We test our algorithm on a 3D scan segmentation problem us-
+ing the class of Markov networks with potentials that were described above. The dataset
+is a challenging collection of cluttered scenes containing articulated wooden puppets [2].
+It contains eleven different single-view scans of three puppets of varying sizes and posi-
+tions, with clutter and occluding objects such as rope, sticks and rings. Each scan con-
+sists of around 7; 000 points. Our goal was to segment the scenes into two classes—
+puppet and background. We use ﬁ ve of the scenes for our training data, three for val-
+idation and three for testing. Sample scans from the training and test set can be seen at
+http://www.cs.berkeley.edu/ ˜taskar/3DSegment/ . We computed spin images
+of size 10 (cid:2) 5 bins at two different resolutions, then scaled the values and performed PCA
+to obtain 45 principal components, which comprised our node features. We used the sur-
+face links output by the scanner as edges between points and for each edge only used a
+
+0.2
+
+0.15
+
+r
+o
+r
+r
+E
+ 
+t
+s
+e
+T
+
+0.1
+
+0.05
+
+percep − error
+extrag − error
+
+extrag − loss
+
+0.2
+
+0.15
+
+0.1
+
+0.05
+
+s
+e
+d
+o
+n
+ 
+#
+ 
+/
+ 
+s
+s
+o
+L
+ 
+n
+i
+a
+r
+T
+
+0.15
+
+0.14
+
+0.13
+
+0.12
+
+0.11
+
+0.1
+
+0.09
+
+0.08
+
+0.07
+
+R
+E
+A
+ 
+t
+s
+e
+T
+
+percep − AER
+extrag  − AER
+
+extrag  − loss
+
+0.15
+
+0.14
+
+0.13
+
+0.12
+
+0.11
+
+0.1
+
+0.09
+
+0.08
+
+0.07
+
+s
+e
+g
+d
+e
+ 
+#
+ 
+/
+ 
+s
+s
+o
+L
+ 
+n
+i
+a
+r
+T
+
+0
+600
+600
+
+0.06
+0
+0
+
+100
+100
+
+200
+200
+
+0
+0
+0
+
+400
+400
+
+500
+500
+
+100
+100
+
+200
+200
+
+300
+300
+300
+300
+Iterations
+Iterations
+(b)
+(a)
+Figure 2: Both plots show test error for the averaged perceptron and the extragradient (left
+y-axis) and training loss per node or edge for the extragradient (right y-axis) versus number
+of iterations for (a) object segmentation task and (b) word alignment task.
+
+400
+400
+
+500
+500
+
+0.06
+600
+600
+
+single feature, set to a constant value of 1 for all edges. This results in all edges having the
+same potential. The training data contains approximately 37; 000 nodes and 88; 000 edges.
+Training time took about 4 hours for 600 iterations on a 2.80GHz Pentium 4 machine.
+Fig. 2(a) shows that the extragradient has a consistently lower error rate (about 3% for ex-
+tragradient, 4% for averaged perceptron), using only slightly more expensive computations
+per iteration. Also shown is the corresponding decrease in the hinge-loss upperbound on
+the training data as the extragradient progresses.
+Word alignment. We also tested our learning algorithm on word-level alignment using a
+data set from the 2003 NAACL set [15], the English-French Hansards task. This corpus
+consists of 1.1M automatically aligned sentences, and comes with a validation set of 39
+sentence pairs and a test set of 447 sentences. The validation and test sentences have been
+hand-aligned and are marked with both sure and possible alignments. Using these align-
+ments, alignment error rate (AER) is calculated as: AER(A; S; P ) = 1 (cid:0) jA\S j+jA\P j
+:
+jAj+jS j
+Here, A is a set of proposed index pairs, S is the set of sure gold pairs, and P is the set of
+possible gold pairs (where S (cid:18) P ).
+We used the intersection of the predictions of the English-to-French and French-to-English
+IBM Model 4 alignments (using GIZA++ [16]) on the ﬁrst 5000 sentence pairs from the
+1.1M sentences. The number of edges for 5000 sentences was about 555,000. We tested
+on the 347 hand-aligned test examples, and used the validation set to select the stopping
+point. The features on the word pair (ej ; fk ) include measures of association, orthography,
+relative position, predictions of generative models (see [22] for details). It took about 3
+hours to perform 600 training iterations on the training data using a 2.8GHz Pentium 4
+machine. Fig. 2(b) shows the extragradient performing slightly better (by about 0.5%)
+than average perceptron.
+6 Conclusion
+We have presented a general solution strategy for large-scale structured prediction prob-
+lems. We have shown that these problems can be formulated as saddle-point optimization
+problems, problems that are amenable to solution by the extragradient algorithm. Key
+to our approach is the recognition that the projection step in the extragradient algorithm
+can be solved by network ﬂo w algorithms. Network ﬂo w algorithms are among the most
+well-developed in the ﬁeld of combinatorial optimization, and yield stable, efﬁcient
+al-
+gorithmic platforms. We have exhibited the favorable scaling of this overall approach in
+two concrete, large-scale learning problems. It is also important to note that the general
+approach extends to a much broader class of problems. In [21], we show how to apply
+this approach efﬁciently to other types of models, including general Markov networks and
+weighted context-free grammars, using Bregman projections.
+
+In
+
+Acknowledgments
+We thank Paul Tseng for kindly answering our questions about his min-cost ﬂo w code.
+This work was funded by the DARPA CALO project (03-000219) and Microsoft Research
+MICRO award (05-081). SLJ was also supported by an NSERC graduate sholarship.
+References
+[1] Y. Altun, I. Tsochantaridis, and T. Hofmann. Hidden Markov support vector machines.
+Proc. ICML, 2003.
+[2] D. Anguelov, B. Taskar, V. Chatalbashev, D. Koller, D. Gupta, G. Heitz, and A. Ng. Discrimi-
+native learning of Markov random ﬁelds for segmentation of 3d scan data. In CVPR, 2005.
+[3] P. Baldi, J. Cheng, and A. Vullo. Large-scale prediction of disulphide bond connectivity. In
+Proc. NIPS, 2004.
+[4] P. Bartlett, M. Collins, B. Taskar, and D. McAllester. Exponentiated gradient algorithms for
+large-margin structured classiﬁcation. In NIPS, 2004.
+[5] S. Belongie, J. Malik, and J. Puzicha. Shape matching and object recognition using shape
+contexts. IEEE Trans. Pattern Anal. Mach. Intell., 24, 2002.
+[6] M. Collins. Discriminative training methods for hidden Markov models: Theory and experi-
+ments with perceptron algorithms. In Proc. EMNLP, 2002.
+[7] D. M. Greig, B. T. Porteous, and A. H. Seheult. Exact maximum a posteriori estimation for
+binary images. J. R. Statist. Soc. B, 51, 1989.
+[8] F. Guerriero and P. Tseng. Implementation and test of auction methods for solving general-
+ized network ﬂow problems with separable convex cost. Journal of Optimization Theory and
+Applications, 115(1):113–144, October 2002.
+[9] B.S. He and L. Z. Liao. Improvements of some projection methods for monotone nonlinear
+variational inequalities. JOTA, 112:111:128, 2002.
+[10] M. Jerrum and A. Sinclair. Polynomial-time approximation algorithms for the Ising model.
+SIAM J. Comput., 22, 1993.
+[11] G. M. Korpelevich. The extragradient method for ﬁnding saddle points and other problems.
+Ekonomika i Matematicheskie Metody, 12:747:756, 1976.
+[12] S. Kumar and M. Hebert. Discriminative ﬁelds for modeling spatial dependencies in natural
+images. In NIPS, 2003.
+[13] J. Lafferty, A. McCallum, and F. Pereira. Conditional random ﬁelds: Probabilistic models for
+segmenting and labeling sequence data. In ICML, 2001.
+[14] E. Matusov, R. Zens, and H. Ney. Symmetric word alignments for statistical machine transla-
+tion. In Proc. COLING, 2004.
+[15] R. Mihalcea and T. Pedersen. An evaluation exercise for word alignment. In Proceedings of
+the HLT-NAACL 2003 Workshop, Building and Using parallel Texts: Data Driven Machine
+Translation and Beyond, pages 1–6, Edmonton, Alberta, Canada, 2003.
+[16] F. Och and H. Ney. A systematic comparison of various statistical alignment models. Compu-
+tational Linguistics, 29(1), 2003.
+[17] A. Schrijver. Combinatorial Optimization: Polyhedra and Efﬁciency . Springer, 2003.
+[18] B. Taskar. Learning Structured Prediction Models: A Large Margin Approach. PhD thesis,
+Stanford University, 2004.
+[19] B. Taskar, V. Chatalbashev, D. Koller, and C. Guestrin. Learning structured prediction models:
+a large margin approach. In ICML, 2005.
+[20] B. Taskar, C. Guestrin, and D. Koller. Max margin Markov networks. In NIPS, 2003.
+[21] B. Taskar, S. Lacoste-Julien, and M. Jordan. Structured prediction, dual extragradient and
+Bregman projections. Technical report, UC Berkeley Statistics Department, 2005.
+[22] B. Taskar, S. Lacoste-Julien, and D. Klein. A discriminative matching approach to word align-
+ment. In EMNLP, 2005.
+[23] L. G. Valiant. The complexity of computing the permanent. Theoretical Computer Science,
+8:189–201, 1979.
+
+

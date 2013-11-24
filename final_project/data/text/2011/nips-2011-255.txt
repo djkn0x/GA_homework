@@ -1,0 +1,621 @@
+Convergent Fitted Value Iteration
+with Linear Function Approximation
+
+Daniel J. Lizotte
+David R. Cheriton School of Computer Science
+University of Waterloo
+Waterloo, ON N2L 3G1 Canada
+dlizotte@uwaterloo.ca
+
+Abstract
+
+Fitted value iteration (FVI) with ordinary least squares regression is known to
+diverge. We present a new method, “Expansion-Constrained Ordinary Least
+Squares” (ECOLS), that produces a linear approximation but also guarantees con-
+vergence when used with FVI. To ensure convergence, we constrain the least
+squares regression operator to be a non-expansion in the ∞-norm. We show that
+the space of function approximators that satisfy this constraint is more rich than
+the space of “averagers,” we prove a minimax property of the ECOLS residual
+error, and we give an efﬁcient algorithm for computing the coefﬁcients of ECOLS
+based on constraint generation. We illustrate the algorithmic convergence of FVI
+with ECOLS in a suite of experiments, and discuss its properties.
+
+1
+
+Introduction
+
+Fitted value iteration (FVI), both in the model-based [4] and model-free [5, 15, 16, 17] settings, has
+become a method of choice for various applied batch reinforcement learning problems. However, it
+is known that depending on the function approximation scheme used, ﬁtted value iteration can and
+does diverge in some settings. This is particularly problematic—and easy to illustrate—when using
+linear regression as the function approximator. The problem of divergence in FVI has been clearly
+illustrated in several settings [2, 4, 8, 22]. Gordon [8] proved that the class of averagers–a very
+smooth class of function approximators–can safely be used with FVI. Further interest in batch RL
+methods then led to work that uses non-parametric function approximators with FVI to avoid diver-
+gence [5, 15, 16, 17]. This has left a gap in the “middle ground” of function approximator choices
+that guarantee convergence–we would like to have a function approximator that is more ﬂexible than
+the averagers but more easily interpreted than the non-parametric approximators. In many scientiﬁc
+applications, linear regression is a natural choice because of its simplicity and interpretability when
+used with a small set of scientiﬁcally meaningful state features. For example, in a medical setting,
+one may want to base a value function on patient features that are hypothesized to impact a long-term
+clinical outcome [19]. This enables scientists to interpret the parameters of an optimal learned value
+function as evidence for or against the importance of these features. Thus for this work, we restrict
+our attention to linear function approximation, and ensure algorithmic convergence to a ﬁxed point
+regardless of the generative model of the data. This is in contrast to previous work that explores
+how properties of the underlying MDP and properties of the function approximation space jointly
+inﬂuence convergence of the algorithm [1, 14, 6].
+Our aim is to develop a variant of linear regression that, when used in a ﬁtted value iteration al-
+gorithm, guarantees convergence of the algorithm to a ﬁxed point. The contributions of this paper
+are three-fold: 1) We develop and describe the “Expansion-Constrained Ordinary Least Squares”
+(ECOLS) approximator. Our approach is to constrain the regression operator to be a non-expansion
+in the ∞-norm. We show that the space of function approximators that satisfy this property is more
+
+1
+
+rich than the space of averagers [8], and we prove a minimax property on the residual error of the
+approximator. 2) We give an efﬁcient algorithm for computing the coefﬁcients of ECOLS based
+on quadratic programming with constraint generation. 3) We verify the algorithmic convergence
+of ﬁtted value iteration with ECOLS in a suite of experiments and discuss its performance. Fi-
+nally, we discuss future directions of research and comment on the general problem of learning an
+interpretable value function and policy from ﬁtted value iteration.
+
+2 Background
+Consider a ﬁnite MDP with states S = {1, ..., n}, actions A = {1, ..., |A|}, state transition matrices
+P (a) ∈ Rn×n for each action, a deterministic1 reward vector r ∈ Rn , and a discount factor γ < 1.
+Let Mi,: (M:,i ) denote the ith row (column) of a matrix M . The “Bellman optimality” operator or
+(cid:105)
+(cid:104)
+“Dynamic Programming” operator T is given by
+γP (a)
+(1)
+i,: v
+(T v)i = ri + max
+.
+a
+The ﬁxed point of T is the optimal value function v∗ which satisﬁes the Bellman equation, T v∗ = v∗
+[3]. From v∗ we can recover a policy π∗
+i,: v∗ that has v∗ as its value function.
+i = ri + argmaxa γP (a)
+An analogous operator K can be deﬁned for the state-action value function Q ∈ Rn×|A| .
+(KQ)i,j = ri + γP (j )
+(2)
+i,: max
+Q:,a
+a
+The ﬁxed point of K is the optimal state-action value Q∗ which satisﬁes KQ∗ = Q∗ . The value
+iteration algorithm proceeds by starting with an initial v or Q, and applying T or K repeatedly until
+convergence, which is guaranteed because both T and K are contraction mappings in the inﬁnity
+norm [8], as we discuss further below. The above operators assume knowledge of the transition
+model P (a) and rewards r . However K in particular is easily adapted to the case of a batch of n
+tuples of the form (si , ai , ri , s(cid:48)
+i ) obtained by interaction with the system [5, 15, 16, 17]. In this case,
+Q is only evaluated at states in our data set, and in MDPs with continuous state, the number of tuples
+n is analogous from a computational point of view to the size of our state space.
+Fitted value iteration [5, 15, 16, 17] (FVI) interleaves either T or K above with a function ap-
+proximation operator M . For example in the model-based case, the composed operator (M ◦ T )
+is applied repeatedly to an initial guess v0 . FVI has become increasingly popular especially in the
+ﬁeld of “batch-mode Reinforcement Learning” [13, 7] where a policy is learned from a ﬁxed batch
+of data that was collected by a prior agent. This has particular signiﬁcance in scientiﬁc and medical
+applications, where ethics concerns prevent the use of current RL methods to interact directly with
+a trial subject. In these settings, data gathered from controlled trials can still be used to learn good
+policies [11, 19]. Convergence of FVI depends on properties of M —particularly on whether M is a
+non-expansion in the ∞-norm, as we discuss below. The main advantage of ﬁtted value iteration is
+that the computation of (M ◦ T ) can be much lower than n in cases where the approximator M only
+requires computation of elements of (T v)i for a small subset of the state space. If M generalizes
+well, this enables learning in large ﬁnite or continuous state spaces. Another advantage is that M
+can be chosen to represent the value function in a meaningful way, i.e. in a way that meaningfully
+relates state variables to expected performance. For example, if M were linear regression and a
+particular state feature had a positive coefﬁcient in the learned value function, we know that larger
+values of that state feature are preferable. Linear models are of importance because of their ease of
+interpretation, but unfortunately, ordinary least squares (OLS) function approximation can cause the
+successive iterations of FVI to fail to converge. We now examine properties of the approximation
+operator M that control the algorithmic convergence of FVI.
+
+3 Non-Expansions and Operator Norms
+We say M is a linear operator if M y + M y (cid:48) = M (y + y (cid:48) ) ∀y , y (cid:48) ∈ Rp and M 0 = 0. Any linear
+operator can be represented by a p × p matrix of real numbers.
+
+1A noisy reward signal does not alter the analyses that follow, nor does dependence of the reward on action.
+
+2
+
+By deﬁnition, an operator M is a γ -contraction in the q -norm if
+∃γ ≤ 1 s.t. ||M y − M y (cid:48) ||q ≤ γ ||y − y (cid:48) ||q ∀y , y (cid:48) ∈ Rp
+(3)
+If the condition holds only for γ = 1 then M is called a non-expansion in the q -norm. It is well-
+known [3, 5, 21] that the operators T and K are γ -contractions in the ∞-norm.
+The operator norm of M induced by the q -norm can be deﬁned in several ways, including
+||M y ||q
+||M ||op(q) = sup
+||y ||q
+.
+y∈Rp ,y (cid:54)=0
+Lemma 1. A linear operator M is a γ -contraction in the q -norm if and only if ||M ||op(q) ≤ γ .
+
+(4)
+
+(5)
+
+(6)
+
+(7)
+
+(8)
+
+(9)
+
+Proof. If M is linear and is a γ -contraction, we have
+||M (y − y (cid:48) )||q ≤ γ ||y − y (cid:48) ||q ∀y , y (cid:48) ∈ Rp .
+By choosing y (cid:48) = 0, it follows that M satisﬁes
+||M z ||q ≤ γ ||z ||q ∀z ∈ Rp .
+Using the deﬁnition of || · ||op(q) , we have that the following conditions are equivalent:
+||M z ||q ≤ γ ||z ||q ∀z ∈ Rp
+||M z ||q
+≤ γ ∀z ∈ Rp , z (cid:54)= 0
+||z ||q
+||M z ||q
+≤ γ
+||z ||q
+sup
+z∈Rp ,z (cid:54)=0
+||M ||op(q) ≤ γ .
+Conversely, any M that satisﬁes (10) satisﬁes (5) because we can always write y − y (cid:48) = z .
+Lemma 1 implies that a linear operator M is a non-expansion in the ∞-norm only if
+||M ||op(∞) ≤ 1
+(cid:88)
+j
+Corollary 1. The set of all linear operators that satisfy (12) is exactly the set of linear operators
+that are non-expansions in the ∞-norm.
+One subset of operators on Rp that are guaranteed to be non-expansions in the ∞-norm are the
+averagers2 , as deﬁned by Gordon [8].
+Corollary 2. The set of all linear operators that satisfy (12) is larger than the set of averagers.
+Proof. For M to be an averager, it must satisfy
+(cid:88)
+j
+These constraints are stricter than (12), because they impose an additional non-negativity constraint
+on the elements of M .
+
+mij ≥ 0 ∀i, j
+mij ≤ 1.
+
+which is equivalent [18] to:
+
+|mij | ≤ 1
+
+(13)
+(14)
+
+(10)
+
+(11)
+
+(12)
+
+max
+i
+
+max
+i
+
+We have shown that restricting M to be a non-expansion is equivalent to imposing the constraint
+||M ||op(∞) ≤ 1.
+It is well-known [8] that if such an M is used as a function approximator in
+ﬁtted value iteration, the algorithm is guaranteed to converge from any starting point because the
+composition M ◦ T is a γ -contraction in the ∞-norm.
+2The original deﬁnition of an averager was an operator of the form y (cid:55)→ Ay + b for a constant vector b. For
+this work we assume b = 0.
+
+3
+
+4 Expansion-Constrained Ordinary Least Squares
+
+(16)
+
+(15)
+
+We now describe our Expansion-Constrained Ordinary Least Squares function approximation
+method, and show how we enforce that it is a non-expansion in the ∞-norm.
+Suppose X is an n × p design matrix with n > p and rank(X ) = p, and suppose y is a vector of
+regression targets. The usual OLS estimate ˆβ for the model y ≈ X β is given by
+||X β − y ||2
+ˆβ = argmin
+β
+= (X TX )−1X T y .
+The predictions made by the model at the points in X—i.e., the estimates of y—are given by
+ˆy = X ˆβ = X (X TX )−1X T y = H y
+(17)
+where H is the “hat” matrix because it “puts the hat” on y . The ith element of ˆy is a linear combi-
+nation of the elements of y , with weights given by the ith row of H . These weights sum to one, and
+may be positive or negative. Note that H is a projection of y onto the column space of X , and has 1
+as an eigenvalue with multiplicity rank(X ), and 0 as an eigenvalue with multiplicity (n− rank(X )).
+It is known [18] that for a linear operator M , ||M ||op(2) is given by the largest singular value of M .
+It follows that ||H ||op(2) ≤ 1 and, by Lemma 1, H is a non-expansion in the 2-norm. However,
+depending on the data X , we may not have ||H ||op(∞) ≤ 1, in which case H will not be a non-
+expansion in the ∞-norm. The ∞-norm expansion property of H is problematic when using linear
+function approximation for ﬁtted value iteration, as we described earlier.
+If one wants to use linear regression safely within a value-iteration algorithm, it is natural to consider
+constraining the least-squares problem so that the resulting hat matrix is an ∞-norm non-expansion.
+Consider the following optimization problem:
+||XW X T y − y ||2
+¯W = argmin
+W
+s.t. ||XW X T ||op(∞) ≤ 1, W ∈ Rp×p , W = W T .
+The symmetric matrix W is of size p × p, so we have a quadratic objective with a convex norm
+constraint on XW X T , resulting in a hat matrix ¯H = X ¯W X T . If the problem were unconstrained,
+we would have ¯W = (X TX )−1 , ¯H = H and ¯β = ¯W X T y = ˆβ , the original OLS parameter
+estimate.
+The matrix ¯H is a non-expansion by construction. However, unlike the OLS hat matrix H =
+X (X TX )−1X T , the matrix ¯H depends on the targets y . That is, given a different set of regression
+targets, we would compute a different ¯H . We should therefore more properly write this non-linear
+operator as ¯Hy . Because of the non-linearity, the operator ¯Hy resulting from the minimization in
+(18) can in fact be an expansion in the ∞-norm despite the constraints.
+We now show how we might remove the dependence on y from (18) so that the resulting operator is
+a linear non-expansion in the op(∞)-norm. Consider the following optimization problem:
+||XW X T z − z ||2
+ˇW = argmin
+max
+z
+W
+s.t. ||XW X T ||op(∞) ≤ 1, ||z ||2 = c, W ∈ Rp×p , W = W T , z ∈ Rn
+Intuitively, the resulting ˇW is a linear operator of the form X ˇW X T that minimizes the squared
+error between its approximation ˇz and the worst-case (bounded) targets z .3 The resulting ˇW does
+not depend on the regression targets y , so the corresponding ˇH is a linear operator. The constraint
+||XW X T ||op(∞) ≤ 1 is effectively a regularizer on the coefﬁcients of the hat matrix which will
+tend to shrink the ﬁtted values X ˇW X T y toward zero.
+Minimization 19 gives us a linear operator, but, as we now show, ˇW is not unique—there are in fact
+an uncountable number of ˇW that minimize (19).
+3The c is a mathematical convenience; if ||z ||2 were unbounded then the max would be unbounded and the
+problem ill-posed.
+
+(18)
+
+(19)
+
+4
+
+Theorem 1. Suppose W (cid:48) is feasible for (19) and is positive semi-deﬁnite. Then W (cid:48) satisﬁes
+||XW (cid:48)X T z − z ||2 = min
+||XW X T z − z ||2
+W
+
+max
+z ,||z ||2<c
+
+max
+z ,||z ||2<c
+
+(20)
+
+for all c.
+
+Proof. We begin by re-formulating (19), which contains a non-concave maximization, as a convex
+minimization problem with convex constraints.
+
+Lemma 2. Let X , W , c, and H be deﬁned as above. Then
+||XW X T z − z ||2 = c||XW X T − I ||op(2) .
+
+max
+z ,||z ||2=c
+
+Proof. maxz∈Rn ,||z ||2=c ||XW X T z − I z ||2 = maxz∈Rn ,||z ||2≤1 ||(XW X T − I )cz ||2 =
+c maxz∈Rn ,||z ||2 (cid:54)=0 ||(XW X T − I )z ||2 /||z ||2 = c||XW X T − I ||op(2) .
+
+Using Lemma 2, we can rewrite (19) as
+||XW X T − I ||op(2)
+ˇW = argmin
+W
+s.t. ||XW X T ||op(∞) ≤ 1, W ∈ Rp×p , W = W T
+which is independent of z and independent of the positive constant c. This objective is convex in
+W , as are the constraints. We now prove a lower bound on (21) and prove that W (cid:48) meets the lower
+bound.
+Lemma 3. For all n×p design matrices X s.t. n > p and all symmetric W , ||XW X T−I ||op(2) ≥ 1.
+
+(21)
+
+Proof. Recall that ||XW X T − I ||op(2) is given by the largest singular value of XW X T − I . By
+symmetry of W , write XW X T = U DU T where D is a diagonal matrix whose diagonal entries dii
+are the eigenvalues of XW X T and U is an orthonormal matrix. We therefore have
+XW X T − I = U DU T − I = U DU T − U I U T = U (D − I )U T
+(22)
+Therefore ||XW X T − I ||op(2) = maxi |dii − 1|, which is the largest singular value of XW X T − I .
+Furthermore we know that rank(XW X T ) ≤ p and that therefore at least n − p of the dii are zero.
+Therefore maxi |dii − 1| ≥ 1, implying ||XW X T − I ||op(2) ≥ 1.
+Lemma 4. For any symmetric positive deﬁnite matrix W (cid:48) that satisﬁes the constraints in (19) and
+any n × p design matrix X s.t. n > p, we have ||XW (cid:48)X T − I ||op(2) = 1.
+
+Proof. Let H (cid:48) = XW (cid:48)X T and write H (cid:48) − I = U (cid:48) (D (cid:48) − I )U (cid:48)T where U is orthogonal and D (cid:48) is a
+diagonal matrix whose diagonal entries d(cid:48)
+ii are the eigenvalues of H (cid:48) . We know H (cid:48) is positive semi-
+ii ≥ 0. From the constraints
+known [18] that for any M , ||M ||op(2) ≤ (cid:112)||M ||op(∞) ||M ||op(1) which gives ||H (cid:48) ||op(2) ≤ 1 and
+deﬁnite because W (cid:48) is assumed to be positive semi-deﬁnite; therefore d(cid:48)
+in (19), we have ||H (cid:48) ||op(∞) ≤ 1, and by symmetry of H (cid:48) we have ||H (cid:48) ||op(∞) = ||H (cid:48) ||op(1) . It is
+ii ≤ 1 ∀i. Recall that
+ii | ≤ 1 for all i ∈ 1..n. Combining these results gives 0 ≤ d(cid:48)
+therefore |d(cid:48)
+||XW (cid:48)X T − I ||op(2) = maxi |dii − 1|, the maximum eigenvalue of H (cid:48) . Because rank(XW X T ) ≤
+ii = 0, and because we have shown that 0 ≤ d(cid:48)
+ii ≤ 1, it
+p, we know that there exists an i such that d(cid:48)
+follows that maxi |dii − 1| = 1, and therefore ||XW (cid:48)X T − I ||op(2) = 1.
+
+Lemma 4 shows that the objective value at any feasible, symmetric postive-deﬁnite W (cid:48) matches the
+lower bound proved in Lemma 3, and that therefore any such W (cid:48) satisﬁes the theorem statement.
+
+5
+
+Theorem 1 shows that the optimum of (19) not unique. We therefore solve the following optimiza-
+tion problem, which has a unique solution, shows good empirical performance, and yet still provides
+the minimax property guaranteed by Theorem 1 when the optimal matrix is positive semi-deﬁnite.4
+||XW X T z − H z ||2
+˜W = argmin
+(23)
+max
+z
+W
+s.t. ||XW X T ||op(∞) ≤ 1, ||z ||2 = c, W ∈ Rp×p , W = W T , z ∈ Rn
+Intuitively, this objective searches for a ˜W such that linear approximation using X ˜W TX T is as close
+as possible to the OLS approximation, for the worst case regression targets, according to the 2-norm.
+
+5 Computational Formulation
+
+By an argument identical to that of Lemma 2, we can re-formulate (23) as a convex optimization
+problem with convex constraints, giving
+||XW X T − H ||op(2)
+˜W = argmin
+W
+s.t. ||XW X T ||op(∞) ≤ 1, W ∈ Rp×p , W = W T .
+
+(24)
+
+norm ||M ||F = ((cid:80)
+Though convex, objective (24) has no simple closed form, and we found that standard solvers have
+difﬁculty for larger problems [9]. However, ||XW X T − H ||op(2) is upper bounded by the Frobenius
+ij )1/2 . Therefore, we minimize the quadratic objective ||XW X T − H ||F
+i,j m2
+Expanding ||XW X T − H ||F gives ||XW X T − H ||F = Tr (cid:2)XW X TXW X T − 2XW X T − H (cid:3).
+subject to the same convex constraints, which is easier to solve than (21). Note that Theorem 1
+applies to the solution of this modiﬁed objective when the resulting ˜W is positive semideﬁnite.
+Ξ = (cid:80)n
+(cid:80)n
+Let M (:) be the length p · n vector consisting of the stacked columns of the matrix M . After
+some algebraic manipulations, we can re-write the objective as W (:)TΞW (:) − 2ζ TW (:), where
+as the set of constraints (cid:80)n
+j=1 ξ (ij ) ξ (ij )T and ξ (ij ) = (X T
+i,:Xj,: )(:), and ζ = (X TX )(:). This objective can
+i=1
+then be fed into any standard QP solver. The constraint ||XW X T ||op(∞) ≤ 1 can be expressed
+(cid:80)n
+j=1 |Xi,:W X T
+j,: | < 1, i = 1..n, or as a set of n2n linear constraints
+j,: < 1, i = 1..n, k ∈ {+1, −1}n . Each of these linear constraints involves a
+j=1 kj Xi,:W X T
+vector k with entries {+1, −1} multiplied by a row of XW X T . If the entries in k match the signs
+of the row of XW X T , then their inner product is equal to the sum of the absolute values of the
+row, which must be constrained. If they do not match, the result is smaller. By constraining all n2n
+patterns of signs, we constrain the sum of the absolute values of the entries in the row. Explicitly
+(cid:80)n
+enforcing all of these constraints is intractable, so we employ a constraint-generation approach [20].
+We solve a sequence of quadratic programs, adding the most violated linear constraint after each
+j=1 |Xi,:W X T
+j,: | and a
+step. The most violated constraint is given by a row i∗ = argmaxi∈1..n
+vector k∗ = sign Xi,:W . The resulting constraint on W (:) can be written as k∗L W (:) ≤ 1 where
+Lj,: = ξ (i∗ j ) , i = 1..n. This formulation allows us to use a general QP solver to compute ˜W .
+Note that batch ﬁtted value iteration performs many regressions where the targets y change from
+iteration to iteration, but the design matrix X is ﬁxed. Therefore we only need to solve the ECOLS
+optimization problem once for any given application of FVI, meaning the additional computational
+cost of ECOLS over OLS is not a major drawback.
+
+6 Experimental results
+
+In order to illustrate the behavior of ECOLS in different settings, we present four different empirical
+evaluations: one regression problem and three RL problems. In each of the RL settings, ECOLS
+with FVI converges, and the learned value function deﬁnes a good greedy policy.
+
+4One could in principle include a semi-deﬁnite constraint in the problem formulation, at an increased com-
+putational cost. (The problem is not a standard semi-deﬁnite program because the objective is not linear in the
+elements of W .) We have not imposed this constraint in our experiments and we have always found that the
+resulting ˜W is positive semi-deﬁnite. We conjecture that ˜W is always positive semi-deﬁnite.
+
+6
+
+Function Coefﬁcients
+ˆβ
+˜βF
+˜βop(2)
+0.77
+0.16
+0.95
+-2.02
+-1.80
+-2.92
+-1.88
+-1.71
+-3.00
+1.00
+0.58
+0.64
+13.44
+13.60
+6.68
+
+β ∗
+1
+-3
+-3
+1
+6.69
+
+˜βavg
+-2.21
+-0.97
+-1.09
+0.37
+16.52
+
+1
+x
+x2
+x3
+rms
+
+Figure 1: Example of OLS, ECOLS with ||XW X T − H ||F , ECOLS with ||XW X T − H ||op(2)
+
+Regression The ﬁrst is a simple regression setting, where we examine the behavior of ECOLS
+compared to OLS. To give a simple, pictorial rendition of the difference between OLS, ECOLS
+using the Frobenius, ECOLS using the op(2)-norm, and an averager, we generated a dataset of
+n = 25 tuples (x, y) as follows: x ∼ U (−2, 4), y = 1 − 3x − 3x2 + x3 + ε, ε ∼ N (0, 4). The
+design matrix X had rows Xi,: = [1, xi , x2
+i ]. The ECOLS regression optimizing the Frobenius
+i , x3
+norm using CPLEX [12] took 0.36 seconds, whereas optimizing the op(2)-norm using the cvx
+package [10] took 8.97 seconds on a 2 GHz Intel Core 2 Duo.
+Figure 1 shows the regression curves produced by OLS and the two versions of ECOLS, along with
+the learned coefﬁcients and root mean squared error of the predictions on the data. Neither of the
+ECOLS curves ﬁt the data as well as OLS, as one would expect. Generally, their curves are smoother
+than the OLS ﬁt, and predictions are on the whole shrunk toward zero. We also ran ECOLS with
+an additional positivity constraint on X ˜W X T , effectively forcing the result to be an averager as
+described in Sect. 3. The result is smoother than either of the ECOLS regressors, with a higher RMS
+prediction error. Note the small difference between ECOLS using the Frobenius norm (dark black
+line) and using the op(2)-norm (dashed line.) This is encouraging, as we have found that in larger
+datasets optimizing the op(2)-norm is much slower and less reliable.
+
+Two-state example Our second example is a classic on-policy ﬁtted value iteration problem that is
+known to diverge using OLS. It is perhaps the simplest example of FVI diverging, due to Tsitsiklis
+and Van Roy [22]. This is a deterministic on-policy example, or equivalently for our purposes, a
+problem with |A| = 1. There are three states {1, 2, 3} with features X = (1, 2, 0)T , one action with
+P1,2 = 1, P2,2 = 1 − ε, P2,3 = ε, P3,3 = 1 and Pi,j = 0 elsewhere. The reward is R = [0, 0, 0]T
+and the value function is v∗ = [0, 0, 0]T . For γ > 5/(6 − 4ε), FVI with OLS diverges for any
+starting point other than v∗ . FVI with ECOLS always converges to v∗ . If we change the reward
+to R = [1, 1, 0]T and set γ = 0.95, ε = 0.1, we have v∗ = [7.55, 6.90, 0]. FVI with OLS of
+course still diverges, whereas FVI with ECOLS converges to ˜v = [4.41, 8.82, 0]. In this case, the
+approximation space is poor, and no linear method based on the features in X can hope to perform
+well. Nonetheless, ECOLS converges to a ˆv of at least the appropriate magnitude.
+
+Grid world Our third example is an off-policy value iteration problem which is known to diverge
+with OLS, due to Boyan and Moore [4]. In this example, there are effectively 441 discrete states, laid
+out in a 21 × 21 grid, and assigned an (x, y) feature in [0, 1]2 according to their position in the grid.
+There are four actions which deterministically move the agent up, down, left, or right by a distance
+of 0.05 in the feature space, and the reward is -0.5 everywhere except the corner state (1, 1), where
+it is 0. The discount γ is set to 1.0 so the optimal value function is v∗ (x, y) = −20 + 10x + 10y .
+Boyan and Moore deﬁne “lucky” convergence of FVI as the case where the policy induced by
+the learned value function is optimal, even if the learned value function itself does not accurately
+represent v∗ . They found that with OLS and a design matrix Xi,: = [1, xi , yi ], they achieve lucky
+convergence. We replicated their result using FVI on 255 randomly sampled states plus the goal
+
+7
+
+−2−101234−15−10−50510xyExpansion−Constrained Ordinary Least Squares Comparisons  OLSECOLS with Fro. normECOLS with op(2)−normECOLS Avg. with Fro. normstate, and found that OLS converged5 to ˆβ = [−515.89, 9.99, 9.99] after 10455 iterations. This
+value function induces a policy that attempts to increase x and y , which is optimal. ECOLS on the
+other hand converged to ˜β = [−1.09, 0.030, 0.07] after 31 iterations, which also induces an optimal
+policy. In terms of learning correct value function coefﬁcients, the OLS estimate gets 2 of the 3
+almost exactly correct. In terms of estimating the value of states, OLS achieves an RMSE over all
+states of 10413.73, whereas ECOLS achieves an RMSE of 208.41.
+In the same work, Boyan and Moore apply OLS with quadratic features Xi,: =
+[1, x, y , x2 , y2 , xy ], and ﬁnd that FVI diverges. We found that ECOLS converges, with coefﬁcients
+[−0.80, −2.67, −2.78, 2.73, 2.91, 0.06]. This is not “lucky”, as the induced policy is only optimal
+for states in the upper-right half of the state space.
+
+Left-or-right world Our fourth and last example is an off-policy value iteration problem with
+stochastic dynamics where OLS causes non-divergent but non-convergent behavior. To investigate
+properties of their tree-based Fitted Q-Iteration (FQI) methods, Ernst, Geurts, and Wehenkel deﬁne
+the “left-or-right” problem [5], an MDP with S = [0, 10], and stochastic dynamics given by st+1 =
+st + a + ε, where ε ∼ N (0, 1). Rewards are 0 for s ∈ [0, 10], 100 for s > 10, and 50 for s < 0. All
+states outside [0, 10] are terminal. The discount factor γ is 0.75. In their formulation they use A ∈
+{−2, 2}, which gives an optimal policy that is approximately π∗ (s) = {2 if s > 2.5, -2 otherwise}.
+We examine a simpler scenario by choosing A ∈ {−4, 4}, so that π∗ (s) = 4, i.e., it is optimal to
+always go right. Based on prior data [5], the optimal Q functions for this type of problem appear
+to be smooth and non-linear, possibly with inﬂection points. Thus we use polynomial features6
+Xi,: = [1, x, x2 , x3 ] where x = s/5 − 1. As is common in FQI, we ﬁt separate regressions to learn
+Q(·, 4) and Q(·, −4) at each iteration. We used 300 episodes worth of data generated by the uniform
+random policy for learning.
+In this setting, OLS does not diverge, but neither does it converge: the parameter vector of each
+Q function moves chaotically within some bounded region of R4 . The optimal policy induced by
+the Q-functions is determined solely by zeroes of Q(·, 4) − Q(·, −4), and in our experiments this
+function had at most one zero. Over 500 iterations of FQI with OLS, the cutpoint ranged from -7.77
+to 14.04, resulting in policies ranging from “always go right” to “always go left.’ FQI with ECOLS
+converged to a near-optimal policy ˜π(s) = {4 if s > 1.81, -4 otherwise}. We determined by Monte
+Carlo rollouts that, averaged over a uniform initial state, the value of ˜π is 59.59, whereas the value
+of the optimal policy π∗ is 60.70. While the performance of the learned policy is very good, the
+estimate of the average value using the learned Qs, 28.75, is lower due to the shrinkage induced by
+ECOLS in the predicted state-action values.
+
+7 Concluding Remarks
+
+Divergence of FVI with OLS has been a long-standing problem in the RL literature. In this pa-
+per, we introduced ECOLS, which provides guaranteed convergence of FVI. We proved theoretical
+properties that show that in the minimax sense, ECOLS is optimal among possible linear approx-
+imations that guarantee such convergence. Our test problems conﬁrm the convergence properties
+of ECOLS and also illustrate some of its properties. In particular, the empirical results illustrate
+the regularization effect of the op(∞)-norm constraint that tends to “shrink” predicted values to-
+ward zero. This is a further contribution of our paper: Our theoretical and empirical results indicate
+that this shrinkage is a necessary cost of guaranteeing convergence of FVI using linear models with
+a ﬁxed set of features. This has important implications for the deployment of FVI with ECOLS.
+In some applications where accurate estimates of policy performance are required, this shrinkage
+may be problematic; addressing this problem is an interesting avenue for future research. In other
+applications where the goal is to identify a good, intuitively represented value function and policy
+ECOLS, is a useful new tool.
+
+Acknowledgements We acknowledge support from Natural Sciences and Engineering Research
+Council of Canada (NSERC) and the National Institutes of Health (NIH) grants R01 MH080015
+and P50 DA10075.
+5Convergence criterion was ||β iter+1 − β iter || ≤ 10−5 . All starts were from β = 0.
+6The re-scaling of s is for numerical stability.
+
+8
+
+References
+[1] A. Antos, R. Munos, and Cs. Szepesv ´ari. Fitted Q-iteration in continuous action-space MDPs.
+In Advances in Neural Information Processing Systems 20, pages 9–16. MIT Press, 2008.
+[2] L. Baird. Residual Algorithms: Reinforcement Learning with Function Approximation. In
+A. Prieditis and S. Russell, editors, Proceedings of the 25th International Conference on Ma-
+chine Learning, pages 30–37. Morgan Kaufmann, 1995.
+[3] D. Bertsekas. Dynamic Programming and Optimal Control. Athena Scientiﬁc, 2007.
+[4] J. Boyan and A. W. Moore. Generalization in reinforcement learning: Safely approximating
+In Advances in neural information processing systems, pages 369–376,
+the value function.
+1995.
+[5] D. Ernst, P. Geurts, and L. Wehenkel. Tree-Based Batch Mode Reinforcement Learning. Jour-
+nal of Machine Learning Research, 6:503–556, 2005.
+[6] A. M. Farahmand, M. Ghavamzadeh, Cs. Szepesv ´ari, and S. Mannor. Regularized ﬁtted Q-
+iteration for planning in continuous-space Markovian decision problems. In American Control
+Conference, pages 725–730, 2009.
+[7] R. Fonteneau. Contributions to Batch Mode Reinforcement Learning. PhD thesis, University
+of Liege, 2011.
+[8] G. J. Gordon. Approximate Solutions to Markov Decision Processes. PhD thesis, Carnegie
+Mellon University, 1999.
+[9] M. Grant and S. Boyd. CVX: Matlab software for disciplined convex programming, version
+1.21. http://cvxr.com/cvx, Apr. 2011.
+[10] M. C. Grant. Disciplined convex programming and the cvx modeling framework. Information
+Systems Journal, 2006.
+[11] A. Guez, R. D. Vincent, M. Avoli, and J. Pineau. Adaptive treatment of epilepsy via batch-
+mode reinforcement learning. In D. Fox and C. P. Gomes, editors, Innovative Applications of
+Artiﬁcial Intelligence, pages 1671–1678, 2008.
+[12] IBM. IBM ILOG CPLEX Optimization Studio V12.2, 2011.
+[13] S. Kalyanakrishnan and P. Stone. Batch reinforcement learning in a complex domain.
+In
+Proceedings of the 6th international joint conference on Autonomous agents and multiagent
+systems AAMAS 07, 2007.
+[14] R. Munos and Cs. Szepesv ´ari. Finite time bounds for ﬁtted value iteration. Journal of Machine
+Learning Research, 9:815–857, 2008.
+[15] D. Ormoneit and S. Sen. Kernel-based reinforcement learning. Machine learning, 49(2):161–
+178, 2002.
+[16] M. Riedmiller. Neural ﬁtted Q iteration-ﬁrst experiences with a data efﬁcient neural reinforce-
+ment learning method. In ECML 2005, pages 317–328. Springer, 2005.
+[17] J. Rust. Using randomization to break the curse of dimensionality. Econometrica, 65(3):pp.
+487–516, 1997.
+[18] G. A. F. Seber. A MATRIX HANDBOOK FOR STATISTICIANS. Wiley, 2007.
+[19] S. M. Shortreed, E. Laber, D. J. Lizotte, T. S. Stroup, J. Pineau, and S. A. Murphy. Inform-
+ing sequential clinical decision-making through reinforcement learning : an empirical study.
+Machine Learning, 2010.
+[20] S. Siddiqi, B. Boots, and G. Gordon. A Constraint Generation Approach to Learning Stable
+Linear Dynamical Systems. In Advances in Neural Information Processing Systems 20, pages
+1329–1336. MIT Press, 2008.
+[21] Cs. Szepesv ´ari. Algorithms for Reinforcement Learning. Morgan and Claypool, 2010.
+[22] J. N. Tsitsiklis and B. van Roy. An analysis of temporal-difference learning with function
+approximation. IEEE Transactions on Automatic Control, 42(5):674–690, 1997.
+
+9
+
+

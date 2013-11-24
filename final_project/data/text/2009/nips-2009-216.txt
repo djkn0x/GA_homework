@@ -1,0 +1,1065 @@
+Learning to Rank by Optimizing NDCG Measure
+
+Hamed Valizadegan
+Rong Jin
+Computer Science and Engineering
+Michigan State University
+East Lansing, MI 48824
+{valizade,rongjin}@cse.msu.edu
+
+Ruofei Zhang
+Jianchang Mao
+Advertising Sciences, Yahoo! Labs
+4401 Great America Parkway,
+Santa Clara, CA 95054
+{rzhang,jmao}@yahoo-inc.com
+
+Abstract
+
+Learning to rank is a relatively new ﬁeld of study, aiming to learn a ranking func-
+tion from a set of training data with relevancy labels. The ranking algorithms
+are often evaluated using information retrieval measures, such as Normalized Dis-
+counted Cumulative Gain (NDCG) [1] and Mean Average Precision (MAP) [2].
+Until recently, most learning to rank algorithms were not using a loss function
+related to the above mentioned evaluation measures. The main difﬁculty in direct
+optimization of these measures is that they depend on the ranks of documents, not
+the numerical values output by the ranking function. We propose a probabilistic
+framework that addresses this challenge by optimizing the expectation of NDCG
+over all the possible permutations of documents. A relaxation strategy is used to
+approximate the average of NDCG over the space of permutation, and a bound
+optimization approach is proposed to make the computation efﬁcient. Extensive
+experiments show that the proposed algorithm outperforms state-of-the-art rank-
+ing algorithms on several benchmark data sets.
+
+1 Introduction
+
+Learning to rank has attracted the focus of many machine learning researchers in the last decade
+because of its growing application in the areas like information retrieval (IR) and recommender
+systems. In the simplest form, the so-called pointwise approaches, ranking can be treated as classiﬁ-
+cation or regression by learning the numeric rank value of documents as an absolute quantity [3, 4].
+The second group of algorithms, the pairwise approaches, considers the pair of documents as in-
+dependent variables and learns a classiﬁcation (regression) model to correctly order the training
+pairs [5, 6, 7, 8, 9, 10, 11]. The main problem with these approaches is that their loss functions are
+related to individual documents while most evaluation metrics of information retrieval measure the
+ranking quality for individual queries, not documents.
+This mismatch has motivated the so called listwise approaches for information ranking, which treats
+each ranking list of documents for a query as a training instance [2, 12, 13, 14, 15, 16, 17]. Unlike
+the pointwise or pairwise approaches, the listwise approaches aim to optimize the evaluation metrics
+such as NDCG and MAP. The main difﬁculty in optimizing these evaluation metrics is that they are
+dependent on the rank position of documents induced by the ranking function, not the numerical
+values output by the ranking function. In the past studies, this problem was addressed either by the
+convex surrogate of the IR metrics or by heuristic optimization methods such as genetic algorithm.
+In this work, we address this challenge by a probabilistic framework that optimizes the expectation
+of NDCG over all the possible permutation of documents. To handle the computational difﬁculty, we
+present a relaxation strategy that approximates the expectation of NDCG in the space of permutation,
+and a bound optimization algorithm [18] for efﬁcient optimization. Our experiment with several
+benchmark data sets shows that our method performs better than several state-of-the-art ranking
+techniques.
+
+1
+
+The rest of this paper is organized as follows. The related work is presented in Section 2. The
+proposed framework and optimization strategy is presented in Section 3. We report our experimental
+study in Section 4 and conclude this work in Section 5.
+
+2 Related Work
+We focus on reviewing the listwise approaches that are closely related to the theme of this work.
+The listwise approaches can be classiﬁed into two categories. The ﬁrst group of approaches directly
+optimizes the IR evaluation metrics. Most IR evaluation metrics, however, depend on the sorted
+order of documents, and are non-convex in the target ranking function. To avoid the computational
+difﬁculty, these approaches either approximate the metrics with some convex functions or deploy
+methods (e.g., genetic algorithm [19]) for non-convex optimization. In [13], the authors introduced
+LambdaRank that addresses the difﬁculty in optimizing IR metrics by deﬁning a virtual gradient
+on each document after the sorting. While [13] provided a simple test to determine if there exists
+an implicit cost function for the virtual gradient, theoretical justiﬁcation for the relation between
+the implicit cost function and the IR evaluation metric is incomplete. This may partially explain
+why LambdaRank performs very poor when compared to MCRank [3], a simple adjustment of
+classiﬁcation for ranking (a pointwise approach). The authors of MCRank paper even claimed that
+a boosting model for regression produces better results than LambdaRank. Volkovs and Zemel [17]
+proposed optimizing the expectation of IR measures to overcome the sorting problem, similar to
+the approach taken in this paper. However they use monte carlo sampling to address the intractable
+task of computing the expectation in the permutation space which could be a bad approximation
+for the queries with large number of documents. AdaRank [20] uses boosting to optimize NDCG,
+similar to our optimization strategy. However they deploy heuristics to embed the IR evaluation
+metrics in computing the weights of queries and the importance of weak rankers; i.e. it uses NDCG
+value of each query in the current iteration as the weight for that query in constructing the weak
+ranker (the documents of each query have similar weight). This is unlike our approach that the
+contribution of each single document to the ﬁnal NDCG score is considered. Moreover, unlike our
+method, the convergence of AdaRank is conditional and not guaranteed. Sun et al. [21] reduced
+the ranking, as measured by NDCG, to pairwise classiﬁcation and applied alternating optimization
+strategy to address the sorting problem by ﬁxing the rank position in getting the derivative. SVM-
+MAP [2] relaxes the MAP metric by incorporating it into the constrains of SVM. Since SVM-MAP
+is designed to optimize MAP, it only considers the binary relevancy and cannot be applied to the
+data sets that have more than two levels of relevance judgements.
+The second group of listwise algorithms deﬁnes a listwise loss function as an indirect way to op-
+timize the IR evaluation metrics. RankCosine [12] uses cosine similarity between the ranking list
+and the ground truth as a query level loss function. ListNet [14] adopts the KL divergence for loss
+function by deﬁning a probabilistic distribution in the space of permutation for learning to rank.
+FRank [9] uses a new loss function called ﬁdelity loss on the probability framework introduced in
+ListNet. ListMLE [15] employs the likelihood loss as the surrogate for the IR evaluation metrics.
+The main problem with this group of approaches is that the connection between the listwise loss
+function and the targeted IR evaluation metric is unclear, and therefore optimizing the listwise loss
+function may not necessarily result in the optimization of the IR metrics.
+
+3 Optimizing NDCG Measure
+3.1 Notation
+Assume that we have a collection of n queries for training, denoted by Q = {q1 , . . . , qn}. For each
+query qk , we have a collection of mk documents Dk = {dk
+i , i = 1, . . . , mk }, whose relevance to
+) ∈ Zmk . We denote by F (d, q) the ranking function that
+qk is given by a vector rk = (rk
+1 , . . . , rk
+mk
+takes a document-query pair (d, q) and outputs a real number score, and by j k
+i the rank of document
+i within the collection Dk for query qk . The NDCG value for ranking function F (d, q) is then
+mk(cid:88)
+n(cid:88)
+dk
+computed as following:
+i − 1
+2rk
+1
+1
+log(1 + j k
+i )
+n
+Zk
+i=1
+k=1
+where Zk is the normalization factor [1]. NDCG is usually truncated at a particular rank level (e.g.
+the ﬁrst 10 retrieved documents) to emphasize the importance of the ﬁrst retrieved documents.
+
+L(Q, F ) =
+
+(1)
+
+2
+
+3.2 A Probabilistic Framework
+One of the main challenges faced by optimizing the NDCG metric deﬁned in Equation (1) is that the
+i ) on the ranking function F (d, q) is not explicitly expressed,
+dependence of document ranks (i.e., j k
+(cid:42)
+(cid:43)
+which makes it computationally challenging. To address this problem, we consider the expectation
+n(cid:88)
+mk(cid:88)
+n(cid:88)
+mk(cid:88)
+(cid:88)
+of L(Q, F ) over all the possible rankings induced by the ranking function F (d, q), i.e.,
+i − 1
+2rk
+1
+1
+1
+1
+Pr(πk |F , qk )
+¯L(Q, F ) =
+log(1 + j k
+i )
+n
+Zk
+n
+Zk
+πk ∈Smk
+i=1
+i=1
+k=1
+k=1
+F
+where Smk stands for the group of permutations of mk documents, and πk is an instance of permuta-
+tion (or ranking). Notation πk (i) stands for the rank position of the ith document by πk . To this end,
+we ﬁrst utilize the result in the following lemma to approximate the expectation of 1/ log(1 + πk (i))
+by the expectation of πk (i).
+n(cid:88)
+mk(cid:88)
+Lemma 1. For any distribution Pr(π |F, q), the inequality ¯L(Q, F ) ≥ ¯H(Q, F ) holds where
+i − 1
+2rk
+1
+1
+¯H(Q, F ) =
+log(1 + (cid:104)πk (i)(cid:105)F )
+Zk
+n
+i=1
+k=1
+
+i − 1
+2rk
+log(1 + πk (i))
+
+(3)
+
+=
+
+(2)
+
+(5)
+
+Pr(πk (i) > πk (j ))
+
+Proof. The proof follows from the fact that (a) 1/x is a convex function when x > 0 and therefore
+(cid:104)1/ log(1 + x)(cid:105) ≥ 1/(cid:104)log(1 + x)(cid:105); (b) log(1 + x) is a concave function, and therefore (cid:104)log(1 + x)(cid:105) ≤
+log(1 + (cid:104)x(cid:105)). Combining these two factors together, we have the result stated in the lemma.
+Given ¯H(Q, F ) provides a lower bound for ¯L(Q, F ), in order to maximize ¯L(Q, F ), we could
+alternatively maximize ¯H(Q, F ), which is substantially simpler than ¯L(Q, F ). In the next step of
+mk(cid:88)
+simpliﬁcation, we rewrite πk (i) as
+πk (i) = 1 +
+I (πk (i) > πk (j ))
+j=1
+mk(cid:88)
+mk(cid:88)
+where I (x) outputs 1 when x is true and zero otherwise. Hence, (cid:104)πk (i)(cid:105) is written as
+(cid:104)I (πk (i) > πk (j ))(cid:105) = 1 +
+(cid:104)πk (i)(cid:105) = 1 +
+j=1
+j=1
+As a result, to optimize ¯H(Q, F ), we only need to deﬁne Pr(πk (i) > πk (j )), i.e., the marginal
+i . In the next section, we will dis-
+j to be ranked before document dk
+distribution for document dk
+cuss how to deﬁne a probability model for Pr(πk |F, qk ), and derive pairwise ranking probability
+Pr(πk (i) > πk (j )) from distribution Pr(πk |F , qk ).
+ mk(cid:88)
+
+(cid:88)
+(cid:195)
+(cid:33)
+i , qk ) − F (dk
+(F (dk
+j , qk ))
+mk(cid:88)
+i=1
+j :πk (j )>πk (i)
+(mk − 2πk (i) + 1)F (dk
+i , qk )
+i=1
+where Z (F , qk ) is the partition function that ensures the sum of probability is one. Equation (6)
+i , qk ) − F (dk
+j ) of the ranking list πk by the factor exp(F (dk
+models each pair (dk
+j , qk )) if dk
+i , dk
+i
+j (i.e., πk (dk
+i ) < πk (dk
+j )) and vice versa. This modeling choice is consistent
+is ranked before dk
+with the idea of ranking the documents with largest scores ﬁrst; intuitively, the more documents in
+a permutation are in the decreasing order of score, the bigger the probability of the permutation is.
+Using Equation (6) for Pr(πk |F , qk ), we have ¯H(Q, F ) expressed in terms of ranking function F .
+By maximizing ¯H(Q, F ) over F , we could ﬁnd the optimal solution for ranking function F .
+As indicated by Equation (5), we only need to compute the marginal distribution Pr(πk (i) > πk (j )).
+To approximate Pr(πk (i) > πk (j )), we divide the group of permutation Smk into two sets:
+
+3.3 Objective Function
+We model Pr(πk |F, qk ) as follows
+1
+Z (F , qk )
+
+Pr(πk |F, qk ) =
+
+exp
+
+=
+
+1
+Z (F , qk )
+
+exp
+
+(4)
+
+(6)
+
+3
+
+(7)
+
+=
+
+≥
+
+(cid:164) (cid:180)
+
+Pr(πk |F, qk )
+
+Pr(πk |F, qk )
+
+Proof.
+1 =
+
+b (i, j ) = {πk |πk (i) < πk (j )}. Notice that there is a
+a (i, j ) = {πk |πk (i) > πk (j )} and Gk
+Gk
+one-to-one mapping between these two sets; namely for any ranking πk ∈ Gk
+a (i, j ), we could create
+a corresponding ranking πk ∈ Gk
+b (i, j ) by switching the rankings of document dk
+i and dk
+j and vice
+versa. The following lemma allows us to bound the marginal distribution Pr(πk (i) > πk (j )).
+(cid:164)
+(cid:163)
+Lemma 2. If F (dk
+j , qk ), we have
+i , qk ) > F (dk
+1
+Pr(πk (i) > πk (j )) ≤
+i , qk ) − F (dk
+(cid:88)
+(cid:88)
+1 + exp
+2(F (dk
+j , qk ))
+Pr(πk |F , qk ) +
+(cid:179)
+(cid:88)
+(cid:163)
+πk ∈Gk
+πk ∈Gk
+a (i,j )
+b (i,j )
+i , qk ) − F (dk
+Pr(πk |F , qk )
+2(πk (i) − πk (j ))(F (dk
+(cid:164)(cid:162) (cid:180)
+(cid:179)
+(cid:88)
+(cid:163)
+(cid:161)
+j , qk ))
+1 + exp
+πk ∈Gk
+a (i,j )
+i , qk ) − F (dk
+(cid:163)
+(cid:161)
+(cid:164)(cid:162)
+(cid:161)
+(cid:162)
+2(F (dk
+1 + exp
+j , qk ))
+πk ∈Gk
+a (i,j )
+i , qk ) − F (dk
+πk (i) > πk (j )
+Pr
+j , qk ))
+=
+2(F (dk
+1 + exp
+We used the deﬁnition of Pr(πk |F , qk ) in Equation (6) to ﬁnd Gk
+a (i, j ) in the
+b (i, j ) as the dual of Gk
+ﬁrst step of the proof. The inequality in the proof is because πk (i) − πk (j ) ≥ 1 and the last step is
+because Pr(πk |F, qk ) is the only term dependent on π .
+This lemma indicates that we could approximate Pr(πk (i) > πk (j )) by a simple logistic model. The
+idea of using logistic model for Pr(πk (i) > πk (j )) is not new in learning to rank [7, 9]; however
+mk(cid:88)
+it has been taken for granted and no justiﬁcation has been provided in using it for learning to rank.
+(cid:163)
+(cid:164)
+Using the logistic model approximation introduced in Lemma 2, we now have (cid:104)πk (i)(cid:105) written as
+1
+(cid:104)πk (i)(cid:105) ≈ 1 +
+(8)
+i , qk ) − F (dk
+1 + exp
+j , qk ))
+2(F (dk
+mk(cid:88)
+mk(cid:88)
+j=1
+i , qk ), and rewrite the above expression as
+i = 2F (dk
+To simplify our notation, we deﬁne F k
+1
+Pr(πk (i) > πk (j )) ≈ 1 +
+(cid:104)πk (i)(cid:105) = 1 +
+i − F k
+1 + exp(F k
+j )
+n(cid:88)
+mk(cid:88)
+j=1
+j=1
+Using the above approximation for (cid:104)πk (i)(cid:105), we have ¯H in Equation (3) written as
+i − 1
+2rk
+¯H(Q, F ) ≈ 1
+1
+mk(cid:88)
+log(2 + Ak
+i )
+Zk
+n
+i=1
+k=1
+I (j (cid:54)= i)
+i − F k
+1 + exp(F k
+j )
+j=1
+We deﬁne the following proposition to further simplify the objective function:
+Proposition 1.
+
+(9)
+
+(10)
+
+where
+
+i =
+Ak
+
+1
+≥ 1
+Ak
+−
+i
+log(2)
+log(2 + Ak
+i )
+2 [log(2)]2
+The proof is due to the Taylor expansion of convex function 1/log(2 + x), x > −1 around x = 0
+i > 0 (the proof of convexity of 1/log(1 + x) is given in Lemma 1). By plugging the
+noting that Ak
+mk(cid:88)
+n(cid:88)
+result of this proposition to the objective function in Equation (9), the new objective is to minimize
+the following quantity:
+1
+¯M(Q, F ) ≈ 1
+i − 1)Ak
+(2rk
+i
+Zk
+n
+i=1
+k=1
+The objective function in Equation (11) is explicitly related to F via term Ak
+i . In the next section, we
+aim to derive an algorithm that learns an effective ranking function by efﬁciently minimizing ¯M. It is
+also important to note that although ¯M is no longer a rigorous lower bound for the original objective
+function ¯L, our empirical study shows that this approximation is very effective in identifying the
+appropriate ranking function from the training data.
+
+(11)
+
+4
+
+where
+
+i,j =
+γ k
+
++ γ k
+i,j
+
+1
+i − ˜F k
+1 + exp( ˜F k
+j )
+
+≤
+
+3.4 Algorithm
+To minimize ¯M(Q, F ) in Equation (11), we employ the bound optimization strategy [18] that it-
+i . To
+eratively updates the solution for F . Let F k
+i denote the value obtained so far for document dk
+improve NDCG, following the idea of Adaboost, we restrict the new ranking value for document dk
+i ,
+denoted by ˜F k
+i , is updated as to the following form:
+˜F k
+i + αf k
+i = F k
+(12)
+i , qk ) ∈ {0, 1} is a binary value. Note that in
+i
+where α > 0 is the combination weight and f k
+i = f (dk
+the above, we assume the ranking function F (d, q) is updated iteratively with an addition of binary
+classiﬁcation function f (d, q), which leads to efﬁcient computation as well as effective exploitation
+. To construct a lower bound for ¯M(Q, F ), we
+of the existing algorithms for data classiﬁcation.
+(cid:163)
+(cid:164)
+i − F k
+j )]−1 , summarized by the following proposition.
+ﬁrst handle the expression [1 + exp(F k
+Proposition 2.
+1
+j − f k
+i )) − 1
+exp(α(f k
+i − F k
+1 + exp(F k
+j )
+(cid:162)2
+(cid:161)
+i − F k
+exp(F k
+j )
+i − F k
+1 + exp(F k
+j )
+The proof of this proposition can be found in Appendix A. This proposition separates the term
+related to F k
+i from that related to αf k
+in Equation (11), and shows how the new weak ranker (i.e.,
+i
+the binary classiﬁcation function f (d, q)) will affect the current ranking function F (d, q). Using
+the above proposition, we can derive the upper bound for M (Theorem 1) as well as a closed form
+solution for α given the solution for F (Theorem 2).
+ (cid:80)n
+
+(cid:80)mk
+Theorem 1. Given the solution for binary classiﬁer f d
+i , the optimal α that minimizes the objective
+function in Equation (11) is
+(cid:80)mk
+(cid:80)n
+i −1
+2rk
+1
+k=1
+i,j=1
+Zk
+α =
+2
+i −1
+2rk
+ mk(cid:88)
+k=1
+i,j=1
+Zk
+i,j I (j (cid:54)= i).
+i,j = γ k
+where θk
+Theorem 2.
+¯M(Q, ˜F ) ≤ ¯M(Q, F ) + γ (α) +
+j=1
+
+i,j I (f k
+i )
+θk
+j < f k
+i,j I (f k
+i )
+j > f k
+θk
+mk(cid:88)
+n(cid:88)
+i=1
+k=1
+
+exp(3α) − 1
+3
+
+i − 2rk
+2rk
+j
+Zk
+
+θk
+i,j
+
+(13)
+
+(14)
+
+(15)
+
+
+
+log
+
+f k
+i
+
+where γ (α) is only a function of α with γ (0) = 0.
+The proofs of these theorems are provided in Appendix B and Appendix C respectively. Note that the
+bound provided by Theorem 2 is tight because by setting α = 0, the inequality reduces to equality
+resulting ¯M(Q, ˜F ) = ¯M(Q, F ). The importance of this theorem is that the optimal solution for f k
+i
+can be found without knowing the solution for α.
+Algorithm 1 1 summarizes the procedure in minimizing the objective function in Equation (11).
+ij for every pair of documents of query k . Then, it computes wk
+First, it computes θk
+i , a weight for
+each document which can be positive or negative. A positive weight wk
+i indicates that the ranking
+position of dk
+i induced by the current ranking function F is less than its true rank position, while a
+negative weight wk
+i shows that ranking position of dk
+i induced by the current F is greater than its
+i provides a clear guidance for how to construct
+true rank position. Therefore, the sign of weight wk
+the next weak ranker, the binary classiﬁer in our case; that is, the documents with a positive wk
+i should be labeled as −1.
+i
+should be labeled as +1 by the binary classiﬁer and those with negative wk
+The magnitude of wk
+i shows how much the corresponding document is misplaced in the ranking.
+In other words, it shows the importance of correcting the ranking position of document dk
+i in terms
+of improving the value of NDCG. This leads to maximizing η given in Equation (17) which can be
+considered as some sort of classiﬁcation accuracy. We use sampling strategy in order to maximize η
+because most binary classiﬁers do not support the weighted training set; that is, we ﬁrst sample the
+documents according to |wk
+i | and then construct a binary classiﬁer with the sampled documents. It
+can be shown that the proposed algorithm reduces the objective function M exponentially (the proof
+is removed due to the lack of space).
+1Notice that we use F (dk
+i ) instead of F (dk
+i , qk ) to simplify the notation in the algorithm.
+
+5
+
+Algorithm 1 NDCG Boost: A Boosting Algorithm for Maximizing NDCG
+i ) = 0 for all documents
+1: Initialize F (dk
+2: repeat
+i,j I (j (cid:54)= i) for all document pairs of each query. γ k
+i,j = γ k
+Compute θk
+i,j is given in Eq. (14).
+mk(cid:88)
+3:
+Compute the weight for each document as
+3:
+i − 2rk
+2rk
+j
+Zk
+j=1
+i = sign(wk
+i ).
+Assign each document the following class label yk
+n(cid:88)
+mk(cid:88)
+Train a classiﬁer f (x) : Rd → {0, 1} that maximizes the following quantity
+i |f (dk
+|wk
+i )yk
+i
+i=1
+k=1
+Predict fi for all documents in {Dk , i = 1, . . . , n}
+5:
+Compute the combination weight α as provided in Equation (15).
+6:
+i ← F k
+i + αf k
+Update the ranking function as F k
+i .
+7:
+8: until reach the maximum number of iterations
+
+i =
+wk
+
+η =
+
+3:
+4:
+
+θk
+i,j
+
+(16)
+
+(17)
+
+4 Experiments
+
+To study the performance of NDCG Boost we use the latest version (version 3.0) of LETOR package
+provided by Microsoft Research Asia [22]. LETOR Package includes several benchmark data data,
+baselines and evaluation tools for research on learning to rank.
+
+4.1 Letor Data Sets
+There are seven data sets provided in the LETOR package: OHSUMED, Top Distillation 2003
+(TD2003), Top Distillation 2004 (TD2004), Homepage Finding 2003 (HP2003), Homepage Finding
+2003 (HP2003), Named Page Finding 2003 (NP2003) and Named Page Finding 2004 (NP2004) 2 .
+There are 106 queries in the OSHUMED data sets with a number of documents for each query.
+The relevancy of each document in OHSUMED data set is scored 0 (irrelevant), 1 (possibly) or
+2 (deﬁnitely). The total number of query-document relevancy judgments provided in OHSUMED
+data set is 16140 and there are 45 features for each query-document pair. For TD2003, TD2004,
+HP2003, HP2004 and NP2003, there are 50, 75, 75, 75 and 150 queries, respectively, with about
+1000 retrieved documents for each query. This amounts to a total number of 49171, 74170, 74409,
+73834 and 147606 query-document pairs for TD2003, TD2004, HP2003, HP2004 and NP2003
+respectively. For these data sets, there are 63 features extracted for each query-document pair and a
+binary relevancy judgment for each pair is provided.
+For every data sets in LETOR, ﬁve partitions are provided to conduct the ﬁve-fold cross validation,
+each includes training, test and validation sets. The results of a number of state-of-the-art learning
+to rank algorithms are also provided in the LETOR package. Since these baselines include some
+of the most well-known learning to rank algorithms from each category (pointwise, pairwise and
+listwise), we use them to study the performance of NDCG Boost. Here is the list of these baselines
+(the details can be found in the LETOR web page):
+Regression: This is a simple linear regression which is a basic pointwise approach and can be
+considered as a reference point.
+RankSVM: RankSVM is a pairwise approach using Support Vector Machine [5].
+FRank: FRank is a pairwise approach. It uses similar probability model to RankNet [7] for the
+relative rank position of two documents, with a novel loss function called Fidelity loss
+function [9]. TSai et al [9] showed that FRank performs much better than RankNet.
+ListNet: ListNet is a listwise learning to rank algorithm [14].
+It uses cross-entropy loss as its
+listwise loss function.
+AdaRank NDCG: This is a listwise boosting algorithm that incorporates NDCG in computing the
+samples and combination weights [20].
+
+2The experiment result for the last data set is not reported due to the lack of space.
+
+6
+
+(a) OHSUMED
+
+(b) TD2003
+
+(c) TD2004
+
+(d) HP2003
+
+(e) HP2004
+
+(f) NP2003
+
+Figure 1: The experimental results in terms of NDCG for Letor 3.0 data sets
+
+SVM MAP: SVM MAP is a support vector machine with MAP measure used in the constraints. It
+is a listwise approach [2].
+While the validation set is used in ﬁnding the best set of parameters in the baselines in LETOR,
+it is not being used for NDCG Boost in our experiments. For NDCG Boost, we set the maximum
+number of iteration to 100 and use decision stump as the weak ranker.
+Figure 1 provides the the average results of ﬁve folds for different learning to rank algorithms in
+terms of NDCG @ each of the ﬁrst 10 truncation level on the LETOR data sets 3 . Notice that the
+performance of algorithms in comparison varies from one data set to another; however NDCG Boost
+performs almost always the best. We would like to point out a few statistics; On OHSUMED
+data set, NDCG Boost performs 0.50 at N DCG@3, a 4% increase in performance, compared to
+FRANK, the second best algorithm. On TD2003 data set, this value for NDCG Boost is 0.375
+that shows a 10% increase, compared with RankSVM (0.34), the second best method. On HP2004
+data set, NDCG Boost performs 0.80 at N DCG@3, compared to 0.75 of SVM MAP, the second
+best method, which indicates a 6% increase. Moreover, among all the methods in comparison,
+NDCG Boost appears to be the most stable method across all the data sets. For example, FRank,
+which performs well in OHSUMED and TD2004 data sets, yields a poor performance on TD2003,
+HP2003 and HP 2004. Similarly, AdaRank NDCG achieves a decent performance on OHSUMED
+data set, but fails to deliver accurate ranking results on TD2003, HP2003 and NP2003. In fact, both
+AdaRank NDCG and FRank perform even worse than the simple Regression approach on TD2003,
+which further indicates their instability. As another example, ListNet and RankSVM, which perform
+well on TD2003 are not competitive to NDCG boost on OHSUMED and TD2004 data sets.
+
+5 Conclusion
+
+Listwise approach is a relatively new approach to learning to rank. It aims to use a query-level
+loss function to optimize a given IR measure. The difﬁculty in optimizing IR measure lies in the
+inherited sort function in the measure. We address this challenge by a probabilistic framework that
+optimizes the expectation of NDCG over all the possible permutations of documents. We present a
+relaxation strategy to effectively approximate the expectation of NDCG, and a bound optimization
+strategy for efﬁcient optimization. Our experiments on benchmark data sets shows that our method
+is superior to the state-of-the-art learning to rank algorithms in terms of performance and stability.
+
+3NDCG is commonly measured at the ﬁrst few retrieved documents to emphasize their importance.
+
+7
+
+123456789100.40.420.440.460.480.50.520.54@ nNDCGOHSUMED dataset  RegressionFRankListNetRankSVMAdaRankNDCGSVM_MAPNDCG_\BOOST123456789100.240.260.280.30.320.340.360.380.40.42@nNDCGTD2003 dataset  123456789100.250.30.350.40.450.5@nNDCGTD2004 dataset  123456789100.650.70.750.80.85@nNDCGHP2003 dataset  123456789100.350.40.450.50.550.60.650.70.750.80.85@nNDCGHP2004 dataset  123456789100.450.50.550.60.650.70.750.8@nNDCGNP2003 dataset  6 Acknowledgements
+Labs4 and National Institute of Health
+The work was supported in part by the Yahoo!
+(1R01GM079688-01). Any opinions, ﬁndings, and conclusions or recommendations expressed in
+this material are those of the authors and do not necessarily reﬂect the views of Yahoo! and NIH.
+
+=
+
+=
+
+A Proof of Proposition 2
+1
+i − ˜F k
+1 + exp( ˜F k
+j )
+
+=
+
++
+
+≤
+
+(cid:180)
+j − f k
+i )
+exp(α(f k
+
+1
+(cid:180)−1
+(cid:179)
+i − f k
+i − F k
+j + α(f k
+j ))
+1 + exp(F k
+i − F k
+j )
+exp(F k
+1
+1
+i − f k
+(cid:179)
+j )
+exp(α(f k
++
+i − F k
+i − F k
+i − F k
+j )
+j )
+j )
+1 + exp(F k
+1 + exp(F k
+1 + exp(F k
+i − F k
+i − F k
+j )
+exp(F k
+1 − exp(F k
+j )
+1
+(cid:164)
+(cid:163)
+i − F k
+i − F k
+i − F k
+j )
+j )
+j )
+1 + exp(F k
+1 + exp(F k
+1 + exp(F k
+1
+i ) − 1
+j − f k
+exp(α(f k
+i − F k
+1 + exp(F k
+j )
+The ﬁrst step is a simple manipulations of the terms and the second step is due to the convexity of
+inverse function on R+ .
+B Proof of Theorem 1
+(cid:163)
+(cid:164)
+(cid:80)mk
+(cid:80)n
+In order to obtain the result of the Theorem 1, we ﬁrst plug Equation (13) in Equation (11). This
+j − f k
+i −1
+(cid:180)
+(cid:179)
+2rk
+mk(cid:88)
+n(cid:88)
+mk(cid:88)
+n(cid:88)
+exp(α(f k
+i ))
+leads to minimizing
+, the term related to α . Since f k
+θk
+i
+i,j
+k=1
+i,j=1
+Zk
+takes binary values 0 and 1, we have the following:
+i − 1
+i − 1
+2rk
+2rk
+i ) + exp(−α)I (f k
+j − f k
+i )
+i )) =
+i,j exp(α(f k
+exp(α)I (f k
+j < f k
+j > f k
+θk
+Zk
+Zk
+i,j=1
+i,j=1
+k=1
+k=1
+Getting the partial derivative of this term respect to α and having it equal to zero results the theorem.
+
++ γ k
+i,j
+
+θk
+i,j
+
+(18)
+
+(x − y) +
+
+C Proof of Theorem 2
+j − f k
+i )).
+First, we provide the following proposition to handle exp(α(f k
+Proposition 3. If x, y ∈ [0, 1], we have
+exp(α(x − y)) ≤ exp(3α) − 1
+exp(3α) + exp(−3α) + 1
+3
+3
+Proof. Due to the convexity of exp function, we have:
++ 0 × 1 − x + y
+x − y + 1
+exp(α(x − y)) = exp(3α
+3
+3
+1 − x + y
+≤ x − y + 1
++
+exp(3α) +
+3
+3
+(cid:180)
+(cid:179) exp(3α) − 1
+(cid:164) ≤ θk
+(cid:163)
+Using the result in the above proposition, we can bound the last term in Equation (13) as follows:
+exp(3α) + exp(−3α) − 2
+j − f k
+j − f k
+i ) − 1
+(f k
+i ) +
+exp(α(f k
+(19)
+θk
+3
+3
+mk(cid:88)
+n(cid:88)
+mk(cid:88)
+i,j
+i,j
+Using the result in Equation (19) and (13), we have ¯M(Q, ˜F ) in Equation (11) bounded as
+exp(3α) − 1
+i − 1
+2rk
+
+ mk(cid:88)
+i − f k
+¯M(Q, ˜F ) ≤ ¯M(Q, F ) + γ (α) +
+i,j (f k
+j )
+θk
+n(cid:88)
+mk(cid:88)
+3
+Zk
+j=1
+i=1
+k=1
+exp(3α) − 1
+i − 2rk
+2rk
+j
+3
+Zk
+j=1
+i=1
+k=1
+
+1
+× −3α)
++
+3
+1
+exp(−3α)
+3
+
+= ¯M(Q, F ) + γ (α) +
+
+θk
+i,j
+
+f k
+i
+
+4The ﬁrst author has been supported as a part-time intern in Yahoo!
+
+8
+
+References
+[1] Kalervo J ¨arvelin and Jaana Kek ¨al ¨ainen. Ir evaluation methods for retrieving highly relevant
+documents. In SIGIR 2000: Proceedings of the 23th annual international ACM SIGIR confer-
+ence on Research and development in information retrieval, pages 41–48, 2000.
+[2] Yisong Yue, Thomas Finley, Filip Radlinski, and Thorsten Joachims. A support vector method
+for optimizing average precision. In SIGIR 2007: Proceedings of the 30th annual Int. ACM
+SIGIR Conf. on Research and development in information retrieval, pages 271–278, 2007.
+[3] Ping Li, Christopher Burges, and Qiang Wu. Mcrank: Learning to rank using multiple classi-
+ﬁcation and gradient boosting. In Neural Information Processing System 2007.
+[4] Ramesh Nallapati. Discriminative models for information retrieval. In SIGIR ’04: Proceed-
+ings of the 27th annual international ACM SIGIR conference on Research and development in
+information retrieval, pages 64–71, New York, NY, USA, 2004. ACM.
+[5] Ralf Herbrich, Thore Graepel, and Klaus Obermayer. Support vector learning for ordinal
+regression. In Int. Conf. on Artiﬁcial Neural Networks 1999, pages 97–102, 1999.
+[6] Yoav Freund, Raj Iyer, Robert E. Schapire, and Yoram Singer. An efﬁcient boosting algorithm
+for combining preferences. Journal of Machine Learning Research, 4:933–969, 2003.
+[7] Chris Burges, Tal Shaked, Erin Renshaw, Ari Lazier, Matt Deeds, Nicole Hamilton, and Greg
+Hullender. Learning to rank using gradient descent. In International Conference on Machine
+Learning 2005, 2005.
+[8] Yunbo Cao, Jun Xu, Tie-Yan Liu, Hang Li, Yalou Huang, and Hsiao-Wuen Hon. Adapting
+ranking svm to document retrieval. In SIGIR 2006: Proceedings of the 29th annual interna-
+tional ACM SIGIR conference on Research and development in information retrieval, pages
+186–193, 2006.
+[9] Ming Feng Tsai, Tie yan Liu, Tao Qin, Hsin hsi Chen, and Wei ying Ma. Frank: A ranking
+method with ﬁdelity loss. In SIGIR 2007: Proceedings of the 30th annual international ACM
+SIGIR conference on Research and development in information retrieval, 2007.
+[10] Rong Jin, Hamed Valizadegan, and Hang Li. Ranking reﬁnement and its application to infor-
+mation retrieval. In WWW ’08: Proc. of the 17th int. conference on World Wide Web.
+[11] Steven C.H. Hoi and Rong Jin. Semi-supervised ensemble ranking. In Proceedings of Associ-
+ation for the Advancement of Artiﬁcial Intelligence (AAAI2008).
+[12] Tao Qin, Tie yan Liu, Ming feng Tsai, Xu dong Zhang, and Hang Li. Learning to search web
+pages with query-level loss functions. Technical report, 2006.
+[13] Christopher J. C. Burges, Robert Ragno, and Quoc V. Le. Learning to rank with nonsmooth
+cost functions. In Neural Information Processing System 2006, 2006.
+[14] Zhe Cao and Tie yan Liu. Learning to rank: From pairwise approach to listwise approach. In
+International Conference on Machine Learning 2007, pages 129–136, 2007.
+[15] Fen Xia, Tie-Yan Liu, Jue Wang, Wensheng Zhang, and Hang Li. Listwise approach to learning
+to rank: theory and algorithm. In Int. Conf. on Machine Learning 2008, pages 1192–1199,
+2008.
+[16] Michael Taylor, John Guiver, Stephen Robertson, and Tom Minka. Softrank: optimizing non-
+smooth rank metrics.
+[17] Maksims N. Volkovs and Richard S. Zemel. Boltzrank: learning to maximize expected ranking
+gain.
+In ICML ’09: Proceedings of the 26th Annual International Conference on Machine
+Learning, pages 1089–1096, New York, NY, USA, 2009. ACM.
+[18] Ruslan Salakhutdinov, Sam Roweis, and Zoubin Ghahramani. On the convergence of bound
+optimization algorithms. In Proc. 19th Conf. in Uncertainty in Artiﬁcial Intelligence (UAI 03).
+[19] Jen-Yuan Yeh, Yung-Yi Lin, Hao-Ren Ke, and Wei-Pang Yang. Learning to rank for infor-
+mation retrieval using genetic programming. In SIGIR 2007 workshop: Learning to Rank for
+Information Retrieval.
+[20] Jun Xu and Hang Li. Adarank: a boosting algorithm for information retrieval.
+In SIGIR
+’07: Proceedings of the 30th annual international ACM SIGIR conference on Research and
+development in information retrieval, pages 391–398, 2007.
+[21] Zhengya Sun, Tao Qin, Qing Tao, and Jue Wang. Robust sparse rank learning for non-smooth
+ranking measures. In SIGIR ’09: Proceedings of the 32nd international ACM SIGIR conference
+on Research and development in information retrieval, pages 259–266, New York, NY, USA,
+2009. ACM.
+[22] Tie-Yan Liu, Tao Qin, Jun Xu, Wenying Xiong, and Hang Li. Letor: Benchmark dataset for
+research on learning to rank for information retrieval.
+
+9
+
+

@@ -1,0 +1,514 @@
+Selecting Observations against Adversarial Objectives
+
+Andreas Krause
+SCS, CMU
+
+H. Brendan McMahan
+Google, Inc.
+
+Carlos Guestrin
+SCS, CMU
+
+Anupam Gupta
+SCS, CMU
+
+Abstract
+In many applications, one has to actively select among a set of expensive observa-
+tions before making an informed decision. Often, we want to select observations
+which perform well when evaluated with an objective function chosen by an adver-
+sary. Examples include minimizing the maximum posterior variance in Gaussian
+Process regression, robust experimental design, and sensor placement for outbreak
+detection. In this paper, we present the Submodular Saturation algorithm, a sim-
+ple and efﬁcient algorithm with strong theoretical approximation guarantees for
+the case where the possible objective functions exhibit submodularity, an intuitive
+diminishing returns property. Moreover, we prove that better approximation al-
+gorithms do not exist unless NP-complete problems admit efﬁcient algorithms.
+We evaluate our algorithm on several real-world problems. For Gaussian Process
+regression, our algorithm compares favorably with state-of-the-art heuristics de-
+scribed in the geostatistics literature, while being simpler, faster and providing
+theoretical guarantees. For robust experimental design, our algorithm performs
+favorably compared to SDP-based algorithms.
+
+1 Introduction
+In tasks such as sensor placement for environmental temperature monitoring or experimental de-
+sign, one has to select among a large set of possible, but expensive, observations. Often, there are
+several different objective functions which we want to simultaneously optimize. For example, in
+the environmental monitoring problem, we want to minimize the marginal posterior variance of our
+temperature estimate at all locations simultaneously. In experimental design, we often have uncer-
+tainty about the model parameters, and we want our experiments to be informative no matter what
+the true parameters of the model are. These problems can be interpreted as a game: We select a
+set of observations (sensor locations, experiments), and an adversary selects an objective function
+(location to evaluate predictive variance, model parameters etc.) to test us on. Often, the individual
+objective functions (e.g., the marginal variance at one location, or the information gain for a ﬁxed set
+of parameters [1, 2]) satisfy submodularity, an intuitive diminishing returns property: Adding a new
+observation helps less if we have already made many observations, and more if we have made few
+observation thus far. While NP-hard, the problem of selecting an optimal set of k observations max-
+imizing a single submodular objective can be approximately solved using a simple greedy forward-
+selection algorithm, which is guaranteed to perform near-optimally [3]. However, as we show, this
+simple myopic algorithm performs arbitrarily badly in the case of an adversarially chosen objective.
+In this paper, we address this problem.
+In particular: (1) We present SATURAT E, an efﬁcient
+algorithm for settings where an adversarially-chosen submodular objective function must be
+optimized. Our algorithm guarantees solutions which are at least as informative as the optimal
+solution, at only a slightly higher cost.
+(2) We prove that our approximation guarantee is best
+possible and cannot be improved unless NP-complete problems admit efﬁcient algorithms. (3) We
+extensively evaluate our algorithm on several real-world tasks, including minimizing the maximum
+posterior variance in Gaussian Process regression, ﬁnding experiment designs which are robust
+with respect to parameter uncertainty, and sensor placement for outbreak detection.
+2 The adversarial observation selection problem
+Observation selection with a single submodular objective. Observation selection problems can
+often be modeled using set functions: We have a ﬁnite set V of observations to choose from, and
+
+1
+
+(2.1)
+
+a utility function F which assigns a real number F (A) to each A ⊆ V , quantifying its informa-
+tiveness. In many settings, such as the ones described above, the utility F exhibits the property of
+submodularity: adding an observation helps more, the fewer observations made so far [2]. Formally,
+F is submodular [3] if, for all A ⊆ B ⊆ V and s ∈ V \ B , it holds that F (A ∪ {s}) − F (A) ≥
+F (B ∪ {s}) − F (B); F is monotonic if for all A ⊆ B ⊆ V it holds that F (A) ≤ F (B), and F is
+normalized if F (∅) = 0. Hence, many observation selection problems can be formalized as
+maxA⊆V F (A),
+|A| ≤ k ,
+subject to
+where F is normalized, monotonic and submodular, and k is a bound on the number of observations
+we can make. Since solving the problem (2.1) is generally NP-hard [4], in practice heuristics are
+often used. One such heuristic is the greedy algorithm. This algorithm starts with the empty set, and
+iteratively adds the element s∗ = argmaxs∈V \A F (A ∪ {s}), until k elements have been selected.
+Perhaps surprisingly, a fundamental result by Nemhauser et. al. [3] states that for submodular
+functions, the greedy algorithm achieves a constant factor approximation: The set AG obtained by
+the greedy algorithm achieves at least a constant fraction (1 − 1/e) of the objective value obtained
+by the optimal solution, i.e., F (AG ) ≥ (1 − 1/e) max|A|≤k F (A). Moreover, no polynomial time
+algorithm can provide a better approximation guarantee unless P = NP [4].
+Observation selection with adversarial objectives.
+In many applications (such as those dis-
+cussed below), one wants to simultaneously optimize multiple objectives. Here, we are given a
+collection of monotonic submodular functions F1 , . . . , Fm , and we want to solve
+Fi (A),
+|A| ≤ k .
+maxA⊆V min
+(2.2)
+subject to
+i
+Problem (2.2) can be considered a game: First, we (the max-player) select a set of observations A,
+and then our opponent (the min-player) selects a criterion Fi to test us on. Our goal is to select a
+set A of observations which performs well against an opponent who chooses the worst possible Fi
+knowing our choice A. Thereby, we try to ﬁnd a pure equilibrium to a sequential game on a matrix,
+with one row per A, and one column per Fi . Note, that even if the Fi are all submodular, G(A) =
+mini Fi (A) is not submodular. In fact, we show below that, in this setting, the simple greedy algo-
+rithm (which performs near-optimally in the single-criterion setting) can perform arbitrarily badly.
+Examples of adversarial observation selection problems. We consider three instances of
+adversarial selection problems. Sec. 4 provides more details and experimental results for these
+domains. Several more examples are presented in the longer version of this paper [5].
+Minimizing the maximum Kriging variance. Consider a Gaussian Process (GP) [6] XV deﬁned
+over a ﬁnite set of locations (indices) V . Hereby, XV is a set of random variables, one variable
+Xs for each location s ∈ V . Given a set of locations A ⊆ V which we observe, we can compute
+the predictive distribution P (XV \A | XA = xA ), i.e., the distribution of the variables XV \A at the
+unobserved locations V \ A, conditioned on the measurements at the selected locations, XA = xA .
+s|A be the residual variance after making observations at A. Let ΣAA be the covariance
+Let σ2
+matrix of the measurements at the chosen locations A, and ΣsA be the vector of cross-covariances
+s − ΣsAΣ−1AAΣAs depends
+between the measurements at s and A. Then, the variance σ2
+s|A = σ2
+only on the set A, and not on the observed values xA . Assume that the a priori variance σ2
+s is
+constant for all locations s (in Sec. 3, we show our approach generalizes to non-constant marginal
+variances). We want to select locations A such that the maximum marginal variance is as small as
+possible. Equivalently, we can deﬁne the variance reduction Fs (A) = σ2
+s − σ2
+s|A , and desire that
+the minimum variance reduction over all locations s is as large as possible. Das and Kempe [1]
+show that, in many practical cases, the variance reduction Fs is a monotonic submodular function.
+Robust experimental designs. Another application is experimental design under nonlinear dynamics
+[7]. The goal is to estimate a set of parameters θ of a nonlinear function y = f (x, θ) + w , by
+providing a set of experimental stimuli x, and measuring the (noisy) response y . In many cases,
+experimental design for linear models (where y = A(x)T θ + w) with Gaussian noise w can be
+efﬁciently solved [8]. In the nonlinear case, the common approach is to linearize f around an initial
+parameter estimate θ0 , i.e., y = f (x, θ0 ) + V (x)(θ − θ0 ) + w , where V (x) is the Jacobian of f with
+respect to the parameters θ , evaluated at θ0 . In [7], it was shown that the efﬁciency of the design
+can be very sensitive with respect to the initial parameter estimates θ0 . Consequently, they develop
+an efﬁcient semi-deﬁnite program (SDP) for E-optimal design (i.e., the goal is to minimize the
+maximum eigenvalue of the error covariance) which is robust against perturbations of the Jacobian
+
+2
+
+V . However, it might be more natural to directly consider robustness with respect to perturbation of
+the initial parameter estimates θ0 , around which the linearization is performed. We show how to ﬁnd
+(Bayesian A-optimal) designs which are robust against uncertainty in these parameter estimates.
+In this setting, the objectives Fθ0 (A) are the reductions of the trace of the parameter covariance,
+Fθ0 (A) = tr(Σ(θ0 )
+) − tr(Σ(θ0 )
+θ|A ), where Σ(θ0 ) is the joint covariance of observations and parameters
+θ
+after linearization around θ0 ; thus, Fθ0 is the sum of marginal parameter variance reductions, which
+are individually monotonic and (often) submodular [1], and so Fθ0 is monotonic and submodular as
+well. Hence, in order to ﬁnd a robust design, we maximize the minimum variance reduction, where
+the minimum is taken over (a discretization into a ﬁnite subset of) all initial parameter values θ0 .
+Sensor placement for outbreak detection. Another class of examples are outbreak detection prob-
+lems on graphs, such as contamination detection in water distribution networks [9]. Here, we are
+given a graph G = (V , E ), and a phenomenon spreading dynamically over the graph. We deﬁne a set
+of intrusion scenarios I ; each scenario i ∈ I models an outbreak (e.g., spreading of contamination)
+starting from a given node s ∈ V in the network. By placing sensors at a set of locations A ⊆ V ,
+we can detect such an outbreak, and incur a utility Fi (A) (e.g., reduction in detection time or
+population affected).
+In [9], it was shown that these utilities Fi are monotonic and submodular
+for a large class of utility functions. In the adversarial setting, the adversary observes our sensor
+placement A, and then decides on an intrusion i for which our utility Fi (A) is as small as possible.
+Hence, our goal is to ﬁnd a placement A which performs well against such an adversarial opponent.
+Hardness of the adversarial observation selection problem. Given the near-optimal perfor-
+mance of the greedy algorithm for the single-objective problem, a natural question is if the per-
+formance guarantee generalizes to the more complex adversarial setting. Unfortunately, this is far
+from true. Consider the case with two submodular functions, F1 and F2 , where the set of observa-
+tions is V = {s1 , s2 , t1 , t2 }. We set F1 (∅) = F2 (∅) = 0, and deﬁne F1 (A) = 1 if s1 ∈ A, otherwise
+ε times the number of ti contained in A. Similarly, if s2 ∈ A, we set F2 (A) = 1, otherwise ε times
+the number of ti contained in A. Both F1 and F2 are submodular and monotonic. Optimizing for
+a set of 2 elements, the greedy algorithm maximizing G(A) = min{F1 (A), F2 (A)} would choose
+the set {t1 , t2 }, since such choice increases G by 2ε, whereas adding si would not increase the score.
+However, the optimal solution with k = 2 is {s1 , s2 }, with a score of 1. Hence, as ε → 0, the greedy
+algorithm performs arbitrarily worse than the optimal solution. Our next hope would be to obtain a
+different good approximation algorithm. However, we can show that most likely this is not possible:
+Theorem 1. Unless P = NP, there cannot exist any polynomial time approximation algorithm for
+Problem (2.2). More precisely: Let n be the size of the problem instance, and γ (·) > 0 be any
+positive function of n. If there exists a polynomial-time algorithm which is guaranteed to ﬁnd a set
+A0 of size k such that mini Fi (A0 ) ≥ γ (n) max|A|≤k mini Fi (A), then P = NP.
+Thus, unless P = NP, there cannot exist any algorithm which is guaranteed to provide, e.g., even an
+exponentially small fraction (γ (n) = 2−n ) of the optimal solution. All proofs can be found in [5].
+3 The Submodular Saturation Algorithm
+Since Theorem 1 rules out any approximation algorithm which respects the constraint k on the size
+of the set A, our only hope for non-trivial guarantees requires us to relax this constraint. We now
+present an algorithm that ﬁnds a set of observations which perform at least as well as the optimal
+set, but at slightly increased cost; moreover, we show that no efﬁcient algorithms can provide better
+guarantees (under reasonable complexity-theoretic assumptions). For now we assume all Fi take
+only integral values; this assumption is relaxed later. The key idea is to consider the following
+alternative formulation:
+c ≤ Fi (A) for 1 ≤ i ≤ m and |A| ≤ αk .
+max
+subject to
+(3.1)
+c,A c,
+We want a set A of size at most αk , such that Fi (A) ≥ c for all i, and c is as large as possible.
+Here α ≥ 1 is a parameter relaxing the constraint on |A|:
+if α = 1, we recover the original
+problem (2.2). We solve program (3.1) as follows: For each value c, we ﬁnd the cheapest set A
+with Fi (A) ≥ c for all i. If this cheapest set has at most αk elements, then c is feasible. A binary
+to approximately solve Equation (3.1) for a ﬁxed c. For c > 0 deﬁne bFi,c (A) = min{Fi (A), c},
+search on c allows us to ﬁnd the optimal solution with the maximum feasible c. We ﬁrst show how
+the original function Fi truncated at score level c; these bFi,c functions are also submodular [10].
+3
+
+GPC (F c , c)
+A ← ∅;
+while F c (A) < c do
+foreach s ∈ V \ A do δs ← F c (A ∪ {s}) − F c (A);
+A ← A ∪ {argmaxs δs };
+Algorithm 1: The greedy submodular partial cover (GPC) algorithm.
+SATURAT E (F1 , . . . , Fm , k , α)
+cmin ← 0; cmax ← mini Fi (V ); Abest ← ∅;
+P
+while (cmax − cmin ) ≥ 1
+m do
+i min{Fi (A), c}; A ← GP C (F c , c);
+c ← (cmin + cmax )/2; ∀A deﬁne F c (A) ← 1
+if |A| > αk then cmax ← c; else cmin ← c; Abest = A ;
+m
+P
+Algorithm 2: The Submodular Saturation algorithm.
+i bFi,c (A) be their average value; submodular functions are closed under convex
+Let F c (A) = 1
+m
+combinations, so F c is submodular and monotonic. Furthermore, Fi (A) ≥ c for all 1 ≤ i ≤ m
+if and only if F c (A) = c. Hence, in order to determine whether some c is feasible, we solve a
+submodular covering problem:
+such that F c (A) = c.
+Ac = argminA⊆V |A|,
+(3.2)
+Such problems are NP-hard in general [4], but in [11] it is shown that the greedy algorithm (c.f.,
+Algorithm 1) achieves near-optimal performance on this problem. Using this result, we ﬁnd:
+i Fi (s)) ≥ 1 + log (cid:0)m maxs∈V F c (s)(cid:1)1 .
+A∗ is the optimal solution, and α = 1 + log (maxs∈V P
+Lemma 2. Given monotonic submodular functions F1 , . . . , Fm and a (feasible) constant c, Algo-
+rithm 1 (with input F c ) ﬁnds a set AG such that Fi (AG ) ≥ c for all i, and |AG | ≤ α|A∗ |, where
+We can compute this approximation guarantee α for any given instance of the adversarial ob-
+servation selection problem. Hence, if for a given value of c the greedy algorithm returns a set
+of size greater than αk , there cannot exist a solution A0 with |A0 | ≤ k with Fi (A0 ) ≥ c for all
+i; thus, the optimal solution to the adversarial observation selection problem must be less than
+as the algorithm considers the truncated objectives bFi,c , and chooses sets which saturate all these
+c. We can use this argument to conduct a binary search to ﬁnd the optimal value of c. We call
+Algorithm 2, which formalizes this procedure, the submodular saturation algorithm (SATURAT E),
+objectives. Theorem 3 (given below) states that SATURAT E is guaranteed to ﬁnd a set which
+achieves adversarial score mini Fi at least as high as the optimal solution, if we allow the set to be
+max|A|≤k mini Fi (A) and |AS | ≤ αk , for α = 1 + log (maxs∈V P
+logarithmically larger than the optimal solution.
+of submodular function evaluations is O (cid:0)|V |2m log(P
+i Fi (V ))(cid:1).
+Theorem 3. For any integer k , SATURATE ﬁnds a solution AS such that mini Fi (AS ) ≥
+i Fi (s)). The total number
+1 + log (maxs∈V P
+However,
+if α <
+the algorithm still makes sense for any value of α.
+Note,
+that
+i Fi (s)), the guarantee of Theorem 3 does not hold.
+If we had an exact
+algorithm for submodular coverage, α = 1 would be the correct choice. Since the greedy algorithm
+solves submodular coverage very effectively, in our experiments, we call SATURAT E with α = 1,
+which empirically performs very well. The worst-case running time guarantee is quite pessimistic,
+and in practice the algorithm is much faster: Using a priority queue and lazy evaluations, Algo-
+rithm 1 can be sped up drastically (c.f., [12] for details). Furthermore, in practical implementations,
+one would stop GPC once αk + 1 elements have been selected, which already proves that the
+optimal solution with k elements cannot achieve score c. Also, Algorithm 2 can be terminated once
+cmax − cmin is sufﬁciently small; in our experiments, 10-15 iterations usually sufﬁced.
+One might ask, whether the guarantee on the size of the set, α, can be improved. Unfortunately, this
+is not likely, as the following Theorem shows:
+β ≤ (1 − ε)(1 + log maxs∈V P
+Theorem 4. If there were a polynomial time algorithm which, for any integer k , is guaranteed
+to ﬁnd a solution AS such that mini Fi (AS ) ≥ max|A|≤k mini Fi (A) and |AS | ≤ βk , where
+i Fi (s)) for some ﬁxed ε > 0, then NP ⊆ DTIME(nlog log n ).
+1This bound is only meaningful for integral Fi , otherwise it could be arbitrarily improved by scaling the Fi .
+
+4
+
+Hereby, DTIME(nlog log n ) is a class of deterministic, slightly superpolynomial (but sub-
+exponential) algorithms [4]; the inclusion NP ⊆ DTIME(nlog log n ) is considered unlikely [4].
+
+Extensions. We now show how the assumptions made in our presentation above can be relaxed.
+Non-integral objectives. Most objective functions Fi in the observation selection setting are not
+integral (e.g., marginal variances of GPs). If they take rational numbers, we can scale the objectives
+by multiplying by their common denominator. If we allow small additive error, we can approximate
+their values by their leading digits. An analysis similar to the one presented in [2] can be used to
+bound the effect of this approximation on the theoretical guarantees obtained by the algorithm.
+Non-constant thresholds. Consider the example of Minimax Kriging Designs for GP regression.
+i − σ2
+Here, the Fi (A) = σ2
+i|A denote the variance reductions at location i. However, rather than
+guaranteeing that Fi (A) ≥ c for all i (which, in this example, means that the minimum variance re-
+this case: Instead of deﬁning bFi,c (A) = min{Fi (A), c}, we deﬁne bFi,c (A) = min{Fi (A), σ2
+i|A ≤ c for all i. We can easily adapt our approach to handle
+duction is c), we want to guarantee that σ2
+i − c},
+and then again perform binary search over c, but searching for the smallest c instead. The algorithm,
+using objectives modiﬁed in this way, will bear the same approximation guarantees.
+itive cost g(s); the cost of a set of observations is then g(A) = P
+Non-uniform observation costs. We can extend SATURAT E to the setting where different observa-
+tions have different costs. Suppose a cost function g : V → R+ assigns each element s ∈ V a pos-
+ing observations. In this case, we use the rule δs ← (cid:0)F c (A ∪ {s}) − F c (A)(cid:1) /g(s) in Algorithm 1.
+s∈A g(s). The problem is to ﬁnd
+A∗ = maxA⊂V mini Fi (A) subject to g(A) ≤ B , where B > 0 is a budget we can spend on mak-
+For this modiﬁed algorithm, Theorem 3 still holds, with |A| replaced by g(A) and k replaced by B .
+4 Experimental Results
+Minimax Kriging. We use SATURATE to select observations in a GP to minimize the maximum
+posterior variance. We consider Precipitation data from the Paciﬁc Northwest of the United States
+[13]. We discretize the space into 167 locations.
+In order to estimate variance reduction, we
+consider the empirical covariance of 50 years of data, which we preprocessed as described in [2].
+In the geostatistics literature, the predominant choice of optimization algorithms are carefully
+tuned local search procedures, prominently simulated annealing (c.f., [14, 15]). We compare our
+SATURAT E algorithm against a state-of-the-art implementation of such a simulated annealing (SA)
+algorithm, ﬁrst proposed by [14]. We use an optimized implementation described recently by
+[15]. This algorithm has 7 parameters which need to be tuned, describing the annealing schedule,
+distribution of iterations among several inner loops, etc. We use the parameter settings as reported
+by [15], and report the best result of the algorithm among 10 random trials. In order to compare
+observation sets of the same size, we called SATURAT E with α = 1.
+Fig. 1(a) compares simulated annealing, SATURAT E, and the greedy algorithm which greedily
+selects elements which decrease the maximum variance the most. We also used SATURATE to
+initialize the simulated annealing algorithm (using only a single run of simulated annealing, as
+opposed to 10 random trials). SATURAT E obtains placements which are drastically better than
+the placements obtained by the greedy algorithm. Furthermore, the performance is very close
+to the performance of the simulated annealing algorithm. When selecting 30 and more sensors,
+SATURAT E strictly outperforms the simulated annealing algorithm. Furthermore, as Fig. 1(b)
+shows, SATURAT E is signiﬁcantly faster than simulated annealing, by factors of 5-10 for larger
+problems. When using SATURAT E in order to initialize the simulated annealing algorithm, the
+resulting performance almost always resulted in the best solutions we were able to ﬁnd, while
+still executing faster than simulated annealing with 10 random restarts as proposed by [15]. These
+results indicate that SATURAT E compares favorably to state-of-the-art local search heuristics, while
+being faster, requiring no parameters to tune, and providing theoretical approximation guarantees.
+Optimizing for the maximum variance could potentially be considered too pessimistic. Hence
+we compared placements obtained by SATURAT E, minimizing the maximum marginal posterior
+variance, with placements obtained by the greedy algorithm, where we minimize the average
+marginal variance. Note, that, whereas the reduction of the maximum variance is non-submodular,
+the average variance reduction is (often) submodular [1], and hence the greedy algorithm can be
+expected to provide near-optimal placements. Fig. 1(c) presents the maximum and average marginal
+variances for both algorithms. Our results show that if we optimize for the maximum variance
+we still achieve comparable average variance. If we optimize for average variance however, the
+
+5
+
+(a) Algorithm comparison
+(b) Running time
+(c) Avg. vs max. variance
+Figure 1: (a) SATURATE, greedy and SA on the precipitation data. SATURAT E performs comparably with the
+ﬁne-tuned SA algorithm, and outperforms it for larger placements. (b) Running times for the same experiment.
+(c) Optimizing for the maximum variance (using SATURATE) leads to low average variance, but optimizing for
+average variance (using greedy) does not lead to low maximum variance.
+maximum posterior variance remains much higher.
+In the longer version of this paper [5], we
+present results on two more real data sets, which are qualitatively similar to those discussed here.
+Robust Experimental Design. We consider the robust design of experiments for the Michaelis-
+Menten mass-action kinetics model, as discussed in [7]. The goal is least-square parameter
+estimation for a function y = f (x, θ), where x is the chosen experimental stimulus (the initial
+substrate concentration S0 ), and θ = (θ1 , θ2 ) are two parameters as described in [7]. The stimulus
+x is chosen from a menu of six options, x ∈ {1/8, 1, 2, 4, 8, 16}, each of which can be repeatedly
+chosen. The goal is to produce a fractional design w = (w1 , . . . , w6 ), where each component wi
+measures the relative frequency according to which the stimulus xi is chosen. Since f is nonlinear,
+f is linearized around an initial parameter estimate θ0 = (θ01 , θ02 ), and approximated by its
+Jacobian Vθ0 . Classical experimental design considers the error covariance of the least squares
+estimate ˆθ , Cov( ˆθ | θ0 , w) = σ2 (V T
+θ0 W Vθ0 )−1 , where W = diag(w), and aims to ﬁnd designs
+w which minimize this error covariance. E-optimality, the criterion adopted by [7], measures
+smallness in terms of the maximum eigenvalue of the error covariance matrix. The optimal w can
+be found using Semideﬁnite Programming (SDP) [8].
+The estimate Cov( ˆθ | θ0 , w) depends on the initial parameter estimate θ0 , where linearization is per-
+formed. However, since the goal is parameter estimation, a “certain circularity is involved” [7]. To
+avoid this problem, [7] ﬁnd a design wρ (θ0 ) by solving a robust SDP which minimizes the error size,
+subject to a worst-case (adversarially-chosen) perturbation ∆ on the Jacobian Vθ0 ; the robustness pa-
+rameter ρ bounds the spectral norm of ∆. As evaluation criterion, [7] deﬁne a notion of efﬁciency,
+which is the error size of the optimal design with correct initial parameter estimate, divided by the
+error when using a robust design obtained at the wrong initial parameter estimates, i.e.,
+eﬃciency ≡ λmax [Cov( ˆθ | θtrue , wopt (θtrue )))]/λmax [Cov( ˆθ | θtrue , wρ (θ0 ))],
+where wopt (θ) is the E-optimal design for parameter θ . They show that for appropriately chosen
+values of ρ, the robust design is more efﬁcient than the optimal design, if the initial parameter θ0
+does not equal the true parameter.
+While their results are very promising, an arguably more natural approach than perturbing the Ja-
+cobian would be to perturb the initial parameter estimate, around which linearization is performed.
+E.g., if the function f describes a process, which behaves characteristically differently in different
+“phases”, and the parameter θ controls which of the phases the process is in, then a robust design
+should intuitively “hedge” the design against the behavior in each possible phase. In such a case, the
+uniform distribution (which the robust SDP chooses for large ρ) would not be the most robust design.
+If we discretize the space of possible parameter perturbations (within a reasonably chosen interval),
+we can use SATURATE to ﬁnd robust experimental designs. While the classical E-optimality is not
+submodular [2], Bayesian A-optimality is (often) submodular [1, 2]. Here, the goal is to minimize
+the trace instead of eigenvalue size as error metric. Furthermore, we equip the parameters θ with an
+uninformative normal prior (which we chose as diag([202 , 202 ])), and then minimize the expected
+trace of the posterior error covariance, tr(Σθ|A ). Hereby, A is a discrete design of 20 experiments,
+where each option xi can be chosen repeatedly. In order to apply SATURAT E, for each θ , we deﬁne
+θ − σ2
+Fθ (A) as the normalized variance reduction Fθ (A) = 1
+θ|A ). The normalization Zθ is
+(σ2
+Zθ
+chosen such that Fθ (A) = 1 if A = argmax|A0 |=20 Fθ (A0 ), i.e., if A is chosen to maximize only
+Fθ . SATURAT E is then used to maximize the worst-case normalized variance reduction.
+
+6
+
+0204060801000.511.522.5Number of sensorsMaximum marginal varianceGreedySaturateSimulatedAnnealing (SA)Saturate + SA01020304050600100200300400500Number of observationsRunning time (s)SimulatedAnnealing (SA)Saturate+SASaturateGreedy0510152000.511.522.53Number of sensorsMarginal varianceMax. var.opt. avg.(Greedy)Max. var.opt. max.(Saturate)Avg. var.opt. max.(Saturate)Avg. var.opt. avg.(Greedy)(c) [W] algorithms Z2
+(b) [W] algorithms Z1
+(a) Robust experimental design
+Figure 2: (a) Efﬁciency of robust SDP of [7] and SATURAT E on a biological experimental design problem.
+For a large range of initial parameter estimates, SATURAT E outperforms the SDP solutions. (b,c) SATURAT E,
+greedy and SA in the water network setting, when optimizing worst-case detection time (Z1 ) and affected
+population (Z2 ). SATURAT E performs comparably to SA for Z2 and strictly outperforms SA for Z1 .
+We reproduced the experiment of [7], where the initial estimate of the second component θ02 of θ0
+was varied between 0 and 16, the “true” value being θ2 = 2. For each initial estimate of θ02 , we
+computed a robust design, using the SDP approach and using SATURATE, and compared them using
+the efﬁciency metric of [7]. We ﬁrst optimized designs which are robust against a small perturbation
+of the initial parameter estimate. For the SDP, we chose a robustness parameter ρ = 10−3 , as
+1+ε , θ(1 + ε)], discretized
+reported in [7]. For SATURATE, we considered an interval around [θ 1
+in a 5 × 5 grid, with ε = .1. Fig. 2(a) shows three characteristically different regions, A, B , C ,
+separated by vertical lines. In region B which contains the true parameter setting, the E-optimal
+design (which is optimal if the true parameter is known, i.e., θ02 = θ2 ) performs similar to both
+robust methods. Hence, in region B (i.e., small deviation from the true parameter), robustness is not
+really necessary. Outside of region B however, where the standard E-optimal design performs badly,
+both robust designs do not perform well either. This is an intuitive result, as they were optimized to
+be robust only to small parameter perturbations.
+Consequently, we compared designs which are robust against a large parameter range. For SDP,
+we chose ρ = 16.3, which is the maximum spectral variation of the Jacobian when we consider all
+initial estimates from θ02 varying between 0 and 16. For SATURATE, we optimized a single design
+which achieves the maximum normalized variance reduction over all values of θ02 between 0 and 16.
+Fig. 2(a) shows, that in this case, the design obtained by SATURATE achieves an efﬁciency of 69%,
+whereas the efﬁciency of the SDP design is only 52%. In the regions A and C, the SATURATE design
+strictly outperforms the other robust designs. This experiment indicates that designs which are robust
+against a large range of initial parameter estimates, as provided by SATURATE, can be more efﬁcient
+than designs which are robust against perturbations of the Jacobian (the SDP approach).
+Outbreak Detection. Consider a city water distribution network, delivering water to households
+via a system of pipes, pumps, and junctions. Accidental or malicious intrusions can cause contam-
+inants to spread over the network, and we want to select a few locations (pipe junctions) to install
+sensors, in order to detect these contaminations as quickly as possible. In August 2006, the Battle
+of Water Sensor Networks (BWSN) [16] was organized as an international challenge to ﬁnd the best
+sensor placements for a real (but anonymized) metropolitan water distribution network, consisting
+of 12,527 nodes. In this challenge, a set of intrusion scenarios is speciﬁed, and for each scenario
+a realistic simulator provided by the EPA [17] is used to simulate the spread of the contaminant
+for a 48 hour period. An intrusion is considered detected when one selected node shows positive
+contaminant concentration. BWSN considered a variety of impact measures, including the time
+to detection (called Z1 ), and the size of the affected population calculated using a realistic disease
+model (Z2 ). The goal of BWSN was to minimize the expectation of the impact measures Z1 and
+Z2 given a uniform distribution over intrusion scenarios.
+In this paper, we consider the adversarial setting, where an opponent chooses the contamination
+scenario with knowledge of the sensor locations. The objective functions Z1 and Z2 are in fact sub-
+modular for a ﬁxed intrusion scenario [9], and so the adversarial problem of minimizing the impact
+of the worst possible intrusion ﬁts into our model. For these experiments, we consider scenarios
+which affect at least 10% of the network, resulting in a total of 3424 scenarios. Figures 2(b) and 2(c)
+compare the greedy algorithm, SATURAT E and the simulated annealing (SA) algorithm for the prob-
+lem of maximizing the worst-case detection time (Z1 ) and worst-case affected population (Z2 ).
+Interestingly, the behavior is very different for the two objectives. For the affected population (Z2 ),
+greedy performs reasonably, and SA sometimes even outperforms SATURAT E. For the detection
+
+7
+
+ABC10-110010100.20.40.60.81Initial parameter estimate θ02Efficiency (w.r.t. E-optimality)ClassicalE-optimaldesigntrue θ2SDP:ρ= 16.3ρ= 10-3Saturate:large intervalsmall interval051015202530050010001500200025003000Number of sensorsMaximum detection time (minutes)GreedySimulatedAnnealingSaturate5101520253000.511.52x 104Number of sensorsMaximum population affectedGreedySaturateSimulatedAnnealingSaturate + SAtime (Z1 ), however, the greedy algorithm did not improve the objective at all, and SA performs
+poorly. The reason is that for Z2 , the maximum achievable scores, Fi (V ), vary drastically, since
+some scenarios have much higher impact than others. Hence, there is a strong “gradient”, as the
+adversarial objective changes quickly when the high impact scenarios are covered. This gradient
+allows greedy and SA to work well. On the contrary, for Z1 , the maximum achievable scores,
+Fi (V ), are constant, since all scenarios have the same simulation duration. Unless all scenarios are
+detected, the worst-case detection time stays constant at the simulation length. Hence, many node
+exchange proposals considered by SA, as well as the addition of a new sensor location by greedy,
+do not change the adversarial objective, and the algorithms have no useful performance metric.
+Similarly to the GP Kriging setting, our results show that optimizing the worst-case score leads to
+reasonable performance in the average case score, but not necessarily vice versa.
+5 Conclusions
+In this paper, we considered the problem of selecting observations which are informative with re-
+spect to an objective function chosen by an adversary. We demonstrated how this class of problems
+encompasses the problem of ﬁnding designs which minimize the maximum posterior variance in
+Gaussian Processes regression, robust experimental design, and detecting events spreading over
+graphs. In each of these settings, the individual objectives are submodular and can be approximated
+well using, e.g., the greedy algorithm; the adversarial objective, however, is not submodular. We
+proved that there cannot exist any approximation algorithm for the adversarial problem if the con-
+straint on the observation set size must be exactly met, unless P = NP. Consequently, we presented
+an efﬁcient approximation algorithm, SATURATE, which ﬁnds observation sets which are guaran-
+teed to be least as informative as the optimal solution, and only logarithmically more expensive. In
+a strong sense, this guarantee is the best possible. We extensively evaluated our algorithm on several
+real-world problems. For Gaussian Process regression, we showed that SATURAT E compares favor-
+ably to state-of-the-art heuristics, while being simpler, faster, and providing theoretical guarantees.
+For robust experimental design, SATURAT E performs favorably compared to SDP based approaches.
+Acknowledgements This work was partially supported by NSF Grants No. CNS-0509383, CNS-
+0625518, CCF-0448095, CCF-0729022, and a gift from Intel. Anupam Gupta and Carlos Guestrin
+were partly supported by Alfred P. Sloan Fellowships, Carlos Guestrin by an IBM Faculty Fellow-
+ship and Andreas Krause by a Microsoft Research Graduate Fellowship.
+References
+[1] A. Das and D. Kempe. Algorithms for subset selection in linear regression. In Manuscript, 2007.
+[2] A. Krause, A. Singh, and C. Guestrin. Near-optimal sensor placements in Gaussian processes: Theory,
+efﬁcient algorithms and empirical studies. In To appear in the JMLR, 2007.
+[3] G. Nemhauser, L. Wolsey, and M. Fisher. An analysis of the approximations for maximizing submodular
+set functions. Mathematical Programming, 14:265–294, 1978.
+[4] U. Feige. A threshold of ln n for approximating set cover. J. ACM, 45(4), 1998.
+[5] A. Krause, B. McMahan, C. Guestrin, and A. Gupta. Robust submodular observation selection. Technical
+report, CMU-ML-08-100, 2008.
+[6] C. E. Rasmussen and C. K. I. Williams. Gaussian Process for Machine Learning. Adaptive Computation
+and Machine Learning. MIT Press, 2006.
+[7] P. Flaherty, M. Jordan, and A. Arkin. Robust design of biological experiments. In NIPS, 2006.
+[8] S. Boyd and L. Vandenberghe. Convex Optimization. Cambridge UP, March 2004.
+[9] J. Leskovec, A. Krause, C. Guestrin, C. Faloutsos, J. VanBriesen, and N. Glance. Cost-effective outbreak
+detection in networks. In KDD, 2007.
+[10] T. Fujito. Approximation algorithms for submodular set cover with applications. TIEICE, 2000.
+[11] L.A. Wolsey. An analysis of the greedy algorithm for the submodular set covering problem. Combinator-
+ica, 2:385–393, 1982.
+[12] T. G. Robertazzi and S. C. Schwartz. An accelerated sequential algorithm for producing D-optimal de-
+signs. SIAM Journal of Scientiﬁc and Statistical Computing, 10(2):341–358, March 1989.
+[13] M. Widmann and C. S. Bretherton. 50 km resolution daily precipitation for the paciﬁc northwest.
+http://www.jisao.washington.edu/data sets/widmann/, May 1999.
+[14] J. Sacks and S. Schiller. Statistical Decision Theory and Related Topics IV, Vol. 2. Springer, 1988.
+[15] D. P. Wiens. Robustness in spatial studies ii: minimax design. Environmetrics, 16:205–217, 2005.
+[16] A. Ostfeld, J. G. Uber, and E. Salomons. Battle of water sensor networks: A design challenge for engi-
+neers and algorithms. In 8th Symposium on Water Distribution Systems Analysis, 2006.
+[17] L. A. Rossman. The epanet programmer’s toolkit for analysis of water distribution systems. In Annual
+Water Resources Planning and Management Conference, 1999.
+
+8
+
+

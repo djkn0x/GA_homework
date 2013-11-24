@@ -1,0 +1,906 @@
+Nonstandard Interpretations of Probabilistic
+Programs for Efﬁcient Inference
+
+David Wingate
+BCS / LIDS, MIT
+wingated@mit.edu
+
+Noah D. Goodman
+Psychology, Stanford
+ngoodman@stanford.edu
+
+Andreas Stuhlm ¨uller
+BCS, MIT
+ast@mit.edu
+
+Jeffrey M. Siskind
+ECE, Purdue
+qobi@purdue.edu
+
+Abstract
+
+Probabilistic programming languages allow modelers to specify a stochastic pro-
+cess using syntax that resembles modern programming languages. Because the
+program is in machine-readable format, a variety of techniques from compiler de-
+sign and program analysis can be used to examine the structure of the distribution
+represented by the probabilistic program. We show how nonstandard interpreta-
+tions of probabilistic programs can be used to craft efﬁcient infe rence algorithms:
+information about the structure of a distribution (such as gradients or dependen-
+cies) is generated as a monad-like side computation while executing the program.
+These interpretations can be easily coded using special-purpose objects and oper-
+ator overloading. We implement two examples of nonstandard interpretations in
+two different languages, and use them as building blocks to construct inference
+algorithms: automatic differentiation, which enables gradient based methods, and
+provenance tracking, which enables efﬁcient construction of global proposals.
+
+1
+Introduction
+Probabilistic programming simpli ﬁes the development of pr obabilistic models by allowing modelers
+to specify a stochastic process using syntax that resembles modern programming languages. These
+languages permit arbitrary mixing of deterministic and stochastic elements, resulting in tremendous
+modeling ﬂexibility. The resulting programs deﬁne probabi
+listic models that serve as prior distribu-
+tions: running the (unconditional) program forward many times results in a distribution over execu-
+tion traces, with each trace being a sample from the prior. Examples include B LOG [13], Bayesian
+Logic Programs [10] IBA L[18], CHURCH [6], Stochastic MAT LAB [28], and HAN S E I [11].
+
+The primary challenge in developing such languages is scalable inference. Inference can be viewed
+as reasoning about the posterior distribution over execution traces conditioned on a particular pro-
+gram output, and is difﬁcult because of the ﬂexibility these
+languages present:
+in principle, an
+inference algorithm must behave reasonably for any program a user wishes to write. Sample-based
+MCMC algorithms are the state-of-the-art method, due to their simplicity, universality, and compo-
+sitionality. But in probabilistic modeling more generally, efﬁcient inference algorithms are designed
+by taking advantage of structure in distributions. How can we ﬁnd structure in a distribution de-
+ﬁned by a probabilistic program? A key observation is that so me languages, such as CHURCH and
+Stochastic MAT LAB, are deﬁned in terms of an existing (non-probabilistic) lan guage. Programs in
+these languages may literally be executed in their native environments —suggesting that tools from
+program analysis and programming language theory can be leveraged to ﬁnd and exploit structure
+in the program for inference, much as a compiler might ﬁnd and exploit structure for performance.
+
+Here, we show how nonstandard interpretations of probabilistic programs can help craft efﬁcient
+inference algorithms. Information about the structure of a distribution (such as gradients, dependen-
+cies or bounds) is generated as a monad-like side computation while executing the program. This
+extra information can be used to, for example, construct good MH proposals, or search efﬁciently
+for a local maximum. We focus on two such interpretations: automatic differentiation and prove-
+nance tracking, and show how they can be used as building blocks to construct efﬁcient inference
+
+1
+
+algorithms. We implement nonstandard interpretations in two different languages (CHURCH and
+Stochastic MAT LAB), and experimentally demonstrate that while they typically incur some addi-
+tional execution overhead, they dramatically improve inference performance.
+2 Background and Related Work
+We begin by outlining our setup, following [28]. We de-
+ﬁne an unconditioned probabilistic program to be a pa-
+rameterless function f with an arbitrary mix of stochas-
+tic and deterministic elements (hereafter, we will use the
+term function and program interchangeably). The func-
+tion f may be written in any language, but our running
+example will be MAT LAB. We allow the function to be
+arbitrarily complex inside, using any additional functions,
+recursion, language constructs or external libraries it wishes. The only constraint is that the func-
+tion must be self-contained, with no external side-effects which would impact the execution of the
+function from one run to another.
+
+Alg. 1: A Gaussian-Gamma mixture
+1: for i=1:1000
+if ( rand > 0.5 )
+2:
+X(i) = randn;
+3:
+else
+4:
+X(i) = gammarnd;
+5:
+end;
+6:
+7: end;
+
+The stochastic elements of f must come from a set of known, ﬁxed elementary random primitives,
+or ERPs. Complex distributions are constructed compositionally, using ERPs as building blocks. In
+MAT LAB, ERPs may be functions such as rand (sample uniformly from [0,1]) or randn (sample
+from a standard normal). Higher-order random primitives, such as nonparametric distributions, may
+also be deﬁned, but must be ﬁxed ahead of time. Formally, let
+T be the set of ERP types. We assume
+that each type t ∈ T is a parametric family of distributions pt (x|θt ), with parameters θt .
+Now, consider what happens while executing f . As f is executed, it encounters a series of ERPs.
+Alg. 1 shows an example of a simple f written in MAT LAB with three syntactic ERPs: rand,
+randn, and gammarnd. During execution, depending on the return value of each call to rand,
+different paths will be taken through the program, and different ERPs will be encountered. We call
+this path an execution trace. A total of 2000 random choices will be made when executing this f .
+Let fk|x1 ,··· ,xk−1 be the k’th ERP encountered while executing f , and let xk be the value it returns.
+Note that the parameters passed to the k’th ERP may change depending on previous xk ’s (indeed,
+its type may also change, as well as the total number of ERPs). We denote by x all of the random
+choices which are made by f , so f deﬁnes the probability distribution p(x). In our example, x ∈
+R2000 . The probability p(x) is the product of the probability of each individual ERP choice:
+K
+Yk=1
+again noting explicitly that types and parameters may depend arbitrarily on previous random choices.
+To simplify notation, we will omit the conditioning on the values of previous ERPs, but again wish
+to emphasize that these dependencies are critical and cannot be ignored. By fk , it should therefore
+be understood that we mean fk|x1 ,··· ,xk−1 , and by ptk (xk |θtk ) we mean ptk (xk |θtk , x1 , · · · , xk−1 ).
+Generative functions as described above are, of course, easy to write. A much harder problem, and
+our goal in this paper, is to reason about the posterior conditional distribution p(x|y), where we
+deﬁne y to be a subset of random choices which we condition on and (in an abuse of notation) x
+to be the remaining random choices. For example, we may condition f on the X(i)’s, and reason
+about the sequence of rand’s most likely to generate the X(i)’s. For the rest of this paper, we
+will drop y and simply refer to p(x), but it should be understood that the goal is always to perform
+inference in conditional distributions.
+2.1 Nonstandard Interpretations of Probabilistic Programs
+With an outline of probabilistic programming in hand, we now turn to nonstandard interpretations.
+The idea of nonstandard interpretations originated in model theory and mathematical logic, where it
+was proposed that a set of axioms could be interpreted by different models. For example, differential
+geometry can be considered a nonstandard interpretation of classical arithmetic.
+
+ptk (xk |θtk , x1 , · · · , xk−1 )
+
+p(x) =
+
+(1)
+
+In programming, a nonstandard interpretation replaces the domain of the variables in the program
+with a new domain, and redeﬁnes the semantics of the operator s in the program to be consistent
+with the new domain. This allows reuse of program syntax while implementing new functionality.
+For example, the expression “ a ∗ b ” can be interpreted equally well if a and b are either scalars or
+
+2
+
+matrices, but the “ ∗” operator takes on different meanings. Practically, many u seful nonstandard
+interpretations can be implemented with operator overloading: variables are redeﬁned to be objects
+with operators that implement special functionality, such as tracing, reference counting, or proﬁling.
+For the purposes of inference in probabilistic programs, we will augment each random choice xk
+with additional side information sk , and replace each xk with the tuple hxk , sk i. The native inter-
+preter for the probabilistic program can then interpret the source code as a sequence of operations
+on these augmented data types. For a recent example of this, we refer the reader to [24].
+3 Automatic Differentiation
+For probabilistic models with many continuous-valued random variables, the gradient of the like-
+lihood ∇xp(x) provides local information that can signi ﬁcantly improve t he properties of Monte-
+Carlo inference algorithms. For instance, Langevin Monte-Carlo [20] and Hamiltonian MCMC [15]
+use this gradient as part of a variable-augmentation technique (described below). We would like
+to be able to use gradients in the probabilistic-program setting, but p(x) is represented implicitly
+by the program. How can we compute its gradient? We use automatic differentiation (AD) [3, 7],
+a nonstandard interpretation that automatically constructs ∇x p(x). The automatic nature of AD is
+critical because it relieves the programmer from hand-computing derivatives for each model; more-
+over, some probabilistic programs dynamically create or delete random variables making simple
+nd.
+closed-form expressions for the gradient very difﬁcult to ﬁ
+
+Unlike ﬁnite differencing, AD computes an exact derivative of a function f at a point (up to machine
+precision). To do this, AD relies on the chain rule to decompose the derivative of f into derivatives
+of its sub-functions: ultimately, known derivatives of elementary functions are composed together to
+yield the derivative of the compound function. This composition can be computed as a nonstandard
+interpretation of the underlying elementary functions.
+
+The derivative computation as a composition of the derivatives of the elementary functions can be
+performed in different orders. In forwardmode AD [27], computation of the derivative proceeds by
+propagating perturbations of the input toward the output. This can be done by a nonstandard inter-
+pretation that extends each real value to the ﬁrst two terms o f its Taylor expansion [26], overloading
+each elementary function to operate on these real “polynomi als ”. Because the derivatives of f at c
+can be extracted from the coefﬁcients of
+ǫ in f (c + ǫ) , this allows computation of the gradient. In
+reverse mode AD [25], computation of the derivative proceeds by propagating sensitivities of the
+output toward the input. One way this can be done is by a nonstandard interpretation that extends
+each real value into a “tape” that captures the trace of the re al computation which led to that value
+from the inputs, overloading each elementary function to incrementally construct these tapes. Such
+a tape can be postprocessed, in a fashion analogous to backpropagation [21], to yield the gradient.
+These two approaches have complementary computational tradeoffs: reverse mode (which we use in
+our implementation) can compute the gradient of a function f : Rn → R with the same asymptotic
+time complexity as computing f , but not the same asymptotic space complexity (due to its need
+for saving the computation trace), while forward mode can compute the gradient with these same
+asymptotic space complexity, but with a factor of O(n) slowdown (due to its need for constructing
+the gradient out of partial derivatives along each independent variable).
+
+There are implementations of AD for many languages, including SCH EM E(e.g., [17]), FORTRAN
+(e.g., AD I FOR[2]), C (e.g., ADO L – C [8]), C++ (e.g., FADBAD++[1]), MAT LAB (e.g., IN T LAB [22]),
+and MA P L E (e.g., GRAD I EN T [14]). See www.autodiff.org. Additionally, overloading and AD
+are well established techniques that have been applied to machine learning, and even to application-
+speci ﬁc programming languages for machine learning, e.g., LU SH[12] and DYNA[4]. In particular,
+DYNA applies a nonstandard interpretation for ∧ and ∨ as a semiring (× and +, + and max, . . .) in
+a memoizing PRO LOG to generalize Viterbi, forward/backward, inside/outside, etc. and uses AD to
+derive the outside algorithm from the inside algorithm and support parameter estimation, but unlike
+probabilistic programming, it does not model general stochastic processes and does not do general
+inference over such. Our use of overloading and AD differs in that it facilitates inference in com-
+plicated models of general stochastic processes formulated as probabilistic programs. Probabilistic
+programming provides a powerful and convenient framework for formulating complicated models
+and, more importantly, separating such models from orthogonal inference mechanisms. Moreover,
+overloading provides a convenient mechanism for implementing many such inference mechanisms
+(e.g., Langevin MC, Hamiltonian MCMC, Provenance Tracking, as demonstrated below) in a prob-
+abilistic programming language.
+
+3
+
+(define (perlin-pt x y keypt power)
+(* 255 (sum (map (lambda (p2 pow)
+(let ((x0 (floor (* p2 x))) (y0 (floor (* p2 y))))
+(* pow (2d-interp (keypt x0 y0) (keypt (+ 1 x0) y0) (keypt x0 (+ 1 y0)) (keypt (+ 1 x0) (+ 1 y0))))))
+powers-of-2 power))))
+
+(define (perlin xs ys power)
+(let ([keypt (mem (lambda (x y) (/ 1 (+ 1 (exp (- (gaussian 0.0 2.0)))))))])
+(map (lambda (x) (map (lambda (y) (perlin-pt x y keypt power)) xs)) ys)))
+
+Figure 1: Code for the structured Perlin noise generator. 2d-interp is B-spline interpolation.
+
+Alg. 2: Hamiltonian MCMC
+1: repeat forever
+2: Gibbs step:
+Draw momentum m ∼ N (0, σ2 )
+3:
+4: Metropolis step:
+Start with current state (x, m)
+5:
+Simulate Hamiltonian dynamics to give (x′ , m′ )
+6:
+Accept w/ p = min[1, e(−H (x′ ,m′ )+H (x,m)) ]
+7:
+8: end;
+
+3.1 Hamiltonian MCMC
+To illustrate the power of AD in proba-
+bilistic programming, we build on Hamil-
+tonian MCMC (HMC), an efﬁcient algo-
+rithm whose popularity has been some-
+what limited by the necessity of comput-
+ing gradients —a difﬁcult task for com-
+plex models. Neal [15] introduces HMC
+as an inference method which “produces
+distant proposals for the Metropolis algo-
+rithm, thereby avoiding the slow explo-
+ration of the state space that results from the diffusive behavior of simple random-walk proposals.”
+HMC begins by augmenting the states space with “momentum var iables ” m. The distribution over
+this augmented space is eH (x,m) , where the Hamiltonian function H decomposed into the sum of
+a potential energy term U (x) = − ln p(x) and a kinetic energy K (m) which is usually taken to
+be Gaussian. Inference proceeds by alternating between a Gibbs step and Metropolis step: ﬁxing
+the current state x, a new momentum m is sampled from the prior over m; then x and m are up-
+dated together by following a trajectory according to Hamiltonian dynamics. Discrete integration
+of Hamiltonian dynamics requires the gradient of H , and must be done with a symplectic (i.e. vol-
+ume preserving) integrator (following [15] we use the Leapfrog method). While this is a complex
+computation, incorporating gradient information dramatically improves performance over vanilla
+random-walk style MH moves (such as Gaussian drift kernels), and its statistical efﬁciency also
+scales much better with dimensionality than simpler methods [15]. AD can also compute higher-
+order derivatives. For example, Hessian matrices can be used to construct blocked Metropolis moves
+[9] or proposals based on Newton’s method [19], or as part of Riemannian manifold methods [5].
+
+3.2 Experiments and Results
+We implemented HMC by extending BH ER [28], a lightweight implementation of the CHURCH
+language which provides simple, but universal, MH inference. We used used an implementation of
+AD based on [17] that uses hygienic operator overloading to do both forward and reverse mode AD
+for Scheme (the target language of the BH ER compiler).
+The goal is to compute ∇x p(x). By Eq. 1, p(x) is the product of the individual choices made by
+each xi (though each probability can depend on previous choices, through the program evaluation).
+To compute p(x), BH ER executes the corresponding program, accumulating likelihoods. Each time
+a continuous ERP is created or retrieved, we wrap it in a “tape ” object which is used to track gradient
+information; as the likelihood p(x) is computed, these tapes ﬂow through the program and through
+appropriately overloaded operators, resulting in a dependency graph for the real portion of the com-
+putation. The gradient is then computed in reverse mode, by “ back-propagating” along this graph.
+We implement an HMC kernel by using this gradient in the leapfrog integrator. Since program states
+may contain a combination of discrete and continuous ERPs, we use an overall cycle kernel which
+alternates between standard MH kernel for individual discrete random variables and the HMC ker-
+nel for all continuous random choices. To decrease burn-in time, we initialize the sampler by using
+annealed gradient ascent (again implemented using AD).
+
+We ran two sets of experiments that illustrate two different beneﬁts of HMC with AD: automated
+gradients of complex code, and good statistical efﬁciency.
+Structured Perlin noise generation. Our ﬁrst experiment uses HMC to generate modi ﬁed Perlin
+noise with soft symmetry structure. Perlin noise is a procedural texture used by computer graphics
+artists to add realism to natural textures such as clouds, grass or tree bark. We generate Perlin-
+like noise by layering octaves of random but smoothly varying functions. We condition the result
+
+4
+
+d
+i
+a
+
+s
+y
+
+m
+
+g
+
+o
+
+n
+
+m
+
+a
+l
+
+e
+t
+r
+y
+
+e
+u
+r
+t
+ 
+o
+t
+ 
+e
+c
+n
+a
+t
+s
+i
+D
+
+n
+o
+i
+t
+a
+t
+c
+e
+p
+x
+e
+
+6
+
+4
+
+2
+
+0
+
+0
+
+MCMC
+HMC
+
+50
+
+100
+
+150
+Samples
+
+200
+
+250
+
+300
+
+Figure 2: On the left: samples from the structured Perlin noise generator. On the right: convergence
+of expected mean for a draw from a 3D spherical Gaussian conditioned on lying on a line.
+
+on approximate diagonal symmetry, forcing the resulting image to incorporate additional structure
+without otherwise skewing the statistics of the image. Note that the MAP solution for this problem is
+uninteresting, as it is a uniform image; it is the variations around the MAP that provide rich texture.
+We generated 48x48 images; the model had roughly 1000 variables.
+
+Fig. 2 shows the result via typical samples generated by HMC, where the approximate symmetry is
+clearly visible. A code snippet demonstrating the complexity of the calculations is shown in Fig. 1;
+this experiment illustrates how the automatic nature of the gradients is most helpful, as it would be
+time consuming to compute these gradients by hand—particula
+rly since we are free to condition
+using any function of the image.
+Complex conditioning. For our second example, we
+demonstrate the improved statistical efﬁciency of the
+samples generated by HMC versus BH ER’s standard
+MCMC algorithm. The goal is to sample points from a
+complex 3D distribution, deﬁned by starting with a Gaus-
+sian prior, and sampling points that are noisily condi-
+tioned to be on a line running through R3 . This creates
+complex interactions with the prior to yield a smooth, but
+strongly coupled, energy landscape.
+
+1: x ∼ N (µ, σ)
+2: k ∼ Bernoulli(e− dist(line,x)
+noise
+3: Condition on k = 1
+
+Normal distribution noisily condi-
+tioned on line (2D projection)
+
+)
+
+2
+
+1
+
+Fig. 2 compares our HMC implementation with BH ER’s
+standard MCMC engine. The x-axis denotes samples,
+while the y-axis denotes the convergence of an estimator
+of certain marginal statistics of the samples. We see that
+this estimator converges much faster for HMC, implying
+that the samples which are generated are less autocorrelated – afﬁrming that HMC is indeed making
+better distal moves. HMC is about 5x slower than MCMC for this experiment, but the overhead is
+justi ﬁed by the signi ﬁcant improvement in the statistical q
+uality of the samples.
+
+-1.5 -1.0 -0.5
+-1
+
+0.5
+
+1.0
+
+1.5
+
+-2
+
+4 Provenance Tracking for Fine-Grained Dynamic Dependency Analysis
+
+One reason gradient based inference algorithms are effective is that the chain rule of derivatives
+propagates information backwards from the data up to the proposal variables. But gradients, and the
+chain rule, are only deﬁned for continuous variables. Is the re a corresponding structure for discrete
+choices? We now introduce a new nonstandard interpretation based on provenance tracking (PT). In
+programming language theory, the provenance of a variable is the history of variables and computa-
+tions that combined to form its value. We use this idea to track ﬁne-grained dependency information
+between random values and intermediate computations as they combine to form a likelihood. We
+then use this provenance information to construct good global proposals for discrete variables as
+part of a novel factored multiple-try MCMC algorithm.
+
+4.1 Deﬁning and Implementing Provenance Tracking
+Like AD, PT can be implemented with operator overloading. Because provenance information is
+much coarser than gradient information, the operators in PT objects have a particularly simple form;
+most program expressions can be covered by considering a few cases. Let X denote the set {xi }
+of all (not necessarily random) variables in a program. Let R(x) ⊂ X deﬁne the provenance of a
+variable x. Given R(x), the provenance of expressions involving x can be computed by breaking
+
+5
+
+down expressions into a sequence of unary operations, binary operations, and function applications.
+Constants have empty provenances.
+
+Let x and y be expressions in the program (consisting of an arbitrary mix of variables, constants,
+functions and operators). For a binary operation x ⊙ y , the provenance R(x ⊙ y) of the result is
+deﬁned to be R(x ⊙ y) = R(x) ∪ R(y). Similarly, for a unary operation, the provenance R(⊙x) =
+R(x). For assignments, x = y ⇒ R(x) = R(y). For a function, R(f (x, y , ...)) may be computed
+by examining the expressions within f ; a worst-case approximation is R(f (x, y , ...)) = R(x) ∪
+R(y) · · · . A few special cases are also worth noting. Strictly speaking, the previous rules track a
+superset of provenance information because some functions and operations are constant for certain
+inputs. In the case of multiplication, x ∗ 0 = 0, so R(x ∗ 0) = {}. Accounting for this gives tighter
+provenances, implying, for example, that special considerations apply to sparse linear algebra.
+
+In the case of probabilistic programming, recall that random variables (or ERPs) are represented as
+stochastic functions fi that accept parameters θi . Whenever a random variable is conditioned, the
+output of the corresponding fi is ﬁxed; thus, while the likelihood of a particular output of fi depends
+on θi , the speci ﬁc output of fi does not. For the purposes inference, therefore, R(fi (θi )) = {}.
+
+4.2 Using Provenance Tracking as Part of Inference
+Provenance information could be used in many ways. Here, we illustrate one use: to help construct
+good block proposals for MH inference. Our basic idea is to construct a good global proposal by
+starting with a random global proposal (which is unlikely to be good) and then inhibiting the bad
+parts. We do this by allowing each element of the likelihood to “vote” on which proposals seemed
+good. This can be considered a factored version of a multiple-try MCMC algorithm [16].
+
+The algorithm is shown in Fig. 3. Let xO be the starting state. In step (2), we propose a new state
+xO ′ . This new state changes many ERPs at once, and is unlikely to be good (for the proof, we require
+that xO ′
+for all i). In step (3), we accept or reject each element of the proposal based on a
+6= xO
+i
+i
+function α. Our choice of α (Fig. 3, left) uses PT, as we explain below. In step (4) we construct a
+new proposal xM by “mixing” two states: we set the variables in the accepted s
+et A to the values of
+xO ′
+, and we leave the variables in the rejected set R at their original values in xO . In steps (5-6) we
+i
+compute the forward probabilities. In steps (7-8) we sample one possible path backwards from xM
+to xO , with the relevant probabilities. Finally, in step (9) we accept or reject the overall proposal.
+
+We use α(xO , xO ′
+ch proposals
+) to allow the likelihood to “vote” in a ﬁne-grained way for whi
+seemed good and which seemed bad. To do this, we compute p(xO ) using PT to track how each
+i ,
+inﬂuences the overall likelihood p(xO ). Let D(i; xO ) denote the “descendants ” of variable
+xO
+xO
+i
+impacted. We also use PT to compute p(xO ′
+deﬁned as all ERPs whose likelihood xO
+), again
+i
+tracking dependents D(i; xO ′
+), and let D(i) be the joint set of ERPs that xi inﬂuences in either state
+xO or xO ′ . We then use D(i), p(xO ) and p(xO ′
+) to estimate the amount by which each constituent
+element xO ′
+in the proposal changed the likelihood. We assign “credit ” t o each i as if it were the
+i
+only proposal – that is, we assume that if, for example, the likelihood went up, it was entirely due to
+the change in xO
+i . Of course, the variables’ effects are not truly independent; this is a fully-factored
+approximation to those effects. The ﬁnal α is shown in Fig. 3 (left), where we deﬁne p(xD(i) ) to be
+the likelihood of only the subset of variables that xi impacted.
+Here, we prove that our algorithm is valid MCMC by following [16] and showing detailed balance.
+To do this, we must integrate over all possible rejected paths of the negative bits xO ′
+R and xM I
+R :
+QM I
+A P M I
+A P M I
+R min (cid:26)1,
+R (cid:27)
+R ZxM I
+p(xO )P (xM |xO ) = p(xO ) ZxO′
+A QO ′
+QO ′
+R QM I
+A P M
+R P M
+R
+QO ′
+A P M
+A P M
+R
+R ZxM I
+= ZxO′
+R min np(xO )QO ′
+R o
+QO ′
+R QM I
+A P M
+A P M
+R , p(xM )QM I
+A P M I
+A P M I
+R
+R )
+R min (1,
+p(xO )QO ′
+A P M
+A P M
+= p(xM ) ZxO′
+R ZxM I
+R QO ′
+A P M I
+R P M I
+A QM I
+QM I
+R
+A P M I
+A P M I
+p(xM )QM I
+R
+= p(xM )P (xO |xM )
+
+p(xM )
+p(xO )
+
+where the subtlety to the equivalence is that the rejected bits xO ′
+R and xM I
+R have switched roles. (cid:3)
+
+6
+
+Alg. 3: Factored Multiple-Try MH
+1 , · · · , xO
+1: Begin in state xO . Assume it is composed of individual ERPs xO = (cid:8)xO
+k (cid:9).
+2: Propose a new state for many ERPs. For i = 1, · · · , k , propose xO′
+|xO ) s.t. xO′
+i ∼ Q(xO′
+6= xO
+i .
+i
+3: Decide to accept or reject each element of xO′ . This test can depend arbitrarily on xO and xO′ , but must
+decide for each ERP independently; let αi (xO , xO′
+) be the probability of accepting xO′
+. Let A be the set
+i
+of indices of accepted proposals, and R the set of rejected ones.
+4: Construct a new state, xM = nxO′
+: i ∈ Ao S (cid:8)xO
+j : j ∈ R(cid:9). This new state mixes new values for the
+i
+ERPs from the accepted set A and old values for the ERPs in the rejected set R.
+A = Qi∈A αi (xO , xO′
+) be the probability of accepting the ERPs in A, and let P M
+5: Let P M
+R = Qj∈R (1 −
+αj (xO , xO′
+)) be the probability of rejecting the ERPs in R.
+R = Qj∈R Q(xO′
+|xO ) and QO′
+A = Qi∈A Q(xO′
+6: Let QO′
+j |xO ).
+i
+7: Construct a new state xM I . Propose new values for all of the rejected ERPs using xM as the start state,
+j ∼ Q(·|xM ). Then,
+but leave ERPs in the accepted set at their original value. For j ∈ R let xM I
+: i ∈ A(cid:9) S (cid:8)xM I
+xM I = (cid:8)xO
+: j ∈ R(cid:9).
+j
+i
+R = Qj∈R (1 − αj (xM , xM I )).
+A = Qi∈A αi (xM , xM I ), and let P M I
+8: Let P M I
+R )o.
+9: Accept xM with probability min n1, (p(xM )QM I
+R )/(p(xO )QO′
+A P M
+A P M
+A P M I
+A P M I
+
+Individual ERPs
+
+Accepted set
+Rejected set
+
+Alg. 4: A PT-based Acceptance Test
+1: The PT algorithm implements αi (x, x′ ).
+2: Compute p(x), tracking D(xi ; x)
+3: Compute p(x′ ), tracking D(xi ; x′ )
+4: Let D(i) = D(xi ; x) ∪ D(xi ; x′ )
+i )p(x′
+p(x′
+D(i) )
+5: Let αi (x, x′ ) = min n1,
+p(xi )p(xD(i) ) o
+Figure 3: The factored multiple-try MH algorithm (top), the PT-based acceptance test (left) and an
+illustration of the process of mixing together different elementary proposals (right).
+
+Proposed
+state
+
+Start
+state
+
+Mixed
+state
+
+Reverse path
+
+4.3 Experiments and Results
+We implemented provenance tracking and in Stochastic MAT LAB [28] by leveraging MAT LAB’s
+object oriented capabilities, which provides full operator overloading. We tested on four tasks: a
+Bayesian “mesh induction” task, a small QMR problem, probab ilistic matrix factorization [23] and
+an integer-valued variant of PMF. We measured performance by examining likelihood as a function
+of wallclock time; an important property of the provenance tracking algorithm is that it can help
+mitigate constant factors affecting inference performance.
+Bayesian mesh induction.
+The BMI task is simple:
+given a prior distribution over meshes and a target im-
+age, sample a mesh which, when rendered, looks like the
+target image. The prior is a Gaussian centered around a
+“mean mesh,” which is a perfect sphere; Gaussian noise
+is added to each vertex to deform the mesh. The model
+is shown in Alg. 5. The rendering function is a custom
+O P ENGL renderer implemented as a MEX function. No
+gradients are available for this renderer, but it is reasonably easy to augment it with provenance
+information recording vertices of the triangle that were responsible for each pixel. This allows us to
+make proposals to mesh vertices, while assigning credit based on pixel likelihoods.
+
+Alg. 5: Bayesian Mesh Induction
+1: function X = bmi( base mesh )
+2: mesh = base mesh + randn;
+img = render( mesh );
+3:
+X = img + randn;
+4:
+5: end;
+
+Results for this task are shown in Fig. 4 ( “Face”). Even thoug h the renderer is quite fast, MCMC
+with simple proposals fails: after proposing a change to a single variable, it must re-render the image
+in order to compute the likelihood. In contrast, making large, global proposals is very effective.
+Fig. 4 (top) shows a sequence of images representing burn-in of the model as it starts from the initial
+condition and samples its way towards regions of high likelihood. A video demonstrating the results
+is available at http://www.mit.edu/ ˜ wingated/papers/index.html.
+
+7
+
+Input
+
+Time
+
+Target
+
+Face
+
+9
+x 10
+x 1e9
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+ 
+g
+o
+L
+
+−1
+
+−1.5
+
+−2
+
+−2.5
+
+−40
+
+−60
+
+−80
+
+−3
+0
+
+15
+
+30
+
+45
+
+−100
+
+0
+
+QMR
+
+PMF
+
+4
+x 10
+x 1e4
+
+0
+
+−5
+
+−10
+
+Integer PMF
+7
+x 10
+x 1e7
+
+0
+
+−2
+
+−4
+
+−6
+
+1
+
+5 10 15 20 25
+2
+Time (seconds)
+
+5
+
+10 15 20 25
+
+Figure 4: Top: Frames from the face task. Bottom: results on Face, QMR, PMF and Integer PMF.
+
+QMR. The QMR model is a bipartite, binary model relating diseases (hidden) to symptoms (ob-
+served) using a log-linear noisy-or model. Base rates on diseases can be quite low, so “explaining
+away” can cause poor mixing. Here, MCMC with provenance trac king is effective: it ﬁnds high-
+likelihood solutions quickly, again outperforming naive MCMC.
+Probabilistic Matrix Factorization. For the PMF task, we factored a matrix A ∈ R1000x1000 with
+99% sparsity. PMF places a Gaussian prior over two matrices, U ∈ R1000x10 and V ∈ R1000x10 ,
+j , 1). In Fig. 4, we see
+for a total of 20,000 parameters. The model assumes that Aij ∼ N (UiV T
+that MCMC with provenance tracking is able to ﬁnd regions of m uch higher likelihood much more
+quickly than naive MCMC. We also compared to an efﬁcient hand -coded MCMC sampler which
+is capable of making, scoring and accepting/rejecting about 20,000 proposals per second. Interest-
+ingly, MCMC with provenance tracking is more efﬁcient than t he hand-coded sampler, presumably
+because of the economies of scale that come with making global proposals.
+Integer Probabilistic Matrix Factorization. The Integer PMF task is like ordinary PMF, except
+that every entry in U and V is constrained to be an integer between 1 and 10. These constraints
+imply that no gradients exist. Empirically, this does not seem to matter for the efﬁciency of the
+algorithm relative to standard MCMC: in Fig. 4 we again see dramatic performance improvements
+over the baseline Stochastic MAT LAB sampler and the hand-coded sampler.
+5 Conclusions
+We have shown how nonstandard interpretations of probabilistic programs can be used to extract
+structural information about a distribution, and how this information can be used as part of a vari-
+ety of inference algorithms. The information can take the form of gradients, Hessians, ﬁne-grained
+dependencies, or bounds. Empirically, we have implemented two such interpretations and demon-
+strated how this information can be used to ﬁnd regions of hig h likelihood quickly, and how it can
+be used to generate samples with improved statistical properties versus random-walk style MCMC.
+There are other types of interpretations which could provide additional information. For example,
+interval arithmetic [22] could be used to provide bounds or as part of adaptive importance sampling.
+
+Each of these interpretations can be used alone or in concert with each other; one of the advantages
+of the probabilistic programming framework is the clean separation of models and inference algo-
+rithms, making it easy to explore combinations of inference algorithms for complex models. More
+generally, this work begins to illuminate the close connections between probabilistic inference and
+programming language theory. It is likely that other techniques from compiler design and program
+analysis could be fruitfully applied to inference problems in probabilistic programs.
+Acknowledgments
+DW was supported in part by AFOSR (FA9550-07-1-0075) and by Shell Oil, Inc. NDG was sup-
+ported in part by ONR (N00014-09-1-0124) and a J. S. McDonnell Foundation Scholar Award.
+JMS was supported in part by NSF (CCF-0438806), by NRL (N00173-10-1-G023), and by ARL
+(W911NF-10-2-0060). All views expressed in this paper are the sole responsibility of the authors.
+
+8
+
+References
+[1] C. Bendtsen and O. Stauning. FADBAD, a ﬂexible C++ package for a utomatic differentiation. Technical
+Report IMM –REP –1996–17, Department of Mathematical Modelling, Te
+chnical University of Denmark,
+Lyngby, Denmark, Aug. 1996.
+[2] C. H. Bischof, A. Carle, G. F. Corliss, A. Griewank, and P. D. Hovland. ADIFOR: Generating derivative
+codes from Fortran programs. Scientiﬁc Programming , 1(1):11–29, 1992.
+[3] G. Corliss, C. Faure, A. Griewank, L. Hasco ¨et, and U. Naumann. Automatic Differentiation: From
+Simulation to Optimization. Springer-Verlag, New York, NY, 2001.
+[4] J. Eisner, E. Goldlust, and N. A. Smith. Compiling comp ling: Weighted dynamic programming and
+the Dyna language.
+In Proceedings of Human Language Technology Conference and Conference on
+Empirical Methods in Natural Language Processing (HLT-EMNLP), pages 281–290, Vancouver, October
+2005.
+[5] M. Girolami and B. Calderhead. Riemann manifold Langevin and Hamiltonian Monte Carlo methods. J.
+R. Statist. Soc. B, 73(2):123–214, 2011.
+[6] N. Goodman, V. Mansinghka, D. Roy, K. Bonawitz, and J. Tenenbaum. Church: a language for generative
+models. In Uncertainty in Artiﬁcial Intelligence (UAI) , 2008.
+[7] A. Griewank. Evaluating Derivatives: Principles and Techniques of Algorithmic Differentiation. Num-
+ber 19 in Frontiers in Applied Mathematics. SIAM, 2000.
+[8] A. Griewank, D. Juedes, and J. Utke. ADOL-C, a package for the automatic differentiation of algorithms
+written in C/C++. ACM Trans. Math. Software, 22(2):131–167, 1996.
+[9] E. Herbst. Gradient and Hessian-based MCMC for DSGE models (job market paper), 2010.
+[10] K. Kersting and L. D. Raedt. Bayesian logic programming: Theory and tool. In L. Getoor and B. Taskar,
+editors, An Introduction to Statistical Relational Learning. MIT Press, 2007.
+[11] O. Kiselyov and C. Shan. Embedded probabilistic programming. In Domain-Speciﬁc Languages , pages
+360–384, 2009.
+[12] Y. LeCun and L. Bottou. Lush reference manual. Technical report, 2002. URL http://lush.
+sourceforge.net.
+[13] B. Milch, B. Marthi, S. Russell, D. Sontag, D. L. Ong, and A. Kolobov. BLOG: Probabilistic models with
+unknown objects. In International Joint Conference on Artiﬁcial Intelligence (IJCAI) , pages 1352–1359,
+2005.
+[14] M. B. Monagan and W. M. Neuenschwander. GRADIENT: Algorithmic differentiation in Maple.
+International Symposium on Symbolic and Algebraic Computation (ISSAC), pages 68–76, July 1993.
+[15] R. M. Neal. MCMC using Hamiltonian dynamics. In Handbook of Markov Chain Monte-Carlo (Steve
+Brooks, Andrew Gelman, Galin Jones and Xiao-Li Meng, Eds.), 2010.
+[16] S. Pandol ﬁ, F. Bartolucci, and N. Friel. A generalization of the multiple -try metropolis algorithm for
+bayesian estimation and model selection. In International Conference on Artiﬁcial Intelligence and Statis-
+tics (AISTATS), 2010.
+[17] B. A. Pearlmutter and J. M. Siskind. Lazy multivariate higher-order forward-mode AD. In Symposium on
+Principles of Programming Languages (POPL), pages 155–160, 2007. doi: 10.1145/1190215.1190242.
+[18] A. Pfeffer. IBAL: A probabilistic rational programming language. In International Joint Conference on
+Artiﬁcial Intelligence (IJCAI) , pages 733–740. Morgan Kaufmann Publ., 2001.
+[19] Y. Qi and T. P. Minka. Hessian-based Markov chain Monte-Carlo algorithms (unpublished manuscript),
+2002.
+[20] P. J. Rossky, J. D. Doll, and H. L. Friedman. Brownian dynamics as smart monte carlo simulation. Journal
+of Chemical Physics, 69:4628–4633, 1978.
+[21] D. E. Rumelhart, G. E. Hinton, and R. J. Williams. Learning representations by back-propagating errors.
+323:533–536, 1986.
+[22] S. Rump.
+In Developments in Reliable Computing, pages 77–104.
+INTLAB - INTerval LABoratory.
+Kluwer Academic Publishers, Dordrecht, 1999.
+[23] R. Salakhutdinov and A. Mnih. Probabilistic matrix factorization.
+Systems (NIPS), 2008.
+[24] J. M. Siskind and B. A. Pearlmutter. First-class nonstandard interpretations by opening closures. In Sym-
+posium on Principles of Programming Languages (POPL), pages 71–76, 2007. doi: 10.1145/1190216.
+1190230.
+[25] B. Speelpenning. Compiling Fast Partial Derivatives of Functions Given by Algorithms. PhD thesis,
+Department of Computer Science, University of Illinois at Urbana-Champaign, Jan. 1980.
+[26] B. Taylor. Methodus Incrementorum Directa et Inversa. London, 1715.
+[27] R. E. Wengert. A simple automatic derivative evaluation program. Commun. ACM, 7(8):463–464, 1964.
+[28] D. Wingate, A. Stuhlmueller, and N. D. Goodman. Lightweight implementations of probabilistic pro-
+gramming languages via transformational compilation. In International Conference on Artiﬁcial Intelli-
+gence and Statistics (AISTATS), 2011.
+
+In Neural Information Processing
+
+In
+
+9
+
+

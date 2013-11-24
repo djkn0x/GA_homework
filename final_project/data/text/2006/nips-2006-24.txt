@@ -1,0 +1,577 @@
+Conditional mean ﬁeld
+
+Peter Carbonetto
+Department of Computer Science
+University of British Columbia
+Vancouver, BC, Canada V6T 1Z4
+pcarbo@cs.ubc.ca
+
+Nando de Freitas
+Department of Computer Science
+University of British Columbia
+Vancouver, BC, Canada V6T 1Z4
+nando@cs.ubc.ca
+
+Abstract
+
+Despite all the attention paid to variational methods based on sum-product mes-
+sage passing (loopy belief propagation, tree-reweighted sum-product), these meth-
+ods are still bound to inference on a small set of probabilistic models. Mean ﬁeld
+approximations have been applied to a broader set of problems, but the solutions
+are often poor. We propose a new class of conditionally-speciﬁed variational ap-
+proximations based on mean ﬁeld theory. While not usable on their own, com-
+bined with sequential Monte Carlo they produce guaranteed improvements over
+conventional mean ﬁeld. Moreover, experiments on a well-studied problem—
+inferring the stable conﬁgurations of the Ising spin glass—show that the solutions
+can be signiﬁcantly better than those obtained using sum-product-based methods.
+
+1 Introduction
+Behind all variational methods for inference in probabilistic models lies a basic principle:
+treat
+the quantities of interest, which amount to moments of the random variables, as the solution to an
+optimization problem obtained via convex duality. Since optimizing the dual is rarely an ameliora-
+tion over the original inference problem, various strategies have arisen out of statistical physics and
+machine learning for making principled (and unprincipled) approximations to the objective.
+
+One such class of techniques, mean ﬁeld theory , requires that the solution deﬁne a distribution that
+factorizes in such a way that the statistics of interest are easily derived. Mean ﬁeld remains a popular
+tool for statistical inference, mainly because it applies to a wide range of problems. As remarked by
+Yedidia in [17], however, mean ﬁeld theory often imposes unrealistic or questionable factorizations,
+leading to poor solutions. Advances have been made in improving the quality of mean ﬁeld ap-
+proximations [17, 22, 26], but their applicability remains limited to speciﬁc models. Bethe-Kikuchi
+approximations overcome some of the severe restrictions on factorizability by decomposing the en-
+tropy according to a junction graph [1], for which it is well established that generalized belief prop-
+agation updates converge to the stationary points of the resulting optimization problem (provided
+they converge at all). Related variational approximations based on convex combinations of tree-
+structured distributions [24] have the added advantage that they possess a unique global optimum
+(by contrast, we can only hope to discover a local minimum of the Bethe-Kikuchi and mean ﬁeld
+objectives). However, both these methods rely on tractable sum-product messages, hence are limited
+to Gaussian Markov random ﬁelds or discrete random variables. Expectation propagation projec-
+tions and Monte Carlo approximations to the sum-product messages get around these limitations,
+but can be unsuitable for dense graphs or can introduce extraordinary computational costs [5, 23].
+Thus, there still exist factorized probabilistic models, such as sigmoid belief networks [21] and latent
+Dirichlet allocation [5], whereby mean ﬁeld remains to date the tractable approximation of choice.
+
+Several Monte Carlo methods have been proposed to correct for the discrepancy between the fac-
+torized variational approximations and the target distribution. These methods include importance
+sampling [8, 14] and adaptive Markov Chain Monte Carlo (MCMC) [6]. However, none of these
+techniques scale well to general, high-dimensional state spaces because the variational approxi-
+
+mations tend to be too restrictive when used as a proposal distribution. This is corroborated by
+experimental results in those papers as well as theoretical results [20]. We propose an entirely new
+approach that overcomes the problems of the aforementioned methods by constructing a sequence
+of variational approximations that converges to the target distribution. To accomplish this, we derive
+a new class of conditionally-speciﬁed mean ﬁeld approximations, and use sequential Monte Carlo
+(SMC) [7] to obtain samples from them. SMC acts as a mechanism to migrate particles from an
+easy-to-sample distribution (naive mean ﬁeld) to a difﬁcult-to-sample one (the distribution of inter-
+est), through a sequence of artiﬁcial distributions. Each artiﬁcial distribution is a
+conditional mean
+ﬁeld approximation, designed in such a way that it is at least as sensible as its predecessor because
+it recovers dependencies left out by mean ﬁeld. Sec. 4 explains these ideas thoroughly.
+
+The idea of constructing a sequence of distributions has a strong tradition in the literature, dating
+back to work on simulating the behaviour of polymer chains [19] and counting and integration
+problems [12]. Recent advances in stochastic simulation have allowed practitioners to extend these
+ideas to general probabilistic inference [7, 11, 15]. However, very little is known as to how to come
+up with a good sequence of distributions. Tempering is perhaps the most widely used strategy, due
+to its ease of implementation and intuitive appeal. At early stages, high global temperatures smooth
+the modes and allow easy exploration of the state space. Afterward, the temperature is progressively
+cooled until the original distribution is recovered. The problem is that the variance of the importance
+weights tends to degenerate around a system’s critical range of temperatures, as observed in [9].
+An entirely different approach is to remove constraints (or factors) from the original model, then
+incrementally reintroduce them. This has been a fruitful approach for approximate counting [12],
+simulation of protein folding, and inference in the Ising model [9].
+If, however, a reintroduced
+constraint has a large effect on the distribution, the particles may again rapidly deterioriate.
+
+We limit our study to the Ising spin glass model [16]. Ernst Ising developed his model in order
+to explain the phenomenon of “spontaneous magnetization” in magnets. Here, we use it as a test
+bed to investigate the viability or our proposed algorithm. Our intent is not to design an algorithm
+tuned to sampling the states of the Ising model, but rather to tackle factorized graphical models with
+arbitrary potentials. Conditional mean ﬁeld raises many questions, and since we can only hope to
+answer some in this study, the Ising model represents a respectable ﬁrst step. We hint at how our
+ideas might generalize in Sec. 6.
+
+The next two sections serve as background for the presentation of our main contribution in Sec. 4.
+
+2 Mean ﬁeld theory
+In this study, we restrict our attention to random vectors X = (X1 , . . . , Xn )T , with possible con-
+ﬁgurations x = (x1 , . . . , xn )T ∈ Ω, that admit a distribution belonging to the standard exponential
+p(x; θ) = exp (cid:8)θT φ(x) − Ψ(θ)(cid:9) ,
+family [25]. A member of this family has a probability density of the form
+(1)
+Ψ(θ) = log R exp (cid:8)θT φ(x)(cid:9) dx.
+where θ is the canonical vector of parameters, and φ(x) is the vector of sufﬁcient statistics [25]. The
+log-partition function Ψ(θ) ensures that p(x; θ) de ﬁnes a valid probability density, and is given by
+Denoting Eπ {f (X )} to be the expected value of a function f (x) with respect to distribution π ,
+Jensen’s inequality states that f (Eπ {X }) ≤ Eπ {f (X )} for any convex function f (x) and distribu-
+n exp(θT φ(X ))
+o ≥ θT µ(α) − R p(x; α) log p(x; α) dx,
+tion π on X . Using the fact that − log(x) is convex, we obtain the variational lower bound
+Ψ(θ) = log Ep( · ;α)
+(2)
+p(X ;α)
+where the mean statistics are deﬁned by µ(α) ≡ Ep( · ;α) {φ(X )}. The second term on the right-
+hand side of (2) is the Boltzmann-Shannon entropy of p(x; α), which we denote by H (α). Clearly,
+some lower bounds of the form (2) are better than others, so the optimization problem is to ﬁnd a set
+of parameters α that leads to the tightest bound on the log-partition function. This deﬁnes the vari-
+ational principle. We emphasize that this lower bound holds for any choice of α. A more rigorous
+treatment follows from analyzing the conjugate of the convex, differentiable function Ψ(θ) [25].
+As it is presented here, the variational principle is of little practical use because no tractable expres-
+sions exist for the entropy and mean statistics. There do, however, exist particular choices of the
+
+.
+
+(3)
+
+variational parameters α where it is possible to compute them both. We shall examine one particular
+set of choices, naive mean ﬁeld , in the context of the Ising spin glass model.
+At each site i ∈ {1, . . . , n}, the random variable Xi is deﬁned to be xi = +1 if the magnetic dipole
+in the “up” spin position, or xi = −1 if it is “down”. Each scalar
+θij de ﬁnes the interaction between
+sites i and j . Setting θij > 0 causes attraction between spins, and θij < 0 induces repulsion. Scalars
+θi de ﬁne the effect of the external magnetic ﬁeld on the energy of the system. We use the undirected
+labelled graph G = (V , E ), where V = {1, . . . , n}, to represent the conditional independence
+structure of the probability measure (there is no edge between i and j if and only if Xi and Xj
+are conditionally independent given values at all other points of the graph). Associating singleton
+nP
+o
+factors with nodes of G and pairwise factors with its edges, and setting the entries of the sufﬁcient
+i∈V θixi + P
+statistics vector to be xi , ∀ i ∈ V and xixj , ∀ (i, j ) ∈ E , we can write the probability density as
+(i,j )∈E θij xixj − Ψ(θ)
+p(x; θ) = exp
+i∈V θiµi (α) + P
+F (α) ≡ P
+The corresponding variational lower bound on the log-partition function Ψ(θ) then decomposes as
+(i,j )∈E θij µij (α) + H (α),
+(4)
+where µi (α) and µij (α) are the expectations of single spins i and pairs of spins (i, j ), respectively.
+Naive mean ﬁeld restricts the variational parameters α to belong to {α | ∀ (i, j ) ∈ E , αij = 0}.
+µi (α) ≡ R xi p(x; α) dx = tanh(αi )
+We can compute the lower bound (4) for any α belonging to this subset because we have tractable
+expressions for the mean statistics and entropy. For the Ising spin glass, the mean statistics are
+µij (α) ≡ R xi xj p(x; α) dx = µi (α) µj (α),
+(cid:16) 1−µi (α)
+(cid:17)
+(cid:16) 1+µi (α)
+(cid:17) − X
+(cid:16) 1−µi (α)
+(cid:17)
+H (α) = − X
+and the entropy is derived to be
+2
+2
+2
+i∈V
+i∈V
+The standard way to proceed [17, 25] is to derive coordinate ascent updates by equating the deriva-
+tives ∂F /∂µi to zero and solving for µi . Since the variables µi must be valid mean statistics, they are
+constrained to lie within an envelope known as the marginal polytope [25]. Alternatively, one can
+solve the optimization problem with respect to the unconstrained variational parameters α. Since it
+is not possible to obtain the ﬁxed-point equations by isolating each αi , instead one can easily derive
+expressions for the gradient ∇F (α) and Hessian ∇2F (α) and run a nonlinear optimization routine.
+This approach, as we will see, is necessary for optimizing the conditional mean ﬁeld objective.
+
+(cid:16) 1+µi (α)
+2
+
+(5)
+(6)
+
+(cid:17)
+
+.
+
+log
+
+log
+
+(7)
+
+3 Sequential Monte Carlo
+
+Consider a sequence of two distributions, π(x) and π? (x), where the second represents the target.
+Assuming familiarity with importance sampling, this will be sufﬁcient to explain key concepts un-
+derlying SMC, and does not overwhelm the reader with subscripts. See [7] for a detailed description.
+In the ﬁrst step, samples x(s) ∈ Ω are drawn from some proposal density q(x) and assigned impor-
+tance weights w(x) = π(x)/q(x). In the second step, a Markov transition kernel K ? (x0 | x) shifts
+each sample towards the target, and the importance weights ˜w(x, x0 ) compensate for any failure to
+do so. In effect, the second step consists of extending the path of each particle onto the joint space
+Ω × Ω. The unbiased importance weights on the joint space are given by
+= L(x | x0 ) π? (x0 )
+˜π(x, x0 )
+× w(x),
+˜w(x, x0 ) =
+(8)
+K ? (x0 | x) π(x)
+˜q(x, x0 )
+where ˜π(x, x0 ) = L(x | x0 ) π? (x0 ) is the artiﬁcial distribution over the joint space,
+˜q(x, x0 ) =
+K ? (x0 | x) q(x) is the corresponding importance distribution, and the “backward-in-time” kernel
+L(x | x0 ) is designed so that it admits π(x) as its invariant distribution. Our expectation is that
+K ? (x0 | x) have invariant distribution π? (x), though it is not required. To prevent potential particle
+degeneracy in the marginal space, we adopt the standard stratiﬁed resampling algorithm [13].
+Choice of backward-in-time kernel. Mean ﬁeld tends to be overconﬁdent in its estimates (although
+not necessarily so). Loosely speaking, this means that if π(x) were to be a mean ﬁeld approximation,
+
+.
+
+(10)
+
+(11)
+
+then it would likely have lighter tails than the target distribution π? (x). If we were to use a sub-
+optimal backward kernel [7, Sec. 3.3.2.3], the importance weights would simplify to
+˜w(x, x0 ) = π? (x) / π(x) × w(x).
+(9)
+Implicitly, this is the choice of backward kernel made in earlier sequential frameworks [11, 15].
+Since the mean ﬁeld approximation π(x) might very well fail to “dominate” the target
+π? (x), the
+expression (9) risks having unbounded variance. This is a problem because the weights may change
+abruptly from one iteration to the next, or give too much importance to too few values x [18]. Instead,
+R K ? (x0 | x) π(x) dx
+Del Moral et al suggest approximating the optimal backward-in-time kernel [7, Sec. 3.3.2.1] by
+L(x | x0 ) = K ? (x0 | x) π(x)
+R K ? (x0 | x) π(x) dx
+It offers some hope because the resulting importance weights on the joint space, following (8), are
+π? (x0 )
+× w(x).
+˜w(x, x0 ) =
+If the transition kernel increases the mass of the proposal in regions where π(x) is weak relative to
+π? (x), the backward kernel (10) will rectify the problems caused by an overconﬁdent proposal.
+Choice of Markov transition kernel. The drawback of the backward kernel (10) is that it limits
+the choice of transition kernel K ? (x0 | x), a crucial ingredient to a successful SMC simulation. For
+instance, we can’t use the Metropolis-Hastings algorithm because its transition kernel involves an
+integral that does not admit a closed form [18]. One transition kernel which ﬁts our requirements and
+K ? (x0 | x) = P
+is widely applicable is a mixture of kernels based on the random-scan Gibbs sampler [18]. Denoting
+δy (x) to be the Dirac measure at location y , the transition kernel with invariant distribution π? (x) is
+k | x−k ) δx−k (x0
+k ρk π? (x0
+−k ),
+(12)
+where π(xk |x−k ) is the conditional density of xk given values at all other sites, and ρk is the proba-
+(cid:26) X
+(cid:27)−1 × w(x).
+bility of shifting the samples according to the Gibbs kernel at site k . Following (11) and the identity
+for conditional probability, we arrive at the expression for the importance weights,
+k | x0
+π? (x0
+˜w(x, x0 ) = π? (x0 )
+−k )
+k | x0
+π(x0
+π(x0 )
+−k )
+k
+Normalized estimator. For almost all problems in Bayesian analysis (and certainly the one con-
+sidered in this paper), the densities are only known up to a normalizing constant. That is, only
+f (x) and f ? (x) are known pointwise, where π(x) = f (x)/Z and π? (x) = f ? (x)/Z ? . The nor-
+malized importance sampling estimator [18] yields (asymptotically unbiased) importance weights
+˜w(x, x0 ) ∝ ˆw(x, x0 ), where the unnormalized importance weights ˆw(x, x0 ) in the joint space remain
+the same as (13), except that we substitute π(x) for f (x), and π? (x) for f ? (x). The normalized es-
+Z ? ≈ Z × P
+timator can recover a Monte Carlo estimate of the normalizing constant Z ? via the recursion
+s ˆw(s) ,
+provided we already have a good estimate of Z [7].
+
+(14)
+
+ρk
+
+(13)
+
+4 Conditional mean ﬁeld
+
+We start with a partition R (equivalence relation) of the set of vertices V . Elements of R, which
+we denote with the capital letters A and B , are disjoint subsets of V . Our strategy is to come
+up with a good naive mean ﬁeld approximation to the conditional density p(xA | x−A ; θ) for every
+equivalence class A ∈ R, and then again for every con ﬁguration x−A . Here, we denote xA to be
+the conﬁguration x restricted to set A ⊆ V , and x−A to be the restriction of x to V \ A. The crux
+of the matter is that for any point α, the functions p(xA | x−A ; α) only represent valid conditional
+densities if they correspond to some unique joint, as discussed in [2]. Fortunately, under the Ising
+model the terms p(xA | x−A ; α) represent valid conditionals for any α. What we have is a slight
+generalization of the auto-logistic model [3], for which the joint is always known. As noted by
+Besag, “although this is derived classically from thermodynamic principles, it is remarkable that the
+Ising model follows necessarily as the very simplest non-trivial binary Markov random ﬁeld [4].”
+
+(15)
+
+p(xA | x−A ; α) to decompose as a product of
+Conditional mean ﬁeld forces each conditional
+marginals p(xi | x−A ; α), for all i ∈ A. As a result, αij must be zero for every edge (i, j ) ∈ E (A),
+where we deﬁne E (A) ≡ {(i, j ) | i ∈ A, j ∈ A} to be the set of edges contained by the ver-
+tices in subset A. Notice that we have a set of free variational parameters αij de ﬁned on the
+edges (i, j ) that straddle subsets of the partition. Formally, these are the edges that belong to
+CR ≡ {(i, j ) | ∀A ∈ R, (i, j ) /∈ E (A)}. We call CR the set of “connecting edges”.
+Our variational formulation consists of competing objectives, since the conditionals p(xA | x−A ; α)
+share a common set of parameters. We formulate the ﬁnal objective function as a linear combination
+maximize FR,λ (α) ≡ P
+P
+of conditional objectives. A conditional mean ﬁeld optimization problem with respect to graph
+partition R and linear weights λ is of the form
+λA (xN (A) )FA (α, xN (A) )
+A∈R
+xN (A)
+subject to αij = 0, for all (i, j ) ∈ E \ CR .
+We extend the notion of neighbours to sets, so that N (A) is the Markov blanket of A. The non-
+negative scalars λA (xN (A) ) are deﬁned for every equivalence class A ∈ R and conﬁguration xN (A) .
+Each conditional objective FA (α, xN (A) ) represents a naive mean ﬁeld lower bound to the log-
+partition function of the conditional density p(xA | x−A ; θ) = p(xA | xN (A) ; θ). For the Ising model,
+i∈A θiµi (α, xN (A) ) + P
+FA (α, xN (A) ) = P
+FA (α, xN (A) ) follows from the exact same steps used in the derivation of the naive mean ﬁeld lower
+bound in Sec. 2, except that we replace the joint by a conditional. We obtain the expression
++ P
+P
+(i,j )∈E (A) θij µij (α, xN (A) )
+j ∈ (N (i) ∩ N (A)) θij xj µi (α, xN (A) ) + HA (α, xN (A) ),
+i∈A
+µi (α, xN (A) ) ≡ R xi p(xA | xN (A) ; α) dx = tanh (cid:0)αi + P
+(cid:1)
+with the conditional mean statistics for i ∈ A, j ∈ A given by
+µij (α, xN (A) ) ≡ R xi xj p(xA | xN (A) ; α) dx = µi (α, xN (A) ) µj (α, xN (A) ).
+j ∈ (N (i) ∩ N (A))αij xj
+(18)
+The entropy is identical to (7), with the mean statistics replaced with their conditional counterparts.
+Notice the appearance of the new terms in (16). These terms account for the interaction between the
+random variables on the border of the partition. We can no longer optimize µ following the standard
+approach; we cannot treat the µi (α, xN (A) ) as independent variables for all xN (A) , as the solution
+would no longer deﬁne an Ising model (or even a valid probability density, as we discussed). Instead,
+we optimize with respect to the parameters α, taking derivatives ∇FR,λ (α) and ∇2FR,λ (α).
+We have yet to address the question: how to select the scalars λ? It stands to reason that we should
+place greater emphasis on those conditionals that are realised more often, and set λA (xN (A) ) ∝
+p(xN (A) ; θ). Of course, these probabilities aren’t available! Equally problematic is the fact that (15)
+may involve nearly as many terms as there are possible worlds, hence offering little improvement
+over the naive solution. As it turns out, a greedy choice resolves both issues. Supposing that we
+λA (xN (A) ) = P
+are at some intermediate stage in the SMC algorithm (see Sec. 4.1), a greedy but not unreasonable
+choice is to set λA (xN (A) ) to be the current Monte Carlo estimate of the marginal p(xN (A) ; θ),
+(xN (A) ).
+sw(s) δx
+(s)
+N (A)
+Happily, the number of terms in (15) is now on the order of the number of the particles.
+
+(19)
+
+(16)
+
+(17)
+
+Unlike standard naive mean ﬁeld, conditional mean ﬁeld optimizes over the pairwise interactions
+(i, j ) ∈ CR . In our study, we ﬁx these parameters to αij = θij .
+αij deﬁned on the connecting edges
+This choice is convenient for two reasons. First, the objective is separable on the subsets of the
+partition. Second, the conditional objective of a singleton subset has a unique maximum at αi = θi ,
+so any solution to (15) is guaranteed to recover the original distribution when |R| = n.
+
+4.1 The Conditional mean ﬁeld algorithm
+We propose an SMC algorithm that produces progressively re ﬁned particle estimates of the mean
+statistics, in which conditional mean ﬁeld acts in a supporting role. The initial SMC distribution
+is obtained by solving (15) for R = {V }, which amounts to the mean ﬁeld approximation derived
+in Sec. 2. In subsequent steps, we iteratively solve (15), update the estimates of the mean statistics
+by reweighting (see (20)) and occasionally resampling the particles, then we split the partition until
+we cannot split it anymore, at which point |R| = n and we recover the target p(x; θ). It is easy to
+
+Figure 1: The graphs on the left depict the Markov properties of the conditional mean ﬁeld approxi-
+mations in steps 1 to 4. Graph #4 recovers the target. In the right plot, the solid line is the evolution
+of the estimate of the log-partition function in SMC steps 1 to 4. The dashed line is the true value.
+function, as Ψ(α) = P
+draw samples from the initial fully-factorized distribution. It is also easy to compute its log-partition
+i∈V log(2 cosh(αi )). Note that this estimate is not a variational lower bound.
+Let’s now suppose we are at some intermediate step in the algorithm. We currently have a parti-
+cle estimate of the R-partition conditional mean ﬁeld approximation p(x; α) with samples x(s) and
+marginal importance weights w(s) . To construct the next artiﬁcial distribution p(x; α? ) in the se-
+quence, we choose a ﬁner partitioning of the graph, R? , set the weights λ? according to (19), and
+i = θi . We
+use a nonlinear solver to ﬁnd a local minimum α? to (15). The solver is initialized to α?
+require that the new graph partition satisfy that for every B ∈ R? , B ⊆ A for some A ∈ R. In
+this manner, we ensure that the sequence is progressing toward the target (provided R 6= R? ), and
+that it is always possible to evaluate the importance weights. It is not understood how to tractably
+choose a good sequence of partitions, so we select them in an arbitrary manner. Next, we use the
+random-scan Gibbs sampler (12) to shift the particles toward the new distribution, where the Gibbs
+sites k correspond to the subsets B ∈ R? . We set the mixture probabilities of the Markov transition
+exp (cid:0) P
+(cid:1)
+i + P
+(cid:27)−1× w(x),
+(cid:1) (cid:26) X
+Y
+kernel to ρB = |B |/n. Following (13), the expression for the unnormalized importance weights is
+exp (cid:0) P
+i + P
+i | x0
+π(x0
+i x0
+ij x0
+ix0
+N (B ) ; α? )
+i α?
+(i,j ) α?
+ˆw(x, x0 ) =
+j
+(20)
+i | x0
+ρB
+π(x0
+i αix0
+ix0
+(i,j ) αij x0
+N (A) ; α)
+B∈R?
+i∈B
+j
+where the single-site conditionals are π(xi | xN (A) ; α) = (1 + xiµi (α, xN (A) ))/2 and A ∈ R is the
+Ψ(α) + log P
+unique subset containing B ∈ R? . The new SMC estimate of the log-partition function is Ψ(α? ) ≈
+s ˆw(s) . To obtain the particle estimate of the new distribution, we normalize the
+weights ˜w(s) ∝ ˆw(s) , assign the marginal importance weights w(s) ← ˜w(s) , and set x(s) ← (x0 )(s) .
+We are now ready to move to the next iteration. Let’s look at a small example to see how this works.
+10 (4, 3, −5, −2), θ13 = θ24 =
+Example. Consider an Ising model with n = 4 and parameters θ1:4 = 1
+2 and θ12 = − 1
+θ34 = + 1
+2 . We assume we have enough particles to recover the distributions almost
+perfectly. Setting R = {{1, 2, 3, 4}}, the ﬁrst artiﬁcial distribution is the naive mean ﬁeld solution
+α1:4 = (0.09, 0.03, −0.68, −0.48) with Ψ(α) = 3.10. Knowing that the true mean statistics are
+µ1:4 = (0.11, 0.07, −0.40, −0.27), and Var(Xi ) = 1 − µ2
+i , it is easy to see naive mean ﬁeld largely
+underestimates the variance of the spins. In step 2, we split the partition into R = {{1, 2}, {3, 4}},
+and the new conditional mean ﬁeld approximation is given by α1:4 = (0.39, 0.27, −0.66, −0.43),
+with potentials α13 = θ13 , α24 = θ24 on the connecting edges CR . The second distribution recovers
+the two dependencies between the subsets, as depicted in Fig. 1. Step 3 then splits subset {1, 2}, and
+we get α = (0.40, 0.30, −0.64, −0.42) by setting λ according to the weighted samples from step 2.
+Notice that α1 = θ1 , α2 = θ2 . Step 4 recovers the original distribution, at which point the estimate
+of the log-partition function comes close to the exact solution, as shown in Fig. 1. In this example,
+Ψ(α) happens to underestimate Ψ(θ), but in other examples we may get overestimates.
+The random-scan Gibbs sampler can mix poorly, especially on a ﬁne graph partition. Gradually
+changing the parameters with tempered artiﬁcial distributions [7, Sec. 2.3.1] p(x; α)1−γ p(x; α? )γ
+gives the transition kernel more opportunity to correctly migrate the samples to the next distribution.
+
+To optimize (15), we used a stable modiﬁcation to Newton’s method that maintains a quadratic
+approximation to the objective with a positive deﬁnite Hessian. In light of our experiences, a better
+choice might have been to sacriﬁce the quadratic convergence rate for a limited-memory Hessian
+approximation or conjugate gradient; the optimization routine was the computational bottleneck on
+dense graphs. Even though the solver is executed at every iteration of SMC, the separability of the
+objective (15) means that the computational expense decreases signiﬁcantly at every iteration. To
+our knowledge, this is the only SMC implementation in which the next distribution in the sequence
+is constructed dynamically according to the particle approximation from the previous step.
+
+Figure 2: (a) Estimate of the 12 × 12 grid log-partition function for each iteration of SMC. (c) Same,
+for the fully-connected graph with 26 nodes. We omitted the tree-reweighted upper bound because
+it is way off the map. Note that these plots will vary slightly for each simulation. (b) Average error
+of the mean statistics according to the hot coupling (HC), conditional mean ﬁeld algorithm (CMF),
+Bethe-Kikuchi variational approximation (B-K), and tree-reweighted upper bound (TRW) estimates.
+The maximum possible average error is 2. For the HC and CMF algorithms, 95% of the estimates
+fall within the shaded regions according to a sample of 10 simulations.
+
+5 Experiments
+We conduct experiments on two Ising models, one deﬁned on a 12× 12 grid, and the other on a fully-
+connected graph with 26 nodes. The model sizes approach the limit of what we can compute exactly
+for the purposes of evaluation. The magnetic ﬁelds are generated by drawing each θi uniformly
+2 }. Both models exhibit strong and con ﬂicting
+from [−1, 1] and drawing θij uniformly from {− 1
+2 , + 1
+pairwise interactions, so it is expected that rudimentary MCMC methods such as Gibbs sampling
+will get “stuck” in local modes [9]. Our algorithm settings are as follows. We use 1000 particles
+(as with most particle methods, the running time is proportional to the number of particles), and we
+temper across successive distributions with a linear inverse temperature schedule of length 100. The
+particles are resampled when the effective sample size [18] drops below 1
+2 . We compare our results
+with the “hot coupling” SMC algorithm described in [9] (appropriately, using the same algorithm
+settings), and with two sum-product methods based on Bethe-Kikuchi approximations [1] and tree-
+reweighted upper bounds [24]. We adopt the simplest formulation of both methods in which the
+regions (or junction graph nodes) are de ﬁned as the edges E . Since loopy belief propagation failed
+to converge for the complete graph, we implemented the convergent double-loop algorithm of [10].
+
+The results of the experiments are summarized in Fig. 2. The plots on the left and right show that the
+estimate of the log-partition function, for the most part, moves to the exact solution as the graph is
+partitioned into smaller and smaller pieces. Both Bethe-Kikuchi approximations and tree-reweighted
+upper bounds provide good approximations to the grid model. Indeed, the former recovers the log-
+partition function almost perfectly. However, these approximations break down as soon as they
+encounter a dense, frustrated model. This is consistent with the results observed in other experi-
+ments [9, 24]. The SMC algorithms proposed here and in [9], by contrast, produce signiﬁcantly
+improved estimates of the mean statistics. It is surprising that we achieve similar performance with
+hot coupling [9], given that we do not exploit the tractability of sum-product messages in the Ising
+model (which would offer guaranteed improvements due to the Rao-Blackwell theorem).
+
+6 Conclusions and discussion
+
+We presented a sequential Monte Carlo algorithm in which each artiﬁcial distribution is the solution
+to a conditionally-speciﬁed mean ﬁeld optimization problem. We believe that the extra expense of
+nonlinear optimization at each step may be warranted in the long run as our method holds promise
+in solving more difﬁcult inference problems, problems where Monte Carlo and variational methods
+alone perform poorly. We hypothesize that our approach is superior methods that “prune” constraints
+on factors, but further exploration in other problems is needed to verify this theory.
+Beyond mean ﬁeld. As noted in [22], naive mean ﬁeld implies complete factorizability, which is
+not necessary under the Ising model. A number of reﬁnements are possible. However, this is not
+a research direction we will pursue. Bethe-Kikuchi approximations based on junction graphs have
+many merits, but they cannot be considered candidates for our framework because they produce
+
+  estimates of local mean statistics without deﬁning a joint distribution. Tree-reweighted upper bounds
+are appealing because they tend to be underconﬁdent, but again we have the same difﬁculty.
+Extending to other members of the exponential family. In general, the joint is not available in
+analytic form given expressions for the conditionals, but there are still some encouraging signs.
+For one, we can use Brook’s lemma [3, Sec. 2] to derive an expression for the importance weights
+that does not involve the joint. Furthermore, conditions for guaranteeing the validity of conditional
+densities have been extensively studied in multivariate [2] and spatial statistics [3].
+
+Acknowledgments
+We are indebted to Arnaud Doucet and Firas Hamze for invaluable discussions, to Martin Wainwright for
+providing his code, and to the Natural Sciences and Engineering Research Council of Canada for their support.
+
+In
+
+References
+[1] S. M. Aji and R. J. McEliece. The Generalized distributive law and free energy minimization. In Pro-
+ceedings of the 39th Allerton Conference, pages 672–681, 2001.
+[2] B. Arnold, E. Castillo, and J.-M. Sarabia. Conditional Speciﬁcation of Statistical Models . Springer, 1999.
+[3] J. Besag. Spatial interaction and the statistical analysis of lattice systems. J. Roy. Statist. Soc., Ser. B,
+36:192–236, 1974.
+Statist. Sci., 16:265–267, 2001.
+[4] J. Besag. Comment to “Conditionally speciﬁed distributions”.
+[5] W. Buntine and A. Jakulin. Applying discrete PCA in data analysis. In Uncertainty in Artiﬁcial Intelli-
+gence, volume 20, pages 59–66, 2004.
+[6] N. de Freitas, P. Højen-Sørensen, M. I. Jordan, and S. Russell. Variational MCMC. In Uncertainty in
+Artiﬁcial Intelligence , volume 17, pages 120–127, 2001.
+[7] P. del Moral, A. Doucet, and A. Jasra. Sequential Monte Carlo samplers. J. Roy. Statist. Soc., Ser. B,
+68:411–436, 2006.
+[8] Z. Ghahramani and M. J. Beal. Variational inference for Bayesian mixtures of factor analysers.
+Advances in Neural Information Processing Systems, volume 12, pages 449–455, 1999.
+[9] F. Hamze and N. de Freitas. Hot Coupling: a particle approach to inference and normalization on pairwise
+undirected graphs. Advances in Neural Information Processing Systems, 18:491–498, 2005.
+[10] T. Heskes, K. Albers, and B. Kappen. Approximate inference and constrained optimization. In Uncer-
+tainty in Artiﬁcial Intelligence , volume 19, pages 313–320, 2003.
+[11] C. Jarzynski. Nonequilibrium equality for free energy differences. Phys. Rev. Lett., 78:2690–2693, 1997.
+[12] M. Jerrum and A. Sinclair. The Markov chain Monte Carlo method: an approach to approximate counting
+and integration. In Approximation Algorithms for NP-hard Problems, pages 482–520. PWS Pubs., 1996.
+[13] G. Kitagawa. Monte Carlo ﬁlter and smoother for non-Gaussian nonlinear state space models. J. Comput.
+Graph. Statist., 5:1–25, 1996.
+[14] P. Muyan and N. de Freitas. A blessing of dimensionality: measure concentration and probabilistic
+inference. In Proceedings of the 19th Workshop on Artiﬁcial Intelligence and Statistics , 2003.
+[15] R. M. Neal. Annealed importance sampling. Statist. and Comput., 11:125–139, 2001.
+[16] M. Newman and G. Barkema. Monte Carlo Methods in Statistical Physics. Oxford Univ. Press, 1999.
+[17] M. Opper and D. Saad, editors. Advanced Mean Field Methods, Theory and Practice. MIT Press, 2001.
+[18] C. P. Robert and G. Casella. Monte Carlo Statistical Methods. Springer, 2nd edition, 2004.
+[19] M. N. Rosenbluth and A. W. Rosenbluth. Monte Carlo calculation of the average extension of molecular
+chains. J. Chem. Phys., 23:356–359, 1955.
+[20] J. S. Sadowsky and J. A. Bucklew. On large deviations theory and asymptotically efﬁcient Monte Carlo
+estimation. IEEE Trans. Inform. Theory, 36:579–588, 1990.
+[21] L. K. Saul, T. Jaakola, and M. I. Jordan. Mean ﬁeld theory for sigmoid belief networks.
+Intelligence Res., 4:61–76, 1996.
+[22] L. K. Saul and M. I. Jordan. Exploiting tractable structures in intractable networks. In Advances in Neural
+Information Processing Systems, volume 8, pages 486–492, 1995.
+[23] E. B. Sudderth, A. T. Ihler, W. T. Freeman, and A. S. Willsky. Nonparametric belief propagation. In
+Computer Vision and Pattern Recognition,, volume I, pages 605–612, 2003.
+[24] M. J. Wainwright, T. S. Jaakkola, and A. S. Willsky. A new class of upper bounds on the log partition
+function. IEEE Trans. Inform. Theory, 51:2313–2335, 2005.
+[25] M. J. Wainwright and M. I. Jordan. Graphical models, exponential families, and variational inference.
+Technical report, EECS Dept., University of California, Berkeley, 2003.
+[26] W. Wiegerinck. Variational approximations between mean ﬁeld theory and the junction tree algorithm. In
+Uncertainty in Artiﬁcial Intelligence , volume 16, pages 626–633, 2000.
+
+J. Artiﬁcial
+
+

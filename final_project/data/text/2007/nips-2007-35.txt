@@ -1,0 +1,862 @@
+Efﬁcient Principled Learning of Thin Junction Trees
+
+Anton Chechetka Carlos Guestrin
+Carnegie Mellon University
+
+Abstract
+We present the ﬁrst truly polynomial algorithm for PAC-lear ning the structure of
+bounded-treewidth junction trees – an attractive subclass of probabilistic graphical
+models that permits both the compact representation of probability distributions
+and efﬁcient exact inference. For a constant treewidth, our algorithm has polyno-
+mial time and sample complexity. If a junction tree with sufﬁ ciently strong intra-
+clique dependencies exists, we provide strong theoretical guarantees in terms of
+K L divergence of the result from the true distribution. We also present a lazy
+extension of our approach that leads to very signi ﬁcant spee d ups in practice, and
+demonstrate the viability of our method empirically, on several real world datasets.
+One of our key new theoretical insights is a method for bounding the conditional
+mutual information of arbitrarily large sets of variables with only polynomially
+many mutual information computations on ﬁxed-size subsets of variables, if the
+underlying distribution can be approximated by a bounded-treewidth junction tree.
+
+Introduction
+1
+In many applications, e.g., medical diagnosis or datacenter performance monitoring, probabilistic
+inference plays an important role: to decide on a patient’s treatment, it is useful to know the prob-
+ability of various illnesses given the known symptoms. Thus, it is important to be able to represent
+probability distributions compactly and perform inference efﬁciently. Here, probabilistic graphical
+models (PGMs) have been successful as compact representations for probability distributions.
+
+In order to use a PGM, one needs to deﬁne its structure and para meter values. Usually, we only
+have data (i.e., samples from a probability distribution), and learning the structure from data is thus
+a crucial task. For most formulations, the structure learning problem is NP-complete, c.f., [10].
+Most structure learning algorithms only guarantee that their output is a local optimum. One of the
+few notable exceptions is the work of Abbeel et al. [1], for learning structure of factor graphs, that
+provides probably approximately correct (PAC) learnability guarantees.
+
+While PGMs can represent probability distributions compactly, exact inference in compact models,
+such as those of Abbeel et al., remains intractable [7]. An attractive solution is to use junction
+trees (JTs) of limited treewidth – a subclass of PGMs that per mits efﬁcient exact inference. For
+treewidth k = 1 (trees), the most likely (MLE) structure of a junction tree can be learned efﬁciently
+using the Chow-Liu algorithm [6], but the representational power of trees is often insufﬁcient. We
+address the problem of learning JTs for ﬁxed treewidth k > 1. Learning the most likely such JT is
+NP-complete [10]. While there are algorithms with global guarantees for learning ﬁxed-treewidth
+JTs [10, 13], there has been no polynomial algorithm with PAC guarantees. The guarantee of [10]
+is in terms of the difference in log-likelihood of the MLE JT and the model where all variables are
+independent: the result is guaranteed to achieve at least a constant fraction of that difference. The
+constant does not improve as the amount of data increases, so it does not imply PAC learnability.
+The algorithm of [13] has PAC guarantees, but its complexity is exponential. In contrast, we provide
+a truly polynomial algorithm with PAC guarantees. The contributions of this paper are as follows:
+
+• A theoretical result (Lemma 4) that upper bounds the conditional mutual information of
+arbitrarily large sets of random variables in polynomial time.
+In particular, we do not
+assume that an efﬁciently computable mutual information or acle exists.
+• The ﬁrst polynomial algorithm for PAC-learning the structu re of limited-treewidth junction
+trees with strong intra-clique dependencies. We provide graceful degradation guarantees
+for distributions that are only approximately representable by JTs with ﬁxed treewidth.
+
+1
+
+x4,x5
+1
+
+x2,x5
+2
+
+x4,x5,x6
+
+x2,x3,x5
+
+4
+
+5
+
+x1,x4,x5
+
+x1,x5
+
+x1,x2,x5
+
+x1,x2
+
+x1,x2,x7
+
+3
+
+Figure 1: A junction tree. Rectangles denote
+cliques, separators are marked on the edges.
+
+Algorithm 1: Na¨ıve approach to structure learning
+Input: V , oracle I (·, · | ·), treewidth k , threshold δ
+L ← ∅ ; // L is a set of “useful components ”
+for S ⊂ V s.t. |S | = k do
+for Q ⊂ V-S do
+if I (Q, V-SQ | S ) ≤ δ then
+L ← L ∪ (S, Q)
+
+1
+2
+3
+4
+5
+
+6
+
+return FindConsistentTree(L)
+
+• A lazy heuristics that allows to make the algorithm practical.
+• Empirical evidence of the viability of our approach on real-world datasets.
+
+2 Bounded treewidth graphical models
+In general, even to represent a probability distribution P (V ) over discrete variables1 V we need
+space exponential in the size n of V . However, junction trees of limited treewidth allow compact
+representation and tractable exact inference. We brieﬂy review junction trees
+(for details see [7]).
+Let C = {C1 , . . . , Cm } be a collection of subsets of V . Elements of C are called cliques. Let T be
+a set of edges connecting pairs of cliques such that (T , C) is a tree.
+Deﬁnition 1. Tree (T , C) is a junction tree iff it satis ﬁes the running intersection property (RIP):
+∀Ci , Cj ∈ C and ∀Ck on the (unique) simple path between Ci and Cj , x ∈ Ci ∩ Cj ⇒ x ∈ Ck .
+
+A set Sij ≡ Ci ∩ Cj is called the separator corresponding to an edge (i − j) from T . The size of
+a largest clique in a junction tree minus one is called the treewidth of that tree. For example, in a
+junction tree in Fig. 1, variable x2 is contained in both clique 3 and 5, so it has to be contained in
+clique 2, because 2 is on the simple path between 3 and 5. The largest clique in Fig. 1 has size 3, so
+the treewidth of that junction tree is 2.
+
+A distribution P (V ) is representable using junction tree (T , C) if instantiating all variables in a sep-
+arator Sij renders the variables on different sides of Sij independent. Denote the fact that A is inde-
+ij be cliques that can be reached from Ci in the (T , C)
+pendent of B given C by (A ⊥ B | C ). Let Ci
+without using edge (i − j), and denote these reachable variables by V i
+Ck \ Sij .
+ij ≡ V i
+j i ≡ SCk ∈Ci
+ij
+12 = {x2 , x3 , x7 }.
+12 = {x4 , x6 } , V 2
+For example, in Fig. 1, S12 = {x1 , x5 }, V 1
+ij | Sij (cid:17).
+Deﬁnition 2. P (V ) factors according to junction tree (T , C) iff ∀(i − j ) ∈ T , (cid:16)V i
+ij ⊥ V j
+
+If a distribution P (V ) factors according to some junction tree of treewidth k , we will say that P (V )
+is k-JT representable. In this case, a projection P(T ,C) of P on (T , C), deﬁned as
+P(T ,C) = QCi∈C P (Ci )
+Q(i−j )∈T P (Sij )
+is equal to P itself. For clarity, we will only consider maximal junction trees, where all separators
+have size k . If P is k-JT representable, it also factors according to some maximal JT of treewidth k .
+
+(1)
+
+,
+
+In practice the notion of conditional independence is too strong. Instead, a natural relaxation is to
+require sets of variables to have low conditional mutual information I . Denote H (A) the entropy
+of A, then I (A,B | S) ≡ H (A | S) − H (A | BS ) is nonnegative, and zero iff (A ⊥ B | S). Intuitively,
+I (A, B | S) shows how much new information about A can we extract from B if we already know S .
+(T , C) is an ε-junction tree for P (V ) iff ∀(i − j ) ∈ T : I (cid:16)V i
+ij | Sij (cid:17) ≤ ε.
+ij , V j
+
+Deﬁnition 3.
+
+1Notation note: throughout the paper, we use small letters (x, y ) to denote variables, capital letters (V , C )
+to denote sets of variables, and double-barred font (C, D) to denote sets of sets.
+
+2
+
+If there exists an ε-junction tree (T , C) for P (V ), we will say that P is k-JT ε-representable. In
+this case, the Kullback-Leibler divergence of projection (1) of P on (T , C) from P is bounded [13]:
+K L (cid:0)P , P(T ,C) (cid:1) ≤ nε.
+This bound means that if we have an ε-junction tree for P (V ), then instead of P we can use its
+tractable principled approximation P(T ,C) for inference. In this paper, we address the problem of
+learning structure of such junction tree from data (samples from P ).
+3 Structure learning
+In this paper, we address the following problem: given data, such as multiple temperature read-
+ings from sensors in a sensor network, we treat each datapoint as an instantiation of the random
+variables V and seek to ﬁnd a good approximation of P (V ). We will assume that P (V ) is k-JT
+ε-representable for some ε and aim to ﬁnd a ˆε-junction tree for P with the same treewidth k and
+with ˆε as small as possible. Note that the maximal treewidth k is considered to be a constant and not
+a part of problem input. The complexity of our approach is exponential in k .
+
+(2)
+
+1
+2
+3
+
+4
+
+5
+
+return QS
+
+Algorithm 2: LTCI: ﬁnd Conditional Indepen-
+dencies in Low-Treewidth distributions
+Input: V , separator S , oracle I (·, · | ·),
+threshold δ , max set size q
+QS ← ∪x∈V {x} ;
+// QS is a set of singletons
+for A ⊂ V-S s.t. |A| ≤ q do
+if minX⊂A I (X, A-X | S ) > δ then
+// ﬁnd min with Queyranne’s alg.
+merge all Qi ∈ QS , s.t. Qi ∩ A 6= ∅
+
+Let us initially assume that we have an ora-
+cle I (·, · | ·) that can compute the mutual in-
+formation I (A, B | C ) exactly for any disjoint
+subsets A, B , C ⊂ V . This is a very strict re-
+quirement, which we address in the next sec-
+tion. Using the oracle I , a na¨ıve approach
+would be to evaluate2 I (Q, V-QS | S ) for all
+possible Q, S ⊂ V s.t. |S | = k and record all
+pairs (S, Q) with I (Q, V-QS | S ) ≤ ε into a
+list L. We will say that a junction tree (T , C)
+is consistent with a list L iff for every separa-
+ij ) ∈ L.
+tor Sij of (T , C) it holds that (Sij , V i
+After L is formed, any junction tree consistent with L would be an ε-junction tree for P (V ). Such
+tree would be found by some FindConsistentTree procedure, implemented, e.g., using constraint
+satisfaction. Alg. 1 summarizes this idea. Algorithms that follow this outline, including ours, form a
+class of constraint-based approaches. These algorithms use mutual information tests to constrain the
+set of possible structures and return one that is consistent with the constraints. Unfortunately, using
+Alg. 1 directly is impractical because its complexity is exponential in the total number of variables
+n. In the following sections we discuss inefﬁciencies of Alg. 1 and present efﬁcient solutions.
+3.1 Global independence assertions from local tests
+One can see two problems with the inner loop of Alg. 1 (lines 3-5). First, for each separator we
+need to call the oracle exponentially many times (2n−k−1 , once for every Q ⊂ V-S ). This drawback
+is addressed in the next section. Second, the mutual information oracle, I (A, B | S ), is called on
+subsets A and B of size O(n). Unfortunately, the best known way of computing mutual information
+(and estimating I from data) has time and sample complexity exponential in |A|+ |B |+ |S |. Previous
+work has not addressed this problem. In particular, the approach of [13] has exponential complexity,
+in general, because it needs to estimate I for subsets of size O(n). Our ﬁrst new result states that we
+can limit ourselves to computing mutual information over small subsets of variables:
+Lemma 4. Let P (V ) be a k-JT ε-representable distribution. Let S ⊂ V , A ⊂ V-S . If ∀X ⊆ V-S
+s.t. |X | ≤ k + 1, it holds that I (A ∩ X, V-SA ∩ X | S ) ≤ δ , then I (A, V-SA | S ) ≤ n(ε + δ).
+We can thus compute an upper bound on I (A, V-SA | S ) using O (cid:0)(cid:0)n
+k(cid:1)(cid:1) ≡ O(nk ) (i.e., polynomially
+many) calls to the oracle I (·, · | ·), and each call will involve at most |S | + k + 1 variables. Lemma 4
+also bounds the quality of approximation of P by a projection on any junction tree (T , C):
+Corollary 5. If conditions of Lemma 4 hold for P (V ) with S = Sij and A = V i
+ij for every separator
+Sij of a junction tree (T , C), then (T , C) is a n(ε + δ)-junction tree for P (V ).
+
+3.2 Partitioning algorithm for weak conditional independencies
+Now that we have an efﬁcient upper bound for I (·, · | ·) oracle, let us turn to reducing the number of
+oracle calls by Alg. 1 from exponential (2n−k−1 ) to polynomial.
+In [13], Narasimhan and Bilmes
+
+2Notation note: for any sets A, B , C we will denote A \ (B ∪ C ) as A-BC to lighten the notation.
+
+3
+
+Algorithm 3: Efﬁcient approach to struc-
+ture learning
+Input: V , oracle I (·, · | ·), treewidth k ,
+threshold ε, L = ∅
+for S ⊂ V s.t. |S | = k do
+for Q ∈ LTCI(V ,S ,I ,ε,k + 2) do
+L ← L ∪ (S, Q)
+
+1
+2
+3
+
+4
+
+return FindConsistentTreeDPGreedy(L)
+
+1
+2
+3
+
+Algorithm 4: FindConsistentTreeDPGreedy
+Input: List L of components (S, Q)
+for (S, Q) ∈ L in the order of increasing |Q| do
+greedily check if (S, Q) is L-decomposable
+record the decomposition if it exists
+if ∃S : (S, V-S ) is L-decomposable then
+return corresponding junction tree
+else return no tree found
+
+4
+5
+
+6
+
+present an approximate solution to this problem, assuming that an efﬁcient approximation of oracle
+I (·, · | ·) exists. A key observation that they relied on is that the function FS (A) ≡ I (A, V-SA | S )
+is submodular: FS (A)+FS (B ) ≥ FS (A∪B )+FS (A∩B ). Queyranne’s algorithm [14] allows the
+minimization of a submodular function F using O(n3 ) evaluations of F . [13] combines Queyranne’s
+algorithm with divide-and-conquer approach to partition V-S into conditionally independent subsets
+using O(n3 ) evaluations of I (·, · | ·). However, since I (·, · | ·) is computed for sets of size O(n),
+complexity of their approach is still exponential in n, in general.
+
+Our approach, called LTCI (Alg. 2), in contrast, has polynomial complexity for q = O(1). We
+will show that q = O(1) in our approach that uses LTCI as a subroutine. To gain intuition for LTCI,
+suppose there exists a ε-junction tree for P (V ), such that S is a separator and subsets B and C are on
+different sides of S in the junction tree. By deﬁnition, this means I (B , C | S ) ≤ ε. When we look
+at subset A ≡ B ∪ C , the true partitioning is not known, but setting δ = ε, we can test all possible
+2|A|−1 ways to partition A into two subsets (X and A-X ). If none of the possible partitionings have
+I (X, A-X | S ) ≤ ε, we can conclude that all variables in A are on the same side of separator S in
+any ε-junction tree that includes S as a separator. Notice also that
+
+∀X ⊂ A I (X, A-X | S ) > δ ⇔ min
+X⊂A
+
+I (X, A-X | S ) > δ,
+
+so we can use Queyranne’s algorithm to evaluate I (·, · | ·) only O(|A|3 ) times instead of 2|A|−1
+times for minimization by exhaustive search. LTCI initially assumes that every variable x forms
+its own partition Q = {x}. If a test shows that two variables x and y are on the same side of the
+separator, it follows that their container partitions Q1 ∋ x, Q2 ∋ y cannot be separated by S , so
+LTCI merges Q1 and Q2 (line 3 of Alg. 2). This process is then repeated for larger sets of variables,
+of size up to q , until we converge to a set of partitions that are “almost ind ependent ” given S .
+k+q (cid:17) ≡ O (cid:16)nq+1J M I
+k+q (cid:17) ,
+Proposition 6. The time complexity of LTCI with |S | = k is O (cid:16)(cid:0)n
+q (cid:1)nJ M I
+where J M I
+k+q is the time complexity of computing I (A, B | C ) for |A| + |B | + |C | = k + q .
+
+It is important that the partitioning algorithm returns partitions that are similar to connected com-
+ponents of V i
+ij of the true junction tree for P (V ). Formally, let us deﬁne two desirable properties.
+Suppose (T , C) is an ε-junction tree for P (V ), and QSij is an output of the algorithm for separator
+Sij and threshold δ . We will say that partitioning algorithm is correct iff for δ = ε, ∀Q ∈ QSij
+ij or Q ⊆ V j
+either Q ⊆ V i
+ij . A correct algorithm will never mistakenly put two variables on the same
+side of a separator. We will say that an algorithm is α-weak iff ∀Q ∈ QSij I (cid:0)Q, V-QSij | Sij (cid:1) ≤ α.
+For small α, an α-weak algorithm puts variables on different sides of a separator only if correspond-
+ing mutual information between those variables is not too large. Ideally, we want a correct and
+δ -weak algorithm; for δ = ε it would separate variables that are on different sides of S in a true
+junction tree, but not introduce any spurious independencies. LTCI, which we use instead of lines
+3-5 in Alg. 1, satis ﬁes the ﬁrst requirement and a relaxed ver
+sion of the second:
+Lemma 7. LTCI, for q ≥ k + 1, is correct and n(ε + (k − 1)δ)-weak.
+
+3.3
+Implementing FindConsistentTree using dynamic programming
+A concrete form of FindConsistentTree procedure is the last step needed to make Alg. 1 practical.
+For FindConsistentTree, we adopt a dynamic programming approach from [2] that was also used in
+[13] for the same purpose. We brieﬂy review the intuition; se e [2] for details.
+Consider a junction tree (T , C). Let Sij be a separator in (T , C) and Ci
+ij be the set of cliques
+reachable from Ci without using edge (i − j ). Denote T i
+ij the set of edges from T that connect
+
+4
+
+ij . If (T , C) is an ε-junction tree for P (V ), then (Ci
+cliques from Ci
+ij ) is an ε-junction tree for
+ij , T i
+ij ∪ Sij ). Moreover, the subtree (Ci
+ij ) consists of a clique Ci and several sub-subtrees that
+P (V i
+ij , T i
+are each connected to Ci . For example, in Fig. 1 the subtree over cliques 1,2,4,5 can be decom-
+posed into clique 2 and two sub-subtrees: one including cliques {1,4} and one with clique 5. The
+recursive structure suggests dynamic programming approach: given a component (S, Q) such that
+I (Q, V-QS | S ) < δ , check if smaller subtrees can be put together to cover the variables of (S, Q).
+Formally, we require the following property:
+Deﬁnition 8.
+(S, Q) ∈ L is L-decomposable iff ∃D = ∪i {(Si , Qi )}, x ∈ Q s.t.
+1. ∀i(Si , Qi ) is L-decomposable and ∪m
+i=1Qi = Q \ {x};
+2. Si ⊂ S ∪ {x}, i.e., each subcomponent can be connected directly to the clique (S, x);
+3. Qi ∩ Qj = ∅, ensuring the running intersection property within the subtree over S ∪ Q.
+The set {(S1 , Q1 ), . . . , (Sm , Qm )} is called a decomposition of (S, Q).
+
+Unfortunately, checking whether a decomposition exists is equivalent to an NP-complete exact set
+cover problem because of the requirement Qi ∩ Qj = ∅ in part 3 of Def. 8. Unfortunately, this chal-
+lenging issue was not addressed by [13], where the same algorithm was used. To keep complexity
+polynomial, we use a simple greedy approach: for every x ∈ Qi , starting with an empty candidate
+decomposition D, add (Si , Qi ) ∈ L to D if the last two properties of Def. 8 hold for (Si , Qi ). If
+eventually Def. 8 holds, return the decomposition D, otherwise return that no decomposition exists.
+We call the resulting procedure FindConsistentTreeDPGreedy.
+Proposition 9. For separator size k , time complexity of FindConsistentTreeDPGreedy is O(nk+2 )
+
+Combining Alg. 2 and FindConsistentTreeDPGreedy, we arrive at Alg. 3. Overall complexity of
+Alg. 3 is dominated by Alg. 2 and is equal to O(n2k+3J M I
+2k+2 ).
+In general, FindConsistentTreeDP with greedy decomposition checks may miss a junction tree that
+is consistent with the list of components L, but there is a class of distributions for which Alg. 3 is
+ij ) from a ε-junction
+guaranteed to ﬁnd a junction tree. Intuitively, we require t hat for every (Sij , V i
+tree (T , C), Alg. 2 adds all the components from decomposition of (Sij , V i
+ij ) to L and nothing else.
+This requirement is guaranteed for distributions where variables inside every clique of the junction
+tree are sufﬁciently strongly interdependent (have a certa in level of mutual information):
+Lemma 10. If ∃ an ε-JT (T , C) for P (V ) s.t. no two edges of T have the same separator, and
+for every separator S , clique C ∈ C, minX⊂C-S I (X, C-X S | S ) > (k + 3)ε (we will call (T , C)
+(k + 3)ε-strongly connected), then Alg. 3, called with δ = ε, will output a nkε-JT for P (V ).
+
+4 Sample complexity
+So far we have assumed that a mutual information oracle I (·, · | ·) exists for the distribution P (V )
+and can be efﬁciently queried. In real life, however, one onl y has data (i.e., samples from P (V ))
+to work with. However, we can get a probabilistic estimate of I (A, B | C ), that has accuracy ±∆
+∆ and log 1
+with probability 1 − γ , using number of samples and computation time polynomial in 1
+γ :
+Theorem 11. (H ¨offgen, [9]). The entropy of a probability distribution over 2k + 2 discrete vari-
+ables with domain size R can be estimated with accuracy ∆ with probability at least (1 − γ ) using
+F (k, R, ∆, γ) ≡ O(cid:16) R4k+4
+∆2 (cid:17) log (cid:16) R2k+2
+log2 (cid:16) R2k+2
+γ (cid:17)(cid:17) samples from P and the same amount of time.
+∆2
+
+If we employ this oracle in our algorithms, the performance guarantee becomes probabilistic:
+Theorem 12. If there exists a (k + 3)(ε + 2∆)-strongly connected ε-junction tree for P (V ), then
+Alg. 3, called with δ = ε + ∆ and ˆI (·, ·, ·) based on Thm. 11, using U ≡ F (k , R, ∆,
+γ
+n2k+2 ) samples
+and O(n2k+3U ) time, will ﬁnd a kn(ε+ 2∆)-junction tree for P (V ) with probability at least (1− γ ).
+
+Finally, if P (V ) is k-JT representable (i.e., ε = 0), and the corresponding junction tree is strongly
+connected, then we can let both ∆ and γ go to zero and use Alg. 3 to ﬁnd, with probability arbitrarily
+close to one, a junction tree that approximates P arbitrarily well in time polynomial in 1
+∆ and log 1
+γ ,
+i.e., the class of strongly connected k-junction trees is probably approximately correctly learnable3 .
+
+3A class P of distributions is PAC learnable if for any P ∈ P, δ > 0, γ > 0 a learning algorithm will output
+P ′ : K L(P, P ′ ) < δ with probability 1 − γ in time polynomial in 1
+δ and log 1
+γ .
+
+5
+
+Corollary 13. If there exists an α-strongly connected junction tree for P (V ) with α > 0, then
+for β < αn, Alg. 3 will learn a β -junction tree for P with probability at least 1 − γ using
+γ (cid:17) samples from P (V ) and O (cid:16) n2k+7
+γ (cid:17) computation time.
+O (cid:16) n4
+β 2 log2 n
+log2 n
+β log n
+β log n
+β 2
+
+5 Lazy evaluation of mutual information
+Alg. 3 requires the value of threshold δ as an input. To get tighter quality guarantees, we need to
+choose the smallest δ for which Alg. 3 ﬁnds a junction tree. A priori, this value is not known, so we
+need a procedure to choose the optimal δ . A natural way to select δ is binary search. For discrete
+random variables with domain size R, for any P (V ), S, x it holds that I (x, V-Sx | S) ≤ logR, so for
+any δ > logR Alg. 3 is guaranteed to ﬁnd a junction tree (with all cliques c onnected to the same
+separator). Thus, we can restrict binary search to range δ ∈ [0, log R].
+In binary search, for every value of δ , Alg. 2 checks the result of Queyranne’s algorithm minimizing
+minX⊂A I (X, A-X | S ) for every |S | = k , |A| ≤ k+2, which amounts to O(n2k+2 ) complexity per
+value of δ . It is possible, however, to ﬁnd the optimal δ while only checking minX⊂A I (X, A-X | S )
+for every S and A once over the course of the search process.
+Intuitively, think of the set of
+partitions QS in Alg. 2 as a set of connected components of a graph with variables as vertices,
+and a hyper-edge connecting all variables from A whenever minX⊂A I (X, A-X | S ) > δ . As δ
+increases, some of the hyper-edges disappear, and the number of connected components (or in-
+dependent sets) may increase. More speci ﬁcally, a graph QS is maintained for each separator
+S . For all S, A add a hyper-edge connecting all variables in A annotated with strengthS (A) ≡
+minX⊂A I (X, A-X | S ) to QS . Until F indC onsistentT ree(∪S QS ) returns a tree, increase δ to
+be minS,A:hyperedgeS (A)∈QS strengthS (A) (i.e., strength of the weakest remaining hyper-edge), and
+remove hyperedgeS (A) from QS . Fig. 2(a) shows an example evolution of Qx4 for k = 1.
+To further save computation time, we exploit two observations: First, if A is a subset of a connected
+component Q ∈ QS , adding hyperedgeS (A) to QS will not change QS . Thus, we do not test any
+hyper-edge A which is contained in a connected component. However, as δ increases, a component
+may become disconnected, because such an edge was not added. Therefore, we may have more
+components than we should (inducing incorrect independencies). This issue is addressed by our
+second insight: If we ﬁnd a junction tree for a particular val ue of δ , we only need to recheck the
+components used in this tree. These insights lead to a simple, lazy procedure: If FindConsistentTree
+returns a tree (T , C), we check the hyper-edges that intersect the components used to form (T , C).
+If none of these edges are added, then we can return (T , C) for this value of δ . Otherwise, some of
+QS have changed; we can iterate this procedure until we ﬁnd a sol ution.
+
+6 Evaluation
+To evaluate our approach, we have applied it to two real-world (sensor network temperature [8] and
+San Francisco Bay area trafﬁc [11]) and one arti ﬁcial (sampl
+es from ALARM Bayesian network [4])
+datasets. Our implementation, called LPACJT, uses lazy evaluations of I (·, · | ·) from section 5.
+As baselines for comparison, we used a simple hill-climbing heuristic4 , a combination of LPACJT
+with hill-climbing, where intermediate results returned by FindConsistentTree were used as starting
+points for hill-climbing, Chow-Liu algorithm, and algorithms of [10] (denoted Karger-Srebro) and
+[17] (denoted OBS). All experiments were run on a Pentium D 3.4 GHz, with runtimes capped to
+10 hours. The necessary entropies were cached in advance.
+ALARM. This discrete-valued data was sampled from a known Bayesian network with treewidth 4.
+We learned models with treewidth 3 because of computational concerns. Fig. 2(b) shows the per-
+point log-likelihood of learned models on test data depending on the amount of training data. We see
+that on small training datasets both LPACJT ﬁnds better mode ls than a basic hill-climbing approach,
+but worse than the OBS of [17] and Chow-Liu. The implementation of OBS was the only one to
+use regularization, so this outcome can be expected. We can also conclude that on this dataset our
+approach over ﬁts than hill-climbing. For large enough trai ning sets, LPACJT results achieve the
+likelihood of the true model, despite being limited to models with smaller treewidth. Chow-Liu
+performs much worse, since it is limited to models with treewidth 1. Fig. 2(c) shows an example of
+a structure found by LPACJT for ALARM data. LPACJT only missed 3 edges of the true model.
+
+4Hill-climbing had 2 kinds of moves available: replace variable x with variable y in a connected sub-
+junction tree, or relpace a leaf clique Ci with another clique (Ci \ Sij ) ∪ Smr connected to a separator Smr .
+
+6
+
+−15
+OBS
+−20
+
+−25
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+−
+g
+o
+L
+
+ALARM
+True model
+
+Chow−Liu
+Karger−Srebro
+LPACJT
+LPACJT+Local
+Local
+
+−30
+102
+
+103
+Training set size
+(b) ALARM - loglikelihood
+
+104
+
+(c) ALARM - structure
+
+x3
+
+0.1
+x1 0.2
+0=d
+
+0
+.
+4
+
+x2
+
+x3
+
+0
+.
+4
+
+x3
+
+0
+.
+4
+
+x2
+
+x1 0.2
+1.0=d
+
+x3
+
+x1
+x1
+x2
+2.0=d
+4.0=d
+(a) Example QS evolution
+
+x2
+
+Temperature
+OBS
+−40
+Chow−Liu
+−50
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+−
+g
+o
+L
+
+−60
+
+−70
+
+Local
+LPACJT
+Karger−Srebro
+LPACJT+Local
+−80
+102
+103
+Training set size
+(d) TEMPERATURE loglikelihood
+
+104
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+L
+−
+g
+o
+L
+
+TEMPERATURE sample run,
+ 2K training points
+
+ 
+
+−46
+
+−47
+
+ 
+0
+
+−48
+
+LPACJT
+3
+x 104
+(e) TEMPERATURE sample run
+
+1
+2
+Time, seconds
+
+TRAFFIC
+Chow−Liu
+
+OBS
+
+−30
+
+−40
+
+−50
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+−
+g
+o
+L
+
+Local
+LPACJT+Local
+Karger−Srebro
+LPACJT
+
+−60
+102
+
+103
+Training set size
+(f) TRAFFIC loglikelihood
+
+Figure 2: An example of evolution of QS for section 5 (2(a)), one structure learned by LPACJT(2(c)), experi-
+mental results (2(b),2(d),2(f)), and an example evolution of the test set likelihood of the best found model (2(e)).
+In 2(c), nodes denote variables, edges connect variables that belong to the same clique, green edges belong to
+both true and learned models, blue edges belong only to the learned model, red - only to the true one.
+
+TEMPERATURE. This data is from a 2-month deployment of 54 sensor nodes (15K data-
+points) [8]. Each variable was discretized into 4 bins and we learned models of treewidth 2. Since
+the locations of the sensor have an ∞-like shape with two loops, the problem of learning a thin
+junction tree for this data is hard. In Fig. 2(d) one can see that LPACJT performs almost as good
+as hill-climbing-based approaches, and, on large training sets, much better than Karger-Srebro al-
+gorithm. Again, as expected, LPACJT outperforms Chow-Liu algorithm by a signi ﬁcant margin if
+there is enough data available, but over ﬁts on the smallest t raining sets. Fig 2(e) shows the evolution
+of the test set likelihood of the best (highest training set likelihood) structure identi ﬁed by LPACJT
+over time. The ﬁrst structure was identi ﬁed within 5 minutes
+, and the ﬁnal result within 1 hour.
+TRAFFIC. This dataset contains trafﬁc ﬂow information measured eve
+ry 5 minutes in 8K loca-
+tions in California for 1 month [11]. We selected 32 locations in San Francisco Bay area for the
+experiments, discretized trafﬁc ﬂow values into 4 bins and l
+earned models of treewidth 3. All non-
+regularized algorithms, including LPACJT, give results of essentially the same quality.
+
+7 Relation to prior work and conclusions
+For a brief overview of the prior work, we refer the reader to Fig. 3. Most closely related to LPACJT
+are learning factor graphs of [1] and learning limited-treewidth Markov nets of [13, 10]. Unlike our
+approach, [1] does not guarantee low treewidth of the result, instead settling for compactness. [13,
+10] guarantee low treewidth. However, [10] only guarantees that the difference of the log-likelihood
+of the result from the fully independent model is within a constant factor from the difference of the
+most likely JT: LLH (optimal) − LLH (indep.) ≤ 8k k !2 (LLH (learned) − LLH (indep.)). [13] has
+exponential complexity. Our approach has polynomial complexity and quality guarantees that hold
+for strongly connected k-JT ε-representable distributions, while those of [13] only hold for ε = 0.
+We have presented the ﬁrst truly polynomial algorithm for le arning junction trees with limited
+treewidth. Based on a new upper bound for conditional mutual information that can be computed us-
+ing polynomial time and number of samples, our algorithm is guaranteed to ﬁnd a junction tree that
+is close in K L divergence to the true distribution, for strongly connected k-JT ε-representable distri-
+butions. As a special case of these guarantees, we show PAC-learnability of strongly connected k-JT
+representable distributions. We believe that the new theoretical insights herein provide signi ﬁcant
+step in the understanding of structure learning in graphical models, and are useful for the analysis of
+other approaches to the problem. In addition to the theory, we have also demonstrated experimen-
+tally that these theoretical ideas are viable, and can, in the future, be used in the development of fast
+and effective structure learning heuristics.
+
+7
+
+reference
+time
+samples
+true distribution
+guarantees
+model class
+approach
+[3, 5]
+poly†
+any
+any
+local
+tractable
+score
+O(n2 )
+[6]
+any
+any
+global
+tree
+score
+O(n2 )†
+[12]
+any
+any
+local
+tree mixture
+score
+[17]
+poly†
+any
+any
+local
+compact
+score
+[15]
+exp
+any
+any
+global
+all
+score
+[10]
+poly
+any
+any
+const-factor
+tractable
+score
+[1]
+poly
+poly
+positive
+PAC◦
+compact
+constraint
+[16]
+poly(tests)
+any
+global
+all
+constraint
+∞
+[13]
+exp‡
+exp‡
+strong k-JT
+PAC
+tractable
+constraint
+constraint
+this paper
+poly
+poly
+strong k-JT
+PAC§
+tractable
+Figure 3: Prior work. The majority of the literature can be subdivided into score-based [3, 5, 6, 12, 15, 10] and
+constraint-based [13, 16, 1] approaches. The former try to maximize some target function, usually regularized
+likelihood, while the latter perform conditional independence tests and restrict the set of candidate structures
+to those consistent with the results of the tests. Tractable means that the result is guaranteed to be of limited
+treewidth, compact - with limited connectivity of the graph. Guarantees column shows whether the result is a
+local or global optimum, whether there are PAC guarantees, or whether the difference of the log-likelihood of
+the result from the fully independent model is within a const-factor from the difference of the most likely JT.
+True distribution shows for what class of distributions the guarantees hold. † superscript means per-iteration
+complexity, poly - O(nO(k) ), exp‡ - exponential in general, but poly for special cases. PAC◦ and PAC§ mean
+PAC with (different) graceful degradation guarantees.
+
+8 Acknowledgments
+This work is supported in part by NSF grant IIS-0644225 and by the ONR under MURI
+N000140710747. C. Guestrin was also supported in part by an Alfred P. Sloan Fellowship. We
+thank Nathan Srebro for helpful discussions, and Josep Roure, Ajit Singh, CMU AUTON lab, Mark
+Teyssier, Daphne Koller, Percy Liang and Nathan Srebro for sharing their source code.
+References
+
+[1] P. Abbeel, D. Koller, and A. Y. Ng. Learning factor graphs in polynomial time and sample complexity.
+JMLR, 7, 2006.
+[2] S. Arnborg, D. G. Corneil, and A. Proskurowski. Complexity of ﬁn ding embeddings in a k-tree. SIAM
+Journal on Algebraic and Discrete Methods, 8(2):277–284, 1987.
+[3] F. R. Bach and M. I. Jordan. Thin junction trees. In NIPS, 2002.
+[4] I. Beinlich, J. Suermondt, M. Chavez, and G. Cooper. The ALARM monitoring system: A case study
+with two probablistic inference techniques for belief networks. In Euro. Conf. on AI in Medicine, 1988.
+[5] A. Choi, H. Chan, and A. Darwiche. On Bayesian network approximation by edge deletion. In UAI, 2005.
+[6] C. Chow and C. Liu. Approximating discrete probability distributions with dependence trees.
+IEEE
+Transactions on Information Theory, 14(3):462–467, 1968.
+[7] R. G. Cowell, P. A. Dawid, S. L. Lauritzen, and D. J. Spiegelhalter. Probabilistic Networks and Expert
+Systems (Information Science and Statistics). Springer, May 2003.
+[8] A. Deshpande, C. Guestrin, S. Madden, J. Hellerstein, and W. Hong. Model-driven data acquisition in
+sensor networks. In VLDB, 2004.
+[9] K. U. H ¨offgen. Learning and robust learning of product distributions. In COLT, 1993.
+[10] D. Karger and N. Srebro. Learning Markov networks: Maximum bounded tree-width graphs. SODA-01.
+[11] A. Krause and C. Guestrin. Near-optimal nonmyopic value of information in graphical models. UAI-05.
+[12] M. Meil ˘a and M. I. Jordan. Learning with mixtures of trees. JMLR, 1:1–48, 2001.
+[13] M. Narasimhan and J. Bilmes. PAC-learning bounded tree-width graphical models. In UAI, 2004.
+[14] M. Queyranne. Minimizing symmetric submodular functions. Math. Programming, 82(1):3–12, 1998.
+[15] A. Singh and A. Moore. Finding optimal Bayesian networks by dynamic programming. Technical Report
+CMU-CALD-05-106, Carnegie Mellon University, Center for Automated Learning and Discovery, 2005.
+[16] P. Spirtes, C. Glymour, and R. Scheines. Causation, Prediction, and Search. MIT Press, 2001.
+[17] M. Teyssier and D. Koller. Ordering-based search: A simple and effective algorithm for learning Bayesian
+networks. In UAI, 2005.
+
+8
+
+

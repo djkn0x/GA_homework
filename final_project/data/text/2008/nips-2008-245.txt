@@ -1,0 +1,879 @@
+Fast Computation of Posterior Mode in Multi-Level
+Hierarchical Models
+
+Liang Zhang
+Department of Statistical Science
+Duke University
+Durham, NC 27708
+lz9@stat.duke.edu
+
+Deepak Agarwal
+Yahoo! Research
+2821 Mission College Blvd.
+Santa Clara, CA 95054
+dagarwal@yahoo-inc.com
+
+Abstract
+
+Multi-level hierarchical models provide an attractive framework for incorporating
+correlations induced in a response variable that is organized hierarchically. Model
+ﬁtting is challenging, especially for a hierarchy with a lar ge number of nodes. We
+provide a novel algorithm based on a multi-scale Kalman ﬁlte r that is both scalable
+and easy to implement. For Gaussian response, we show our method provides the
+maximum a-posteriori (MAP) parameter estimates; for non-Gaussian response,
+parameter estimation is performed through a Laplace approximation. However,
+the Laplace approximation provides biased parameter estimates that is corrected
+through a parametric bootstrap procedure. We illustrate through simulation studies
+and analyses of real world data sets in health care and online advertising.
+
+1 Introduction
+
+In many real-world prediction problems, the response variable of interest is clustered hierarchically.
+For instance, in studying the immunization status of a set of children in a particular geographic loca-
+tion, the children are naturally clustered by families, which in turn are clustered into communities.
+The clustering often induce correlations in the response variable; models that exploit this provide
+signiﬁcant improvement in predictive performance. Multi- level hierarchical models provide an at-
+tractive framework for modeling such correlations. Although routinely applied to moderate sized
+data (few thousand nodes) in several ﬁelds like epidemiolog y, social sciences, biology [3], model
+ﬁtting is computationally expensive and is usually perform ed through a Cholesky decomposition
+of a q (number of nodes in the hierarchy) dimensional matrix. Recently, such models have shown
+promise in a novel application of internet advertising [1] where the goal is to select top-k adver-
+tisements to be shown on a webpage to maximize the click-through rates. To capture the semantic
+meaning of content in a parsimonious way, it is commonplace to classify webpages and ads into
+large pre-de ﬁned hierarchies. The hierarchy in such applic ations consist of several levels and the
+total number of nodes may run into millions. Moreover, the main goal is to exploit the hierarchy
+for obtaining better predictions; computing the full posterior predictive distribution is of secondary
+importance. Existing ﬁtting algorithms are difﬁcult to imp
+lement and do not scale well for such
+problems. In this paper, we provide a novel, fast and easy to implement algorithm to compute the
+posterior mode of parameters for such models on datasets organized hierarchically into millions of
+nodes with several levels. The key component of our algorithm is a multi-scale Kalman ﬁlter that
+expedites the computation of an expensive to compute conditional posterior.
+
+The central idea in multi-level hierarchical (MLH hereafter) models is “shrinkage ” across the nodes
+in the hierarchy. More speciﬁcally, these models assume a mu lti-level prior wherein parameters of
+children nodes are assumed to be drawn from a distribution centered around the parameter of the
+parent. This bottom-up, recursive assumption provides a posterior whose estimates at the ﬁnest res-
+olution are smoothed using data on the lineage path of the node in the hierarchy. The fundamental
+
+1
+
+Notation Meaning
+Level j of the hierarchy T
+Tj
+The number of nodes at level j in T
+mj
+The total number of nodes in T
+q
+The parent node of node r in T
+pa(r)
+The ith child node of node r in T
+ci (r)
+The number of observations at leaf node r
+nr
+The ith observation (response) at leaf node r
+yir
+{yir , i = 1, · · · , nr , r ∈ T }
+Y
+The ith observation (p-dimensional covariates) at leaf node r
+xir
+{xir , i = 1, · · · , nr , r ∈ T }
+X
+The regression parameter vector associated with X
+β
+The random effect parameter at node r at level j
+φj
+r
+{φj
+r , r ∈ T , j = 1, · · · , L}
+φ
+The residual variance of yir , if yir has a Gaussian model
+V
+The variance of φj
+r for all the nodes at level j
+γj
+{γ1 , · · · , γL}
+γ
+φj
+The mean of φj
+r |{yir ′ , i = 1, · · · , nr ′ , ∀r′ ≺ r}
+r |r
+σj
+The variance of φj
+r |{yir ′ , i = 1, · · · , nr ′ , ∀r′ ≺ r}
+r |r
+ˆ
+φj
+The mean of φj
+r |{yir ′ , i = 1, · · · , nr ′ , ∀r′ ∈ TL}
+r
+The variance of φj
+r |{yir ′ , i = 1, · · · , nr ′ , ∀r′ ∈ TL}
+σj
+r
+Table 1: A list of the key notations.
+
+assumption is that the hierarchy, determined from domain knowledge, provides a natural clustering
+to account for latent processes generating the data which, when incorporated into the model, im-
+prove predictions. Although MLH models are intuitive, parameter estimation presents a formidable
+challenge, especially for large hierarchies. For Gaussian response, the main computational bottle-
+neck is the Cholesky factorization of a dense covariance matrix whose order depends on the number
+of nodes, this is expensive for large problems. For non-Gaussian response (e.g binary data), the non-
+quadratic nature of the log-likelihood adds on an additional challenge of approximating an integral
+whose dimension depends on the number of nodes in the hierarchy. This is an active area of research
+in statistics with several solutions being proposed, such as [5] (see references therein as well). For
+Cholesky factorization, techniques based on sparse factorization of the covariance matrix have been
+recently proposed in [5]. For non-Gaussian models, solutions require marginalization over a high di-
+mensional integral and is often accomplished through higher order Taylor series approximations[6].
+However, these techniques involve linear algebra that is often non-intuitive and difﬁcult to imple-
+ment. A more natural computational scheme that exploits the structure of the model is based on
+Gibbs sampling; however, it is not scalable due to slow convergence.
+Our contributions are as follows: We provide a novel ﬁtting procedure based on m ulti-scale Kalman
+ﬁlter algorithm that directly exploits the hierarchical st ructure of the problem and computes the pos-
+terior mode of MLH parameters. The complexity of our method is almost linear in the number of
+nodes in the hierarchy. Other than scalability, our ﬁtting p rocedure is more intuitive and easy to
+implement. We note that although multi-scale Kalman ﬁlters have been studied in the electrical
+engineering literature [2] and spatial statistics, their application to ﬁtting MLH is novel. Moreover,
+ﬁtting such models to non-Gaussian data present formidable challenges as we illustrate in the paper.
+We provide strategies to overcome those through a bootstrap correction and compare with the com-
+monly used cross-validation approach. Our methods are illustrated on simulated data, benchmark
+data and data obtained from an internet advertising application.
+
+2 MLH for Gaussian Responses
+
+Assume we have a hierarchy T consisting of L levels (root is level 0), for which mj , j = 0, · · · , L,
+denotes the number of nodes at level j . Denote the set of nodes at level j in the hierarchy T as Tj .
+For node r in T , denote the parent of r as pa(r), and the ith child of node r as ci (r). If a node r′ is
+
+2
+
+a descendent of r, we say r′ ≺ r. Since the hierarchy has L levels, TL denotes the set of leaf nodes
+in the hierarchy. Let yir , i = 1, · · · , nr denote the ith observation at leaf node r, and xir denote the
+p-dimensional covariate vector associated with yir . For simplicity, we assume all observations are
+available at leaf nodes (a more general case where each node in the hierarchy can have observations
+is easily obtained from our algorithm). Consider the Gaussian MLH de ﬁned by
+′
+ir β + φL
+yir |φL
+(1)
+r ∼ N (x
+r , V ),
+where β is a ﬁxed effect parameter vector and φj
+r is a random effect associated with node r
+at level j with joint distribution de ﬁned through a set of hierarchica l conditional distributions
+r |φj−1
+r |φj−1
+pa(r) ), j = 0, · · · , L, where φ0
+0 = 0. The form of p(φj
+pa(r) ), j = 1, · · · , L is assumed
+p(φj
+to be
+pa(r) ∼ N (φj−1
+r |φj−1
+φj
+(2)
+pa(r) , γj ); j = 1, · · · , L,
+where γ = (γ1 , · · · , γL ) is a vector of level-speciﬁc variance components that contr ol the amount
+of smoothing. To complete the model speciﬁcation in a Bayesi an framework, we put a vague prior
+on V (π(V ) ∝ 1/V ) and a mild quadratic prior on γi (π(γi |V ) ∝ V /(V + γi )2 ). For β , we assume
+a non-informative prior, i.e., π(β) ∝ 1.
+The speciﬁcation of MLH given by Equation 2 is referred to as t he centered parametrization and
+was shown to provide good performance in a fully Bayesian framework by [9]. An equivalent way
+r ∼ N (0, γj ) to the
+of specifying MLH is obtained by associating independent random variables bj
+r parameters along the lineage path from root to
+nodes and replacing φL
+r in (1) by the sum of the bj
+r for all the
+leaf node in the hierarchy. We denote this compactly as z ′
+r b, where b is a vector of bj
+nodes in the hierarchy, and zr is a vector of 0/1’s turned on for nodes in the path of node r. More
+compactly, let y = {yir , i = 1, · · · , nr , r ∈ T }, and X as well as Z be the corresponding matrix of
+′
+β + Z b, V I ) with b ∼ N (0, Ω(γ )).
+vectors xir and zr for i = 1, · · · nr and r ∈ T , then y ∼ N (X
+The problem is to compute the posterior mode of (βp×1 , bq×1 , γL×1 , V ) where q = PL
+j=1 mj . The
+′
+main computational bottleneck is computing the Cholesky factor of a q × q matrix (Z
+Z +Ω−1), this
+is expensive for large values of q . Existing state-of-the-art methods are based on sparse Cholesky
+factorization; we provide a more direct way. In fact, our method provides a MAP estimate of the
+parameters for the Gaussian case. For non-Gaussian case, we provide an approximation to the MAP
+through the Laplace method coupled with a bootstrap correction. We also note that our method
+apply if the random effects are vectors and enter into equation (2) as linear combination with some
+covariate vector. In this paper, we illustrate through a scalar.
+
+2.1 Model Fitting
+
+Throughout, we work with the parametrization speciﬁed by φ. The main component of our ﬁtting
+algorithm is computing the conditional posterior distribution of φ = {φj
+r , r ∈ T , j = 1, · · · , L}
+given (β , V , γ ). Since the parameters V and γ are unknown, we estimate them through an EM
+algorithm. The multi-scale Kalman ﬁlter (described next) c omputes the conditional posterior of φ
+mentioned above and is used in the inner loop of the EM.
+
+As in temporal state space models, the Kalman ﬁlter consists of two steps - a)Filtering: where one
+propagates information from leaves to the root and b) Smoothing: where information is propagated
+from root all the way down to the leaves.
+
+Filtering:
+ˆβ
+Denote the current estimates of β , γ and V as ˆβ , ˆγ , and ˆV respectively. Then, eir = yir − x
+ir
+r ) = Σj = Pj
+i=1 ˆγi , r ∈ Tj are the marginal variances of the random
+are the residuals and V ar(φj
+effects. If the conditional posterior distribution φL
+r |r ), the ﬁrst
+r |{yir , i = 1, · · · , nr } ∼ N (φL
+r |r , σL
+step is to update φL
+r |r and σL
+r |r for all leaf random effects φL
+r using standard Bayesian update formula
+for Gaussian models
+
+′
+
+,
+
+.
+
+(3)
+
+(4)
+
+eir
+
+ΣL
+
+nr
+P
+i=1
+ˆV + nr ΣL
+ΣL ˆV
+ˆV + nr ΣL
+
+φL
+r |r =
+
+σL
+r |r =
+
+3
+
+r |{yir ′ , i = 1, · · · , nr ′ , ∀r′ ≺ r} ∼ N (φj
+r |r , σj
+r |r ), are recursively updated
+Next, the posteriors φj
+from j = L − 1 to j = 1, by regressing the parent node effect towards each child and combining
+information from all the children.
+
+To provide intuition about regression step, it is useful to invert the state equation (2) and express the
+distribution of φj−1
+pa(r) conditional on φj
+r . Note that
+φj−1
+pa(r) = E (φj−1
+pa(r) − E (φj−1
+r ) + (φj−1
+pa(r) |φj
+pa(r) |φj
+r ))
+Simple algebra provides the conditional expectation and variance of φj−1
+r as
+pa(r) |φj
+
+(5)
+
+φj−1
+pa(r) = Bj φj
+r + ψ j
+r ,
+
+(6)
+
+where Bj = Pj−1
+i=1 ˆγi/ Pj
+i=1 ˆγi , correlation between any two siblings at level j and ψ j
+r ∼
+N (0, Bj ˆγj ).
+First, a new prior is obtained for the parent node based on the current estimate of each child by
+plugging-in the current estimates of a child into equation (6). For the ith child of node r (here we
+assume that r is at level j − 1, and ci (r) is at level j ),
+φj−1
+r |ci (r) = Bj φj
+ci (r)|ci (r) ,
+σj−1
+j σj
+r |ci (r) = B 2
+ci (r)|ci (r) + Bj ˆγj ,
+Next, we combine information obtained by the parent from all its children.
+
+(7)
+
+(8)
+
+r |r = σj−1
+φj−1
+r |r
+
+kr
+X
+i=1
+
+r |ci (r)/σj−1
+(φj−1
+r |ci (r) ),
+
+(9)
+
+1/σj−1
+r |r = Σ−1
+j−1 +
+
+kr
+((1/σj−1
+r |ci (r)) − Σ−1
+X
+j−1 ).
+i=1
+where kr is the number of children of node r at level j − 1.
+Smoothing:
+In the smoothing step, parents propagate information recursively from root to the leaves to provide
+r based on the entire data. Denoting the posterior mean and variance
+us with the posterior of each φj
+r given all the observations by ˆ
+φj
+r respectively, the update equations are given below.
+of φj
+r and σj
+For level 1 nodes, set ˆφ1
+r |r , and σ1
+r |r .
+r = σ1
+r = φ1
+For node r at other levels,
+ˆ
+ˆ
+φj−1
+pa(r) − φj−1
+φj
+r = φj
+r |r + σj
+pa(r)|r )/σj
+r |rBj (
+pa(r)|r ,
+r |r + σj2
+pa(r)|r )/σj2
+j (σj−1
+pa(r) − σj−1
+r = σj
+r |rB 2
+σj
+pa(r)|r ,
+pa(r) /σj−1
+r |rBj σj−1
+σj,j−1
+r,pa(r) = σj
+pa(r)|r .
+
+and let
+
+(13)
+
+(10)
+
+(11)
+
+(12)
+
+The computational complexity of the algorithm is linear in the number of nodes in the hierarchy and
+for each parent node, we perform an operation which is cubic in the number of children. Hence,
+for most hierarchies that arise in practical applications, the complexity is “essentially ” linear in the
+number of nodes.
+
+Expectation Maximization:
+
+To estimate all parameters simultaneously, we use an EM algorithm which assumes the φ parameters
+to be the missing latent variables. The expectation step consists of computing the expected value of
+complete log-posterior with respect to the conditional distribution of missing data φ, obtained using
+the multi-scale Kalman ﬁlter algorithm. The maximization s tep obtains revised estimates of other
+parameters by maximizing the expected complete log-posterior.
+
+4
+
+ˆV = X
+r∈TL
+
+nr
+(eir − ˆφL
+r )2 + nr σL
+P
+r
+i=1
+P
+r∈TL
+
+nr
+
+,
+
+For j = 1, · · · , L,
+
+ˆγj =
+
+P
+r∈Tj
+
+r,pa(r) + ( ˆφr
+pa(r) − 2σj,j−1
+r + σj−1
+(σj
+|mj |
+
+j
+
+− ˆφpa(r)
+
+j−1
+
+)2 )
+
+.
+
+(14)
+
+(15)
+
+Updating ˆβ :
+We use the posterior mean of φ obtained from the Kalman ﬁltering step, to compute the poste rior
+mean of β as given in equation (16).
+ˆβ = (X ′X )−1X ′ (Y − ˆφL ),
+where ˆφL is the vector of ˆφL
+r corresponding to each observation yir at different leaf node r.
+
+(16)
+
+2.2 Simulation Performance
+
+We ﬁrst perform a simulation study with a hierarchy describe d in [7, 8]. The data focus on 2449
+Guatemalan children who belong to 1558 families who in turn live in 161 communities. The re-
+sponse variable of interest is binary with a positive label assigned to a child if he/she received a
+full set of immunizations. The actual data contains 15 covariates capturing individual, family and
+community level characteristics as shown in Table 2. For our simulation study, we consider only
+three covariates, with the coefﬁcient vector β set with entries all equal to 1. We simulated Gaussian
+′
+response as follows: yir |b ∼ N (x
+r , 10) where b1
+r ∼ N (0, 4), and b2
+r ∼ N (0, 1). We
+ir β + b1
+r + b2
+simulated 100 data sets and compared the estimates from Kalman ﬁlter to the one obtained from
+standard routine lme4 in the statistical software R. Results from our procedure agreed almost ex-
+actly with those obtained from lme4, our computations was many times faster than lme4. The EM
+method converged rapidly and required at most 30 iterations.
+
+3 MLH for Non-Gaussian Responses
+
+We discuss model ﬁtting for Bernoulli response but note that other distributions in the general-
+ized linear model family can be easily ﬁtted using the proced ure. Let yir ∼ B ernoulli(pir ), i.e.
+P (yir ) = pyir
+ir (1 − pir )1−yir . Let θir = log pir
+be the log-odds. The MLH logistic regression is
+1−pir
+de ﬁned as:
+′
+ir β + φL
+θir = x
+r ,
+with the same multi-level prior as described in equation (2). The non-conjugacy of the normal
+multi-level prior makes the computation more difﬁcult. We t ake recourse to Taylor series approxi-
+mation coupled with the Kalman ﬁlter algorithm. The estimat es obtained are biased; we recommend
+cross-validation and parametric bootstrap (adapted from [4]) to correct for the bias. The bootstrap
+procedure though expensive is easily parallelizable and accurate.
+
+(17)
+
+3.1 Approximation Methods
+
+Let ηir = xir ˆβ + ˆφL
+r , where ˆβ , ˆφL
+r are current estimates of the parameters in our algorithm. We do
+a quadratic approximation of the log-likelihood through a second order Taylor expansion (Laplace
+approximation) around ηir . This enables us to do the calculations as in the Gaussian case with the
+response yir being replaced by Zir where
+
+Zir = ηir +
+
+2yir − 1
+g ((2yir − 1)ηir )
+
+,
+
+5
+
+(18)
+
+Algorithm 1 The bootstrap procedure
+Let θ = (β , γ ).
+Obtain ˜θ as an initial estimate of θ . Bias b(0) = 0.
+for i = 1 to N do
+ˆθ = ˜θ − b(i) .
+for j = 1 to M do
+Use ˆθ to simulate new data j , by simulating φ and the corresponding Y .
+For data j , obtain an new estimate of θ as ˜θ (j) .
+end for
+b(i+1) = 1
+M
+
+end for
+
+M
+P
+j=1
+
+˜θ (j) − ˆθ .
+
+and g (x) = 1/(1 + exp(−x)). Approximately,
+1
+Zir ∼ N (x′
+ir β + φL
+r ,
+g (ηir )g (−ηir )
+ˆβ , and the approximated variance of Zir as Vir . Analogous to equa-
+Now denote eir = Zir − x′
+ir
+tion (3) and (4), the resulting ﬁltering step for the leaf nod es becomes:
+
+(19)
+
+).
+
+r |r = σL
+φL
+r |r
+
+σL
+r |r = (
+
+1
+ΣL
+
++
+
+nr
+X
+i=1
+
+nr
+X
+i=1
+
+eir
+Vir
+
+,
+
+1
+Vir
+
+)−1 .
+
+(20)
+
+(21)
+
+The step for estimating β becomes:
+ˆβ = (X ′W X )−1X ′W (Z − ˆφL ),
+). All the other computational steps remain the same as in the Gaussian case.
+
+(22)
+
+where W = diag ( 1
+Vir
+
+3.2 Bias correction
+
+Table 2 shows estimates of parameters obtained from our approximation method in the column titled
+K F . Compared to the unbiased estimates obtained from the slow Gibbs sampler, it is clear our
+estimates are biased. Our bias correction procedure is described in Algorithm 1. In general, a value
+of M = 50 with about 100 − 200 iterations worked well for us. The bias corrected estimates are
+reported under KF-B in Table 2. The estimates after bootstrap correction are closer to the estimates
+obtained from Gibbs sampling. It is also customary to estimate hyper parameters like the γ using
+a tuning dataset. To test the performance of such a strategy, we created a two-dimensional grid for
+(√γ1 , √γ2 ) for the epidemiological Guatemalan data set ranging in [.1, 3] × [.1, 3] and computed the
+log-likelihood on a 10% randomly sampled hold-out data. For each point on the two-dimensional
+grid, we estimated the other parameters φ and β , using our EM algorithm that does not update the
+value of γ . The estimates at the optimal value of γ are shown in Table 2 under KF-C. The estimates
+are better than KF but worse than KF-B.
+
+Based on our ﬁndings, we recommend KF-B when computing resou rces are available (especially
+multiple processors) and running time is not a big constraint; if runtime is an issue we recommend
+grid search using a small number of points around the initial estimate.
+
+4 Content Match Data Analysis
+
+We analyze data from an internet advertising application where every showing of an ad on a web
+page (called an impression) constitutes an event. The goal is to rank ads on a given page based on
+click-through rates. Building a predictive model for click-rates via features derived from pages and
+
+6
+
+Effects
+Fixed effects
+Individual
+Child age ≥ 2 years
+Mother age ≥ 25 years
+Birth order 2-3
+Birth order 4-6
+Birth order ≥ 7
+Family
+Indigenous, no Spanish
+Indigenous Spanish
+Mother’s education primary
+Mother’s education secondary
+or better
+Husband’s education primary
+Husband’s education secondary
+or better
+Husband’s education missing
+Mother ever worked
+Community
+Rural
+Proportion indigenous, 1981
+
+Random effects
+Standard deviations γ
+Family
+Community
+
+KF
+
+KF-B
+
+KF-C
+
+Gibbs
+
+0.99
+-0.09
+-0.10
+0.13
+0.20
+
+-0.05
+0.00
+0.22
+0.23
+
+0.30
+0.27
+
+0.02
+0.21
+
+1.77
+-0.16
+-0.18
+0.25
+0.36
+
+-0.11
+0.01
+0.44
+0.44
+
+0.53
+0.48
+
+0.04
+0.35
+
+-0.50
+-0.67
+
+-0.91
+-1.23
+
+1.18
+-0.10
+-0.25
+0.10
+0.21
+
+0.02
+0.02
+0.32
+0.27
+
+0.39
+0.35
+
+-0.08
+0.24
+
+-0.62
+-0.89
+
+1.84
+-0.26
+-0.29
+0.21
+0.50
+
+-0.22
+-0.11
+0.48
+0.46
+
+0.59
+0.55
+
+0.00
+0.42
+
+-0.96
+-1.22
+
+0.74
+0.56
+
+2.40
+1.05
+
+1.92
+0.81
+
+2.60
+1.13
+
+Table 2: Estimates for the binary MLH model of complete immunization (Kalman Filtering results)
+
+ads is an attractive approach. In our case, semantic features are obtained by classifying pages and
+ads into a large seven-level content hierarchy that is manually constructed by humans. We form
+a new hierarchy (a pyramid) by taking the cross product of the two hierarchies. This is used to
+estimate smooth click-rates of (page,ad) pairs.
+
+4.1 Training and Test Data
+
+Although the page and ad hierarchies consist of 7 levels, classiﬁcation is often done at coarser levels
+by the classiﬁer. In fact, the average level at which classiﬁ
+cation took place is 3.8. To train our
+model, we only consider the top 3 levels of the original hierarchy. Pages and ads that are classiﬁed at
+coarser levels are randomly assigned to the children nodes. Overall, the pyramid has 441, 25751 and
+241292 nodes for the top 3 levels. The training data were collected by con ﬁning to a spe ciﬁc subset
+of data which is sufﬁcient to illustrate our methodology but
+in no way representative of the actual
+publisher trafﬁc received by the ad-network under consider ation. The training data we collected
+spans 23 days and consisted of approximately 11M binary observations with approximately 1.9M
+clicks. The test set consisted of 1 day’s worth of data with approximately .5M observations. We
+randomly split the test data into 20 equal sized partitions to report our results. The covariates include
+the position at which an ad is shown; ranking ads on pages after adjusting for positional effects is
+important since the positional effects introduce strong bias in the estimates In the training data a large
+fraction of leaf nodes in the pyramid (approx 95%) have zero clicks, this provides a good motivation
+to ﬁt the binary MLH on this data to get smoother estimates at l eaf nodes by using information at
+coarser resolutions.
+
+4.2 Results
+
+We compare the following models using log-likelihood on the test data: a) The model which predicts
+a constant probability for all examples, b) 3 level MLH but without positional effects, c) top 2 level
+MLH to illustrate the gains of using information at a ﬁner res olution, and d) 3 level MLH with
+positional effects to illustrate the generality of the approach; one can incorporate both additional
+features and the hierarchy into a single model. Figure 1 shows the distribution of average test
+likelihood on the partitions. As expected, all variations of MLH are better than the constant model.
+The MLH model which uses only 2 levels is inferior to the 3 level MLH while the general model
+that uses both covariates and hierarchy is the best.
+
+7
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+−
+g
+o
+L
+
+5
+4
+.
+2
+−
+
+5
+5
+.
+2
+−
+
+5
+6
+.
+2
+−
+
+2lev
+
+3lev
+
+3lev−pos
+
+con
+
+Model
+
+Figure 1: Distribution of test log-likelihood on 20 equal sized splits of test data.
+
+5 Discussion
+
+In applications where data is aggregated at multiple resolutions with sparsity at ﬁner resolutions,
+multi-level hierarchical models provide an attractive class to reduce variance by smoothing estimates
+at ﬁner resolutions using data at coarser resolutions. Howe ver, the smoothing provides a better bias-
+variance tradeoff only when the hierarchy provides a natural clustering for the response variable and
+captures some latent characteristics of the process; often true in practice. We proposed a fast novel
+algorithm to ﬁt these models based on a multi-scale Kalman ﬁl
+ter that is both scalable and easy to
+implement. For the non-Gaussian case, the estimates are biased but performance can be improved
+by using a bootstrap correction or estimation through a tuning set. In future work, we will report on
+models that generalize our approach to arbitrary number of hierarchies that may all have different
+structure. This is a challenging problem since in general cross-product of trees is not a hierarchy but
+a graph.
+
+References
+
+[1] D. Agarwal, A. Broder, D. Chakrabarti, D. Diklic, V. Josifovski, and M. Sayyadian. Estimating
+rates of rare events at multiple resolutions. In KDD, pages 16 –25, 2007.
+[2] K. C. Chou, A. S. Willsky, and R. Nikoukhah. Multiscale systems, Kalman ﬁlters, and Ricatti
+equations. IEEE Transactions on Automatic Control, 39:479 –492, 1994.
+[3] A. Gelman and J. Hill. Data Analysis sing Regression and Multi-Level/Hierarchical Models.
+Cambridge University Press, 2007.
+[4] A. Y. C. Kuk. Asymptotically unbiased estimation in generalized linear models with random
+effects. Journal of the Royal Statistical Society, Series B (Methodological),, 57:395 –407, 1995.
+[5] J. C. Pinheiro and D. M. Bates. Mixed-Effects Models in S and S-PLUS. Springer-Verlag, New
+York, 2000.
+[6] S. W. Raudenbush, M. L. Yang, and M. Yosef. Maximum likelihood for generalized linear
+models with nested random effects via high-order, multivariate Laplace approximation. Journal
+of Computational and Graphical Statistics, 9(1):141 –157, 2000.
+[7] G. Rodriguez and N. Goldman. An assessment of estimation procedures for multilevel models
+with binary responses. Journal of Royal Statistical Society, Series A,, 158:73 –89, 1995.
+[8] G. Rodriguez and N. Goldman.
+Improved estimation procedures for multilevel models with
+binary response: A case-study. Journal of the Royal Statistical Society, Series A,, 164(2):339 –
+355, 2001.
+[9] S. K. Sahu and A. E. Gelfand. Identiﬁability, improper Pr iors, and Gibbs sampling for general-
+ized linear models. Journal of the American Statistical Association, 94(445):247 –254, 1999.
+
+8
+
+

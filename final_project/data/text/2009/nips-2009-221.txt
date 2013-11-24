@@ -1,0 +1,891 @@
+Tracking Dynamic Sources of Malicious Activity at
+Internet-Scale
+
+Shobha Venkataraman∗, Avrim Blum† , Dawn Song⋄ , Subhabrata Sen∗ , Oliver Spatscheck∗
+∗ AT&T Labs – Research
+{shvenk,sen,spatsch}@research.att.com
+†Carnegie Mellon University
+avrim@cs.cmu.edu
+⋄University of California, Berkeley
+dawnsong@cs.berkeley.edu
+
+Abstract
+We formulate and address the problem of discovering dynamic malicious regions
+on the Internet. We model this problem as one of adaptively pruning a known
+decision tree, but with additional challenges: (1) severe space requirements, since
+the underlying decision tree has over 4 billion leaves, and (2) a changing target
+function, since malicious activity on the Internet is dynamic. We present a novel
+algorithm that addresses this problem, by putting together a number of different
+“experts” algorithms and online paging algorithms. We prov e guarantees on our
+algorithm’s performance as a function of the best possible p runing of a similar
+size, and our experiments show that our algorithm achieves h igh accuracy on large
+real-world data sets, with signiﬁcant improvements over ex isting approaches.
+
+1 Introduction
+It is widely acknowledged that identifying the regions that originate malicious trafﬁc on the Internet
+is vital to network security and management, e.g., in thrott ling attack trafﬁc for fast mitigation, iso-
+lating infected sub-networks, and predicting future attacks [6, 18, 19, 24, 26]. In this paper, we show
+how this problem can be modeled as a version of a question stud ied by Helmbold and Schapire [11]
+of adaptively learning a good pruning of a known decision tree, but with a number of additional chal-
+lenges and difﬁculties. These include a changing target fun ction and severe space requirements due
+to the enormity of the underlying IP address-space tree. We develop new algorithms able to address
+these difﬁculties that combine the underlying approach of [ 11] with the sleeping experts framework
+of [4, 10] and the online paging problem of [20]. We show how to deal with a number of practical
+issues that arise and demonstrate empirically on real-worl d datasets that this method substantially
+improves over existing approaches of /24 pre ﬁxes and networ k-aware clusters [6, 19, 24] in correctly
+identifying malicious trafﬁc. Our experiments on data sets of 126 million IP addresses demonstrate
+that our algorithm is able to achieve a clustering that is both highly accurate and meaningful.
+
+1.1 Background
+Multiple measurement studies have indicated that malicious trafﬁc tends to cluster in a way that
+aligns with the structure of the IP address space, and that th is is true for many different kinds of
+malicious trafﬁc – spam, scanning, botnets, and phishing [6
+, 18, 19, 24]. Such clustered behaviour
+can be easily explained: most malicious trafﬁc originates f rom hosts in poorly-managed networks,
+and networks are typically assigned contiguous blocks of the IP address space. Thus, it is natural
+that malicious trafﬁc is clustered in parts of the IP address
+space that belong to poorly-managed
+networks.
+From a machine learning perspective, the problem of identifying regions of malicious activity can
+be viewed as one of ﬁnding a good pruning of a known decision tr ee – the IP address space may be
+naturally interpreted as a binary tree (see Fig.1(a)), and t he goal is to learn a pruning of this tree that
+is not too large and has low error in classifying IP addresses as malicious or non-malicious. The
+structure of the IP address space suggests that there may wel l be a pruning with only a modest num-
+ber of leaves that can classify most of the trafﬁc accurately . Thus, identifying regions of malicious
+activity from an online stream of labeled data is much like the problem considered by Helmbold and
+Schapire [11] of adaptively learning a good pruning of a known decision tree. However, there are a
+
+1
+
+number of real-world challenges, both conceptual and pract ical, that must be addressed in order to
+make this successful.
+One major challenge in our application comes from the scale o f the data and size of a complete
+decision tree over the IP address space. A full decision tree over the IPv4 address space would
+have 232 leaves, and over the IPv6 address space (which is slowly being rolled out), 2128 leaves.
+With such large decision trees, it is critical to have algori thms that do not build the complete tree,
+but instead operate in space comparable to the size of a good pruning. These space constraints are
+also important because of the volume of trafﬁc that may need t o be analyzed – ISPs often collect
+terabytes of data daily and an algorithm that needs to store a ll its data in memory simultaneously
+would be infeasible.
+
+A second challenge comes from the fact that the regions of malicious activity may shift longitu-
+dinally over time [25]. This may happen for many reasons, e.g ., administrators may eventually
+discover and clean up already infected bots, and attackers may target new vulnerabilities and attack
+new hosts elsewhere. Such dynamic behaviour is a primary rea son why individual IP addresses tend
+to be such poor indicators of future malicious trafﬁc [15, 26 ]. Thus, we cannot assume that the data
+comes from a ﬁxed distribution over the IP address space; the algorithm needs to adapt to dynamic
+nature of the malicious activity, and track these changes accurately and quickly. That is, we must
+consider not only an online sequence of examples but also a changing target function.
+While there have been a number of measurement studies [6, 18, 19, 24] that have examined the origin
+of malicious trafﬁc from IP address blocks that are kept ﬁxed
+apriori, none of these have focused on
+developing online algorithms that ﬁnd the best predictive I P address tree. Our challenge is to develop
+an efﬁcient high-accuracy online algorithm that handles th e severe space constraints inherent in this
+problem and accounts for the dynamically changing nature of malicious behavior. We show that
+we can indeed do this, both proving theoretical guarantees on adaptive regret and demonstrating
+successful performance on real-world data.
+
+1.2 Contributions
+In this paper, we formulate and address the problem of discovering and tracking malicious regions of
+the IP address space from an online stream of data. We present an algorithm that adaptively prunes
+the IP address tree in a way that maintains at most m leaves and performs nearly as well as the
+optimum adaptive pruning of the IP address tree with a comparable size. Intuitively, we achieve the
+required adaptivity and the space constraints by combining several “experts” algorithms together
+with a tree-based version of paging. Our theoretical result s prove that our algorithm can predict
+nearly as well as the best adaptive decision tree with k leaves when using O(k log k) leaves.
+Our experimental results demonstrate that our algorithm id entiﬁes malicious regions of the IP ad-
+dress space accurately, with orders of magnitude improveme nt over previous approaches. Our ex-
+periments focus on classifying spammers and legitimate senders on two mail data sets, one with 126
+million messages collected over 38 days from the mail servers of a tier-1 ISP, and a second with
+28 million messages collected over 6 months from an enterpri se mail server. Our experiments also
+highlight the importance of allowing the IP address tree to be dynamic, and the resulting view of the
+IP address space that we get is both compelling and meaningful.
+
+2 Deﬁnitions and Preliminaries
+We now present some basic de ﬁnitions as well as our formal pro blem statement.
+
+The IP address hierarchy can be naturally interpreted as a fu ll binary tree, as in Fig. 1: the leaves of
+the tree correspond to individual IP addresses, and the non- leaf nodes correspond to the remaining
+IP pre ﬁxes. Let P denote the set of all IP pre ﬁxes, and I denote the set of all IP addresses. We also
+use term clusters to denote the IP pre ﬁxes.
+We de ﬁne an IPTree TP to be a pruning of the full IP address tree: a tree whose nodes a re IP
+pre ﬁxes P ∈ P , and whose leaves are each associated with a label, i.e., malicious or non-malicious.
+An IPtree can thus be interpreted as a classiﬁcation functio n for the IP addresses I : an IP address i
+gets the label associated with its longest matching pre ﬁx in P . Fig. 1 shows an example of an IPtree.
+We de ﬁne the size of an IPtree to be the number of leaves it has. For example, in Fig. 1(a), the size
+of the IPtree is 6.
+As described in Sec. 1, we focus on online learning in this paper. A typical point of comparison
+used in the online learning model is the error of the optimal ofﬂine ﬁxed
+algorithm. In this case,
+the optimal ofﬂine ﬁxed algorithm is the IPtree of a given siz
+e k i.e., the tree of size k that makes
+
+2
+
+0.0.0.0/0
+128.0.0.0/1
+
+192.0.0.0/2
+
++
+160.0.0.0/3
+
++
+152.0.0.0/4
+
+0.0.0.0/1
+0.0.0.0/2
+
++
+
+-
+
+128.0.0.0/4
+
++
+
+-
+
+(b) A real IPTree (Color coding explained in Sec. 5)
+(a) An example IPTree
+Figure 1: IPTrees: example and real. Recall that an IP address is interpreted as a 32-bit string, read
+from left to right. This de ﬁnes a path on the binary tree, goin g left for 0 and right for 1. An IP pre ﬁx
+is denoted by IP/n, where n indicates the number of bits relevant to the pre ﬁx.
+
+the fewest mistakes on the entire sequence. However, if the true underlying IPtree may change over
+time, a better point of comparison would allow the ofﬂine tre e to also change over time. To make
+such a comparison meaningful, the ofﬂine tree must pay an add itional penalty each time it changes
+(otherwise the ofﬂine tree would not be a meaningful point of comparison – it could change for each
+IP address in the sequence, and thus make no mistakes). We therefore limit the kinds of changes the
+ofﬂine tree can make, and compare the performance of our algo rithm to every IPtree with k leaves,
+as a function of the errors it makes and the changes it makes.
+We de ﬁne an adaptive IPtree of size k to be an adaptive tree that can (a) grow nodes over time so
+long as it never has more than k leaves, (b) change the labels of its leaf nodes, and (c) occasionally
+recon ﬁgure itself completely. Our goal is to develop an onli ne algorithm T such that for any se-
+quence of IP addresses, (1) for every adaptive tree T ′ of size k , the number of mistakes made by T
+is bounded by a (small) function of the mistakes and the changes of types (a), (b), and (c) made by
+T ′ , and (2) T uses no more than ˜O(k) space. In the next section, we describe an algorithm meeting
+these requirements.
+
+3 Algorithms and Analysis
+In this section, we describe our main algorithm TrackIPTree , and present theoretical guarantees on
+its performance. At a high-level, our approach keeps a numbe r of experts in each pre ﬁx of the
+IPtree, and combines their predictions to classify every IP address. The inherent structure in the
+IPtree allows us to decompose the problem into a number of expert problems, and provide lower
+memory bounds and better guarantees than earlier approache s.
+We begin with an overview. De ﬁne the path-nodes of an IP address to be the set of all pre ﬁxes of
+i
+in T , and denote this set by Pi,T . To predict the label of an IP i, the algorithm looks up all the path-
+nodes in Pi,T , considers their predictions, and combines these predictions to produce a ﬁnal label
+for i. To update the tree, the algorithm rewards the path-nodes th at predicted correctly, penalizes the
+incorrect ones, and modiﬁes the tree structure if necessary .
+To ﬁll out this overview, there are four technical questions
+that we need to address: (1) Of all the
+path-nodes in Pi,T , how do we learn the ones that are the most important? (2) How do we learn the
+correct label to predict at a particular path-node in Pi,T (i.e., positive or negative)? (3) How do we
+grow the IPtree appropriately, ensuring that it grows prima rily the pre ﬁxes needed to improve the
+classiﬁcation accuracy? (4) How do we ensure that the size of
+the IPtree stays bounded by m? We
+address these questions by treating them as separate subproblems, and we show how they ﬁt together
+to become the complete algorithm in Figure 3.1.
+
+3.1 Subproblems of TrackIPTree
+We now describe our algorithm in detail. Since our algorithm decomposes naturally into the four
+subproblems mentioned above, we focus on each subproblem separately to simplify the presentation.
+We use the following notation in our descriptions: Recall from Sec. 2 that m is the maximum number
+of leaves allowed to our algorithm, k is the size of the optimal ofﬂine tree, and Pi,T denotes the set
+of path-nodes, i.e., the pre ﬁxes of IP i in the current IPtree T .
+Relative Importance of the Path Nodes First, we consider the problem of deciding which of the
+pre ﬁx nodes in the path Pi,T is most important. We formulate this as a sleeping experts problem [4,
+10]. We set an expert in each node, and call them the path-node experts, and for an IP i, we consider
+the set of path-node experts in Pi,T to be the “awake ” experts, and the rest to be “asleep ”. The
+
+3
+
+x0
+
+x2
+
+x1
+
+x3
+
+x4
+
+x5
+
+y+
+
+y-
+
+x6
+(a) Sleeping Experts: Relative Importance
+(b) Shifting Experts: Determining
+of Path-Nodes
+Node Labels
+Figure 2: Decomposing the TrackIPTree Algorithm
+sleeping experts algorithm makes predictions using the awake experts, and intuitively, has the goal
+of predicting nearly as well as the best awake expert on the instance i 1 . In our context, the best
+awake expert on the IP i corresponds to the pre ﬁx of
+i in the optimal IPtree, which remains sleeping
+until the IPtree grows that pre ﬁx. Fig. 2(a) illustrates the sleeping experts framework in our context:
+the shaded nodes are “awake ” and the rest are “asleep ”.
+xt .
+Speciﬁcally, let xt denote the weight of the path-node expert at node t, and let Si,T = Pt∈Pi,T
+To predict on IP address i, the algorithm chooses the expert at node t with probability xt/Si,T . To
+update, the algorithm penalizes all incorrect experts in Pi,T , reducing their weight xt to γ xt . (e.g.,
+γ = 0.8). It then renormalizes the weights of all the experts in Pi,T so that their sum Si,T does not
+change. (In our proof, we use a slightly different version of the sleeping experts algorithm [4]).
+Deciding Labels of Individual Nodes Next, we need to decide whether the path-node expert at
+a node n should predict positive or negative. We use a different expe rts algorithm to address this
+subproblem – the shifting experts algorithm [12]. Speciﬁcally, we allow each node n to have two
+additional experts – a positive expert, which always predic ts positive, and a negative expert, which
+always predicts negative. We call these experts node-label experts.
+Let yn,+ and yn,− denote the weights of the positive and negative node-label experts respectively,
+with yn,− + yn,+ = 1. The algorithm operates as follows: to predict, the node predicts positive with
+probability yn,+ and negative with probability yn,− . To update, when the node receives a label, it
+increases the weight of the correct node-label expert by ǫ, and decreases the weight of the incorrect
+node-label expert by ǫ (upto a maximum of 1 and a minimum of 0). Note that this algorithm naturally
+adapts when a leaf of the optimal IPtree switches labels – the relevant node in our IPtree will slowly
+ǫ mistakes
+shift weights from the incorrect node-label expert to the co rrect one, making an expected 1
+in the process. Fig. 2(b) illustrates the shifting experts setting on an IPtree: each node has two
+experts, a positive and a negative. Fig. 3 shows how it ﬁts in w ith the sleeping experts algorithm.
+Building Tree Structure We next address the subproblem of building the appropriate s tructure for
+the IPtree. The intuition here is: when a node in the IPtree makes many mistakes, then either
+that node has a subtree in the optimal IPtree that separates the positive and negative instances,
+or the optimal IPtree must also make the same mistakes. Since TrackIPTree cannot distinguish
+between these two situations, it simply splits any node that makes sufﬁcient mistakes. In particular,
+TrackIPTree starts with only the root node, and tracks the number of mistakes made at every node.
+ǫ mistakes, TrackIPTree splits that leaf into its children, and instantiates
+Every time a leaf makes 1
+and initializes the relevant path-node experts and node-label experts of the children. In effect, it is
+as if the path-node experts of the children had been asleep till this point, but will now be “awake ”
+for the appropriate IP addresses.
+ǫ mistakes at each node before growing it, so that there is a lit tle resilence
+TrackIPTree waits for 1
+with noisy data – otherwise, it would split a node every time t he optimal tree made a mistake, and the
+IPtree would grow very quickly. Note also that it naturally incorporates the optimal IPtree growing
+ǫ mistakes.
+a leaf; our tree will grow the appropriate nodes when that lea f has made 1
+Bounding Size of IPtree Since TrackIPTree splits any node after it makes 1
+ǫ mistakes, it is likely
+that the IPtree it builds is split much farther than the optimal IPtree – TrackIPTree does not know
+when to stop growing a subtree, and it splits even if the same mistakes are made by the optimal
+IPtree. While this excessive splitting does not impact the predictions of the path-node experts or the
+node-label experts signiﬁcantly, we still need to ensure th at the IPtree built by our algorithm does
+not become too large.
+
+1We leave the exact statement of the guarantee to the proof in [23]
+
+4
+
+T R ACK I P TR E E
+Input: tree size m, learning rate ǫ, penalty factor γ
+Initialize:
+Set T := root
+InitializeNode(root)
+
+Prediction Rule: Given IP i
+//Select a node-label expert
+for n ∈ Pi,T
+ﬂip coin of bias yn,+
+if heads, predict[n] := +
+else predict[n] := −
+//Select a path-node expert
+rval := predict[n] with weight
+xn/ Pt∈P xt
+Return rval
+
+Update Rule: Given IP i, label r
+//Update node-label experts
+for n ∈ Pi,T
+for label z ∈ {+, −}
+if z = r, yn,z := yn,z + ǫ
+else yn,z := yn,z − ǫ
+
+Update Rule (Contd.):
+//Update path-node experts
+s := Pn∈Pt,T
+xn
+for n ∈ Pi,T
+if predict[n] 6= r ,
+penalize xn := γxn
+mistakes[xn ] + +
+if mistakes[xn ] > 1/ǫ and n
+is leaf, GrowT ree(n)
+Renormalize xn := xn
+s
+Pj∈Pi,T
+
+xj
+
+sub IN I T I A L I Z ENOD E
+Input: node t
+xt := 1; yt,+ := yt,− := 0.5
+mistakes[t] := 0
+
+sub G ROWT R E E
+Input: leaf l
+if size(T ) ≥ m
+Select nodes N to discard with
+paging algorithm
+Split leaf l into children lc, rc.
+InitializeNode(lc), InitializeNode(rc)
+
+Figure 3: The Complete TrackIPTree Algorithm
+We do this by framing it as a paging problem [20]: consider each node in the IPtree to be a page,
+and the maximum allowed nodes in the IPtree to be the size of the cache. The ofﬂine IPtree, which
+has k leaves, needs a cache of size 2k . The IPtree built by our algorithm may have at most m leaves
+(and thus, 2m nodes, since it is a binary tree), and so the size of its cache is 2m and the ofﬂine
+cache is 2k . We may then select nodes to be discarded as if they were pages in the cache once the
+IPtree grows beyond 2m nodes; so, for example, we may choose the least recently used nodes in
+the IPtree, with LRU as the paging algorithm. Our analysis shows that setting m = O( k
+ǫ2 log k
+ǫ )
+sufﬁces, when TrackIPTree uses F LU SH -WH EN -FUL L (FWF) as its paging algorithm – this is a
+simple paging algorithm that discards all the pages in the cache when the cache is full, and restarts
+with an empty cache. We use FWF here for a clean analysis, and especially since in simple paging
+models, many algorithms achieve no better guarantees [20]. For our experiments, we implement
+LRU, and our results show that this approach, while perhaps not sophisticated, still maintains an
+accurate predictive IPtree.
+
+3.2 Analysis
+In this section, we present theoretical guarantees on Track IPTree’s performance. We show our
+algorithm performs nearly as well as best adaptive k-IPtree, bounding the number of mistakes made
+by our algorithm as a function of the number of mistakes, number of labels changes and number of
+complete recon ﬁgurations of the optimal such tree in hindsi ght.
+Theorem 3.1 Fix k . Set the maximum number of leaves allowed to the TrackIPTree algorithm m to
+ǫ2 log k
+be 10k
+ǫ . Let T be an adaptive k-IPtree. Let ∆T ,z denote the number of times T changes labels
+on the its leaves over the sequence z , and RT ,z denote the number of times times T has completely
+recon ﬁgured itself over z .
+The algorithm TrackIPTreeensures that on any sequence of instances z , for each T , the number of
+ǫ + 3)∆T ,z + 10k
+ǫ3 log k
+ǫ (RT ,z + 1) with
+mistakes made by TrackIPTree is at most (1 + 3ǫ)MT ,z + ( 1
+k
+2ǫ2 .
+probability at least 1 − (cid:0) 1
+k (cid:1)
+In other words, if there is an ofﬂine adaptive k-IPtree, that makes few changes and few mistakes
+on the input sequence of IP addresses, then TrackIPTree will also make only a small number of
+mistakes. Due to space constraints, we present the proof in the technical report [23].
+
+4 Evaluation Setup
+We now describe our evaluation set-up: data, practical changes to the algorithm, and baseline
+schemes that compare against. While there are many issues that go into converting the algorithm in
+Sec. 3 for practical use, we describe here those most importa nt to our experiments, and defer the
+rest to the technical report [23].
+
+5
+
+Data We focus on IP addresses derived from mail data, since spammers represent a signiﬁcant frac-
+tion of the malicious activity and compromised hosts on the Internet [6], and labels are relatively
+easy to obtain from spam- ﬁltering run by the mail servers. Fo r our evaluation, we consider labels
+from the mail servers’ spam- ﬁltering to be ground truth. Any errors in the spam- ﬁltering will in ﬂu-
+ence the tree that we construct and our experimental results are limited by this assumption.
+One data set consists of log extracts collected at the mail servers of a tier-1 ISP with 1 million
+active mailboxes. The extracts contain the IP addresses of the mail servers that send mail to the
+ISP, the number of messages they sent, and the fraction of those messages that are classiﬁed as
+spam, aggregated over 10 minute intervals. The mail server’s spam- ﬁltering software consists of a
+combination of hand-crafted rules, DNS blacklists, and Brightmail [1], and we take their results as
+labels for our experiments. The log extracts were collected over 38 days from December 2008 to
+January 2009, and contain 126 million IP addresses, of which 105 million are spam and 21 million
+are legitimate.
+The second data set consists of log extracts from the enterpr ise mail server of a large corporation with
+1300 active mailboxes. These extracts also contain the IP addresses of mail servers that attempted to
+send mail, along with the number of messages they sent and the fraction of these messages that were
+classiﬁed spam by SpamAssassin [2], aggregated over 10 minu te intervals. The extracts contain 28
+million IP addresses, of which around 1.2 million are legitimate and the rest are spammers.
+Note that in both cases, our data only contains aggregate information about the IP addresses of the
+mail servers sending mail to the ISP and enterprise mail servers, and so we do not have the ability
+to map any information back to individual users of the ISP or enterprise mail servers.
+TrackIPTree For the experimental results, we use LRU as the paging algori thm when nodes need
+to be discarded from the IPtree (Sec. 3.1). In our implementa tion, we set TrackIPTree to discard
+1% of m, the maximum leaves allowed, every time it needs to expire nodes. The learning rate ǫ is
+set to 0.05 and the penalty factor γ for sleeping experts is set to 0.1 respectively. Our results are not
+affected if these parameters are changed by a factor of 2-3.
+While we have presented an online learning algorithm, in pra ctice, it will often need to predict
+on data without receiving labels of the instances right away. Therefore, we study TrackIPTree’s
+accuracy on the following day’s data, i.e., to compute prediction accuracy of day i, TrackIPTree is
+allowed to update until day i− 1. We choose intervals of a day’s length to allow the tree’s predictions
+to be updated at least every day.
+Apriori Fixed Clusters We compare TrackIPTree to two sets of apriori ﬁxed clusters : (1) network-
+aware clusters, which are a set of unique pre ﬁxes derived fro m BGP routing table snapshots [17], and
+(2) /24 pre ﬁxes. We choose these clusters as a baseline, as th ey have been the basis of measurement
+studies discussed earlier (Sec. 1), prior work in IP-based c lassiﬁcation [19, 24], and are even used
+by popular DNS blacklists [3].
+We use the ﬁxed clusters to predict the label of an IP in the usu al manner: we simply assign an
+IP the label of its longest matching pre ﬁx among the clusters .Of course, we ﬁrst need to assign
+these clusters their own labels. To ensure that they classify as well as possible, we assign them the
+optimal labeling over the data they need to classify; we do this by allowing them to make multiple
+passes over the data. That is, for each day, we assign labels so that the ﬁxed clusters maximize their
+accuracy on spam for a given required accuracy on legitimate mail 2 . It is clear that this experimental
+set-up is favourable to the apriori ﬁxed clusters.
+
+We do not directly compare against the algorithm in [11], as i t requires every unique IP address in
+the data set to be instantiated in the tree. In our experiments (e.g., with the ISP logs), this means that
+it requires over 90 million leaves in the tree. We instead focus on practical prior approaches with
+more cluster sizes in our experiments.
+
+5 Results
+We report three sets of experimental results regarding the p rediction accuracy of TrackIPTree using
+the experimental set-up of Section 4. While we do not provide an extensive evaluation of our al-
+gorithm’s computational efﬁciency, we note that our (unopt
+imized) implementation of TrackIPTree
+takes under a minute to learn over a million IP addresses, on a 2.4GHz Sparc64-VI core.
+
+2For space reasons, we defer the details of how we assign this labeling to the technical report [23]
+
+6
+
+1
+
+0.8
+
+0.6
+
+0.4
+
+s
+P
+I
+ 
+m
+a
+p
+S
+ 
+n
+o
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+0.2
+0
+
+1
+
+0.98
+
+0.96
+
+0.94
+
+s
+P
+I
+ 
+m
+a
+p
+S
+ 
+n
+o
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+s
+P
+I
+ 
+m
+a
+p
+S
+ 
+n
+o
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+TrackIPTree
+Network−Aware
+/24 Prefixes
+
+0.5
+Coverage on Legit IPs
+(a) Expt 1: ISP logs
+
+1
+
+1
+
+0.8
+
+0.6
+
+0.4
+
+TrackIPTree
+Network−Aware
+/24 Prefixes
+0.5
+Coverage on Legit IPs
+(b) Expt 1: Enterprise logs
+
+0.2
+0
+
+Dynamic
+Static: 5 Days
+Static: 10 Days
+
+0.25
+
+0.2
+
+0.15
+
+0.1
+
+s
+P
+I
+ 
+t
+i
+g
+e
+L
+ 
+n
+o
+ 
+r
+o
+r
+r
+E
+
+50k
+10k
+5k
+1k
+
+1
+
+1
+
+0.95
+
+0.9
+
+s
+P
+I
+ 
+m
+a
+p
+S
+ 
+n
+o
+ 
+y
+c
+a
+r
+u
+c
+c
+A
+
+0.85
+0
+
+s
+P
+I
+ 
+m
+a
+p
+S
+ 
+n
+o
+ 
+r
+o
+r
+r
+E
+
+0.15
+
+0.1
+
+0.05
+
+200k
+100k
+50k
+20k
+
+0.5
+Coverage on Legit IPs
+(c) Expt 2: ISP logs
+
+1
+
+Dynamic
+Static: 5 Days
+Static: 10 Days
+
+0.92
+0
+
+0.05
+
+1
+
+20
+0.5
+Time in days
+Coverage on Legit IPs
+(d) Expt 2: Enterprise logs
+(e) Expt 3: Legitimate IPs
+Figure 4: Results for Experiments 1, 2, and 3
+
+10
+
+30
+
+10
+
+20
+Time in days
+(f) Expt 3: Spam IPs
+
+30
+
+Our results compare the fraction of spamming IPs that the clu sters classify correctly, subject to
+the constraint that they classify at least x% legitimate mail IPs correctly (we term this to be the
+coverage of the legitimate IPs required). Thus, we effectively plot the true positive rate against
+the true negative rate. (This is just the ROC curve with the x-axis reversed, since we plot the true
+positive against the true negative, instead of plotting the true positive against the false positive.)
+Experiment 1: Comparisons with Apriori Fixed Clusters Our ﬁrst set of experiments compares
+the performance of our algorithm with network-aware cluste rs and /24 IP pre ﬁxes. Figs. 4(a) & 4(b)
+illustrate the accuracy tradeoff of the three sets of cluste rs on the two data sets. Clearly, the accuracy
+of TrackIPTree is a tremendous improvement on both sets of ap riori ﬁxed clusters – for any choice
+of coverage on legitimate IPs, the accuracy of spam IPs by TrackIPTree is far higher than the apriori
+ﬁxed clusters, even by as much as a factor of 2.5. In particula r, note that when the coverage required
+on legitimate IPs is 95%, TrackIPTree achieves 95% accuracy in classifying spam on both data sets,
+compared to the 35 − 45% achieved by the other clusters.
+In addition, TrackIPTree gains this classiﬁcation accurac y using a far smaller tree. Table 1 shows
+the median number of leaves instantiated by the tree at the end of each day. (To be fair to the ﬁxed
+clusters, we only instantiate the pre ﬁxes required to class ify the day’s data, rather than all possible
+pre ﬁxes in the clustering scheme.) Table 1 shows that the tre e produced by TrackIPTree is a factor
+of 2.5-17 smaller with the ISP logs, and a factor of 20-100 smaller with the enterprise logs. These
+numbers highlight that the apriori ﬁxed clusters are perhap s too coarse to classify accurately in parts
+of the IP address space, and also are insufﬁciently aggregat ed in other parts of the address space.
+Experiment 2: Changing the Maximum Leaves Allowed Next, we explore the effect of changing
+m, the maximum number of leaves allowed to TrackIPTree. Fig. 4(c) & 4(d) show the accuracy-
+coverage tradeoff for TrackIPTree when m ranges between 20,000-200,000 leaves for the ISP logs,
+and 1,000-50,000 leaves for the enterprise logs. Clearly, in both cases, the predictive accuracy
+increases with m only until m is “sufﬁciently large ”
+– once
+m is large enough to capture all the
+distinct subtrees in the underlying optimal IPtree, the predictive accuracy will not increase. While
+the actual values of m are speciﬁc to our data sets, the results highlight the impor tance of having a
+space-efﬁcient and ﬂexible algorithm – both 10,000 and 100,
+000 are very modest sizes compared to
+the number of possible apriori ﬁxed clusters, or the size of t he IPv4 address space, and this suggests
+that the underlying decision tree required is indeed of a mod est size.
+Experiment 3: Does a Dynamic Tree Help? In this experiment, we demonstrate empirically that
+our algorithm’s dynamic aspects do indeed signiﬁcantly enh ance its accuracy over static clustering
+schemes. The static clustering that we compare to is a tree generated by our algorithm, but one that
+learns over the ﬁrst z days, and then stays unchanged. For ease of reference, we cal l such a tree a
+z -static tree; in our experiments, we set z = 5 and z = 10. We compare these trees by examining
+separately the errors incurred on legitimate and spam IPs.
+
+7
+
+Enterprise
+ISP
+9963
+99942
+TrackIPTree
+1426445
+1732441
+/24 Pre ﬁxes
+223025
+260132
+Network-aware
+Table 1: Sizes of Clustering Schemes
+
+Implication
+wt
+Strongly Legit
+≥ 0.2
+Weakly Legit
+[0, 0.2)
+(−0.2, 0) Weakly Malicious
+Strongly Malicious
+≤ −0.2
+
+Colour
+Dark Green
+Light Green
+Blue
+White
+
+Table 2: Colour coding for IPtree in Fig 1(b)
+Fig. 4(e) & 4(f) compare the errors of the z -static trees and the dynamic tree on legitimate and spam
+IPs respectively, using the ISP logs. Clearly, both z -static trees degrade in accuracy over time, and
+they do so on both legitimate and spam IPs. On the other hand, the accuracy of the dynamic tree
+does not degrade over this period. Further, the in error grow s with time; after 28 days, the 10-static
+tree has almost a factor of 2 higher error on both spam IPs and l egitimate IPs.
+Discussion and Implications Our experiments demonstrate that our algorithm is able to ac hieve
+high accuracy in predicting legitimate and spam IPs, e.g., it can predict 95% of the spam IPs cor-
+rectly, when misclassifying only 5% of the legitimate IPs. However, it does not classify the IPs
+perfectly. This is unsurprising – achieving zero classiﬁca
+tion error in these applications is practi-
+cally infeasible, given IP address dynamics [25]. Nevertheless, our IPtree still provides insight into
+the malicious activity on the Internet.
+As an example, we examine a high-level view of the Internet obtained from our tree, and its impli-
+cations. Fig. 1(b) visualizes an IPtree on the ISP logs with 50,000 leaves. It is laid out so that the
+root pre ﬁx is near the center, and the pre ﬁxes grow their chil
+dren outwards. The nodes are coloured
+depending on their weights, as shown in Table 2: for node t, de ﬁne wt = Pj∈Q xj (yj,+ − yj,− ),
+where Q is the set of pre ﬁxes of node t (including node t itself. Thus, the blue central nodes are the
+large pre ﬁxes (e.g., /8 pre ﬁxes), and the classiﬁcation the
+y output is slightly malicious; this means
+that an IP address without a longer matching pre ﬁx in the tree is typically classiﬁed to be malicious.
+This suggests, for example, that an unseen IP address is typically classiﬁed as a spammer by our
+IPtree, which is consistent with the observations of network administrators. A second observation
+we can make is that the tree has many short branches as well as long branches, suggesting that some
+IP pre ﬁxes are grown to much greater depth than others. This m ight happen, for instance, if active IP
+addresses for this application are not distributed uniform ly in the address space (and so all pre ﬁxes
+do not need to be grown at uniform rates), which is also what we might expect to see based on prior
+work [16].
+
+Of course, these observations are only examples; a complete analysis of our IPtree’s implications is
+part of our future work. Nevertheless, these observations s uggest that our tree does indeed capture
+an appropriate picture of the malicious activity on the Internet.
+
+6 Other Related Work
+In the networking and databases literature, there has been much interest in designing streaming
+algorithms to identify IP pre ﬁxes with signiﬁcant network t
+rafﬁc [7, 9, 27], but these algorithms
+do not explore how to predict malicious activity. Previous IP-based approaches to reduce spam
+trafﬁc [22, 24], as mentioned earlier, have also explored in dividual IP addresses, which are not
+particularly useful since they are so dynamic [15, 19, 25]. Zhang et al [26] also examine how to
+predict whether known malicious IP addresses may appear at a given network, by analyzing the
+co-occurence of all known malicious IP addresses at a number of different networks. More closely
+related is [21], who present algorithms to extract pre ﬁx-ba sed ﬁltering rules for IP addresses that may
+be used in ofﬂine settings. There has also been work on comput
+ing decision trees over streaming
+data [8, 13], but this work assumes that data comes from a ﬁxed distribution.
+
+7 Conclusion
+We have addressed the problem of discovering dynamic malicious regions on the Internet. We model
+this problem as one of adaptively pruning a known decision tree, but with the additional challenges
+coming from real-world settings – severe space requirement s and a changing target function. We
+developed new algorithms to address this problem, by combin ing “experts” algorithms and online
+paging algorithms. We showed guarantees on our algorithm’s performance as a function of the best
+possible pruning of a similar size, and our experimental res ults on real-world datasets are orders of
+magnitude better than current approaches.
+Acknowledgements We are grateful to Alan Glasser and Gang Yao for their help wit h the data
+analysis efforts.
+
+8
+
+In In Proceedings of 18th Annual
+
+References
+[1] Brightmail. http://www.brightmail.com.
+[2] SpamAssassin. http://www.spamassassin.apache.org.
+[3] SpamHaus. http://www.spamhaus.net.
+[4] B L UM , A . , AND MAN SOUR , Y. From external to internal regret.
+Conference on Computational Learning Theory (COLT 2005) (2005).
+[5] C E SA -B I ANCH I , N . , F R E UND , Y. , HAU S S L E R , D . , H E LM B O L D , D . P. , SCHA P I R E , R . E . , AND WAR -
+MU T H , M . K . How to use expert advice. J. ACM 44, 3 (1997), 427–485.
+[6] CO L L I N S , M . P. , SH IM E A L L , T. J . , FAB E R , S . , NA I E S , J . , W E AV E R , R . , AND S HON , M . D . Using
+uncleanliness to predict future botnet addresses. In Proceedings of the Internet Measurement Conference
+(2007).
+[7] CORMOD E , G . , KOR N , F. , MU T HUK R I SHNAN, S . , AND S R I VA S TAVA , D . Diamond in the rough: Find-
+ing hierarchical heavy hitters in multi-dimensional data. In SIGMOD ’04: Proceedings of the 2004 ACM
+SIGMOD international conference on Management of data (2004).
+[8] DOM I NGO S , P. , AND HU LT E N , G . Mining high-speed data streams. In Proceedings of ACM SIGKDD
+(2000), pp. 71–80.
+[9] E S TAN , C . , S AVAG E , S . , AND VAR GH E S E , G . Automatically inferring patterns of resource consumpt ion
+in network trafﬁc. In Proceedings of SIGCOMM’03 (2003).
+[10] F R E UND , Y. , S CHA P I R E , R . E . , S I NG E R , Y. , AND WARMU T H , M . K . Using and combining predictors
+that specialize.
+In Proceedings of the Twenty-Ninth Annual Symposium on the Theory of Computing
+(STOC) (1997), pp. 334–343.
+[11] H E LM B O L D , D . P. , AND S CHA P I R E , R . E . Predicting nearly as well as the best pruning of a decision
+tree. Machine Learning 27, 1 (1997), 51–68.
+[12] H E R B S T E R , M . , AND WARMU T H , M . Tracking the best expert. Machine Learning 32, 2 (August 1998).
+[13] J I N , R . , AND AGARWA L , G . Efﬁcient and effective decision tree construction on st reaming data.
+In
+Proceedings of ACM SIGKDD (2003).
+[14] JUNG , J . , K R I SHNAMURT HY, B . , AND RAB I NOV I CH , M . Flash crowds and denial of service attacks:
+Characterization and implications for cdns and websites. In Proceedings of the International World Wide
+Web Conference (May 2002).
+[15] JUNG , J . , AND S I T, E . An empirical study of spam trafﬁc and the use of DNS black l
+of Internet Measurement Conference (IMC) (2004).
+[16] KOH L E R , E . , L I , J . , PAX SON , V. , AND S H E NK E R , S . Observed structure of addresses in IP trafﬁc.
+IEEE/ACM Transactions in Networking 14, 6 (2006).
+[17] K R I SHNAMURT HY, B . , AND WANG , J . On network-aware clustering of web clients. In Proceedings of
+ACM SIGCOMM (2000).
+[18] MAO , Z . M . , S E K AR , V. , S PAT SCH E CK , O . , VAN D E R ME RWE , J . , AND VA SUD E VAN , R . Analyzing
+large ddos attacks using multiple data sources.
+In ACM SIGCOMM Workshop on Large Scale Attack
+Defense (2006).
+[19] RAMACHAND R AN , A . , AND F E AM S T E R , N . Understanding the network-level behavior of spammers. In
+Proceedings of ACM SIGCOMM (2006).
+[20] S L E ATOR , D . D . , AND TAR JAN , R . E . Amortized efﬁciency of list update and paging rules. I n Commu-
+nications of the ACM (1985), vol. 28, pp. 202–208.
+[21] S O L DO , F. , MAR KO POU L O , A . , AND A R GYR AK I , K . Optimal ﬁltering of source address preﬁxes:
+Models and algorithms. In Proceedings of IEEE Infocom 2009 (2009).
+[22] TW I N I NG , D . , W I L L I AM SON , M . M . , MOWB R AY, M . , AND RAHMOUN I , M . Email prioritization:
+Reducing delays on legitimate mail caused by junk mail. In USENIX Annual Technical Conference (2004).
+[23] V E NK ATAR AMAN, S . , B L UM , A . , S ONG , D . , S E N , S . , AND S PAT SCH E CK , O . Tracking dynamic
+sources of malicious activity at internet-scale. Tech. Rep. TD-7NZS8K, AT&T Labs, 2009.
+[24] V E NK ATAR AMAN, S . , S E N , S . , S PAT SCH E CK , O . , HA FFN E R , P. , AND S ONG , D . Exploiting network
+structure for proactive spam mitigation. In Proceedings of Usenix Security’07 (2007).
+[25] X I E , Y. , YU , F. , ACHAN , K . , G I L L UM , E . , , GO L D S ZM I D T, M . , AND WOB B E R , T. How dynamic are
+IP addresses? In Proceedings of ACM SIGCOMM (2007).
+[26] Z HANG , J . , P OR R A S , P. , AND U L R I CH , J . Highly predictive blacklists.
+Security’08 (2008).
+[27] Z HANG , Y. , S I NGH , S . , S E N , S . , DU FFI E L D , N . , AND L UND , C . Online identi ﬁcation of hierarchi-
+cal heavy hitters: algorithms, evaluation, and applications.
+In IMC ’04: Proceedings of the 4th ACM
+SIGCOMM conference on Internet measurement (New York, NY, USA, 2004), ACM, pp. 101–114.
+
+ists. In Proceedings
+
+In Proceedings of Usenix
+
+9
+
+

@@ -1,0 +1,266 @@
+Learning to splash
+CS 229 Course Pro ject
+
+Wen Zheng
+
+1
+
+Introduction
+
+Physics-based methods have been successfully applied to the production of realistic liquids simulation. Nowa-
+days, a giant tide of ﬂoods sweeping through the New York city is no longer a surprise in movies. However,
+expensive computation prohibits applying the same visual eﬀects to games, medical training, and other
+real-time applications.
+One way to achieve the real-time simulation is to simplify the model, so that computation cost can be
+reduced to an acceptable amount. However, among inﬁnite number of possible simpliﬁcation methods, how
+to choose the one that preserves the most visual credibility is a diﬃcult task. Another way to reduce the
+computation cost while preserving visual quality is to use more complicated geometry primitives to represent
+liquids. For example, particle-based methods represent liquids as clusters of spherical particles, which are
+very simple primitives. This simplicity beneﬁts human who can easily develop simulation methods based
+on those primitives, but it sacriﬁces eﬃciency of representation, and thus requires much more sampling and
+computation cost.
+This pro ject aims at a real-time but visually plausible simulation system by applying machine learning
+methods learned from [Ng 2009]. To achieve this goal, the planned work is divided into three parts: ﬁrst, data
+generation, which is to implement a full ﬂuids simulator to generate training data; second, geometry primitives
+learning, which is to use an unsupervised learning method to derive a set of representative primitives from the
+full simulation results; third, dynamics rule learning, which is to use a supervised learning method to develop
+the updating rules of the representative primitives attained previously from the full simulation results.
+
+2 Simulation
+
+∂u
+∂ t
+
+The ﬁrst part of the pro ject implements a Navier-Stokes ﬂuid simulator. The Navior-Stokes equation for
+incompressible viscous ﬂuid is as follows:
+= −(u · ∇)u + ∇ · (ν∇u) − ∇p
+ρ
+∇ · u = 0
+where u is the velocity, p is the pressure, ν is the viscosity, ρ is the density, and f is the external force,
+such as gravity, buoyancy, surface tension, and other user-deﬁned forces. For the application of this pro ject,
+the viscosity term is ignored for simplicity, because the viscosity smears out interesting dynamics which is
+needed for training.
+The Navier-Stokes equations describe the updating rules for the velocity ﬁeld u and the pressure ﬁeld p.
+In addition to u and p, we also need to represent and evolve the interfaces of ﬂuids. A typical ﬂuid simulator
+usually uses the signed distance function φ to represent the distance to the nearest interface and the region:
+φ > 0 if outside the ﬂuid region, φ < 0 if inside the ﬂuid region, φ = 0 if on the interface. Then we can
+evolve φ through the level set equation:
+
++ f
+
++ u · ∇φ = 0
+
+∂φ
+∂ t
+
+1
+
+where the velocity ﬁeld u that drives the φ around is updated by the Navier-Stokes equations, whereas the
+updated φ is then used to distinguish the ﬂuid region and the non-ﬂuid region for solving the Navier-Stokes
+equations.
+The numerical updating rule is divided into the following steps:
+
+1. Evolve the interface φ by solving the level set equation.
+The BFECC method [Dupont and Liu 2003] is adopted to solve the advection, and the fast marching
+method [Sethian 1999] is then used to reinitialize φ.
+
+2. Evolve the velocity ﬁeld u by solving the Navier-Stokes equation.
+
+(a) Solve the advection term by the BFECC method [Dupont and Liu 2003] and the external force
+term by the forward Euler method to attain an intermediate velocity u∗ :
+u∗ − uold
+∂ t
+(b) Pro ject u∗ onto an divergence-free ﬁeld. First, use a Preconditioned Conjugate Gradient method
+to compute the pressure p by solving the follwing Poisson equation [Foster and Fedkiw 2001]:
+∇2 p = ρ
+∇ · u∗
+∂ t
+
+= −(u·)u + f
+
+Then use the pressure p to update the velocity:
+unew − u∗
+∂ t
+
+= − ∇p
+ρ
+
+.
+
+Figure 1: Snapshots of 2D full simulation of splashing water for training.
+
+3 Data Generation
+
+Since ﬂuids are arbitrarily morphable, theoretically they can have any geometric shapes. However, the
+deformation of ﬂuids obays particular dynamics rules, and thus the probability of shapes that ﬂuids will
+form is not uniform. Furthermore, given a speciﬁc class of scenarios that we concern the most, certain kinds
+of shapes will be more possible to appear than others. For instance, in a game where the most fequent
+
+2
+
+interaction with water is that characters step into water or ob jects smash into a pool, the most possible
+shapes of water are splashes and breaking waves. This implies that we can extract some representative
+geometric features from simulation data. It also implies that the training data are most useful when they
+are generated in similar situations.
+Thus, in this pro ject, the following scenario is considered for the source of training data: a rigid kinematic
+ob ject (sphere for simpicify) smashing through a pool of water. To cover a suﬃciently large range of possible
+shapes of splashes, a number of diﬀerent simulations are run with randomly generated parameters, including
+the moving direction, the velocity, the size of the ob ject, etc. (See Fig. 1). The result data were stored as
+matrices of the signed distance function Φi,j , where i is the index of simulations, and j is the index of time
+steps.
+
+4 Learning the Geometry primitives
+
+Figure 2: Errors (Y axis) of representation using diﬀerent numbers (X axis) of principal components. The
+red curve is the max errors, and the blue curve is the mean errors.
+
+The next step is to attain a compact representation of the water geometry, so that we can reduce the
+number of simulated elements and speed up the simulation. To achieve this goal, the training data Φi,j is
+ﬁrst decomposed into column vectors φi,j,k , where Φi,j = [φi,j,k ]k .
+Note that other ways of decomposition have also been tested, such as decomposing the domain into
+rectangular blocks. However, they suﬀers from noises and discontinuities near decomposition boundaries.
+Among all the decomposition methods tested, decomposing the domain into columns is the only one whose
+compressed geometry has acceptable visual eﬀects, and thus it is selected as the ﬁnal method of decomposi-
+tion.
+The Principal Component Analysis method is used to compress φi,j,k into a limited set of representative
+column vectors ˆΦ. Then each column vector φi,j,k can be expressed as a small number of real values attained
+from the following equation
+αi,j,k = ˆΦT (φi,j,k − µ),
+where αi,j,k is a lower dimensional vector, and µ is the mean value of φi,j,k . Also the column vectors can be
+
+3
+
+Figure 3: Comparison between original geometry (left) and compressed geometry (right) with 8 principal
+components.
+
+recovered as follows
+
+φi,j,k = ˆΦαi,j,k + µ.
+As we can see in Fig. 2, the errors of the compressed geometry representation decrease fast as the number of
+principal components increases. geometry. The ﬁrst 8 principal components are selected as the subspace basis
+for compression. Fig. 3 shows the comparison of two snapshots from the original data and the compressed
+data. We can see that the compression preserves most of geometric features except high-curvature details.
+
+5 Learning the Dynamics rules
+
+The next step is to learn the dynamics updating rule of the geometry primitives attained previously. Based
+on the intuition from the Navier-Stokes equation, the updating rule should be spatially and temporally local,
+spatially symmetric. And since the ﬁnal system solved in the full simulation model is a linear system, we
+can also assume that the updating rule is in the form of a linear system.
+(cid:16)
+(cid:17)
+Based on the above assumption, a hypothesis model is attained as follows
+jmaxX
+kmaxX
+i+k + αn−j
+k (αn−j
+Aj
+i−k )
+j=1
+k=0
+
+i =
+αn
+
+,
+
+where αn
+is the compressed geometry representation vector at time n at column i, and As are parameter
+i
+matrices to be trained for. The above equation can be expressed in the form of ~α = ˆA ˆ~α, and thus can be
+solved by the normal equation
+
+ˆA = (~α~αT )+ ˆ~α~αT
+
+where “+” is the pseudo-inverse operator.
+Boundary conditions are also an important aspect for simulation. In lack of physical meaning of α, two
+commonly used boundary conditions are assumed to be applicable: The reﬂective boundary condition simply
+copy the mirror image of neighbors of the boundary node to the exterior nodes, and the inverse boundary
+condition is the negative of the reﬂective boundary condition.
+To select parameters jmax and kmax that work best, a hold-out cross validation has been executed. The
+training set is formed by 70% of randomly chosen data, and the test set is the other 30%. Since the training
+is on a large data set and thus expensive, only 3 diﬀerent jmax and 3 diﬀerent kmax are tested. The training
+
+4
+
+Table 1: Mean errors for the reﬂective boundary condition.
+
+jmax = 1
+jmax = 2
+jmax = 3
+
+kmax = 2
+0.043071
+0.042996
+0.042939
+
+kmax = 3
+0.00744
+0.00753
+0.00760
+
+kmax = 4
+0.00706
+0.00714
+0.00719
+
+Table 2: Mean errors for the inverse boundary condition.
+
+jmax = 1
+jmax = 2
+jmax = 3
+
+kmax = 2
+0.043068
+0.043002
+0.042942
+
+kmax = 3
+0.00723
+0.00749
+0.00762
+
+kmax = 4
+0.00695
+0.00715
+0.00721
+
+errors and test errors in Table 1 and 2 show that larger jmax and kmax have both smaller training errors
+and test errors, which implies that a global model will be a better choice. However, a global model requires
+to train a huge parameter matrix which is infeasible. A possible solution is to update α in an implicit way,
+which means the global information is incorporated into the updating by spreading local information through
+a sparse linear system. We can also observe that errors of both boundary conditions have little diﬀerence
+with each other, which may indicates that both of them are incorrect. The search for the correct boundary
+condtion will be desirable in the future work.
+
+6 Conclusion
+
+Two steps of machine learning are designed and tested to speed up the water simulation. The ﬁrst step
+is to use unsupervised learning techniques to attain a compressed geometry representation of water. The
+simulation data are ﬁrst decomposed into columns and then compressed by the PCA method. The compressed
+result is visually pleasing and has a considerable compression ratio. The second step tried to attain a
+dynamics updating rule based on the compressed representation attained from the previous step. The
+resulting system fails to generate long-term simulation results with acceptable accuracy. However, the result
+of model selection implies that a global model and a new boundary condition can help to reduce the error.
+Solutions to these problems need to be explored in the future work.
+
+References
+
+[Dupont and Liu 2003] Dupont, T., and Liu, Y. 2003. Back and forth error compensation and cor-
+rection methods for removing errors induced by uneven gradients of the level set
+function. J. Comput. Phys. 190/1 , 311–324.
+
+[Foster and Fedkiw 2001] Foster, N., and Fedkiw, R. 2001. Practical animation of liquids. In Proc. of
+ACM SIGGRAPH 2001, 23–30.
+
+[Ng 2009]
+
+Ng, A. 2009. CS229 Course Notes.
+
+[Sethian 1999]
+
+Sethian, J. 1999. Fast marching methods. SIAM Review 41 , 199–235.
+
+5
+
+

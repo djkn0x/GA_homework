@@ -1,0 +1,814 @@
+Accelerated Variational Dirichlet Process Mixtures
+
+Kenichi Kurihara
+Dept. of Computer Science
+Tokyo Institute of Technology
+Tokyo, Japan
+kurihara@mi.cs.titech.ac.jp
+
+Max Welling
+Bren School of Information and Computer Science
+UC Irvine
+Irvine, CA 92697-3425
+welling@ics.uci.edu
+
+Nikos Vlassis
+Informatics Institute
+University of Amsterdam
+The Netherlands
+vlassis@science.uva.nl
+
+Abstract
+
+Dirichlet Process (DP) mixture models are promising candidates for clustering
+applications where the number of clusters is unknown a priori. Due to compu-
+tational considerations these models are unfortunately unsuitable for large scale
+data-mining applications. We propose a class of deterministic accelerated DP
+mixture models that can routinely handle millions of data-cases. The speedup is
+achieved by incorporating kd-trees into a variational Bayesian algorithm for DP
+mixtures in the stick-breaking representation, similar to that of Blei and Jordan
+(2005). Our algorithm differs in the use of kd-trees and in the way we handle
+truncation: we only assume that the variational distributions are ﬁxed at their pri-
+ors after a certain level. Experiments show that speedups relative to the standard
+variational algorithm can be signi ﬁcant.
+
+1
+
+Introduction
+
+Evidenced by three recent workshops1 , nonparametric Bayesian methods are gaining popularity
+in the machine learning community.
+In each of these workshops computational efﬁciency was
+mentioned as an important direction for future research. In this paper we propose computational
+speedups for Dirichlet Process (DP) mixture models [1, 2, 3, 4, 5, 6, 7], with the purpose of im-
+proving their applicability in modern day data-mining problems where millions of data-cases are no
+exception.
+
+Our approach is related to, and complements, the variational mean- ﬁeld algorithm for DP mixture
+models of Blei and Jordan [7].
+In this approach, the intractable posterior of the DP mixture is
+approximated with a factorized variational ﬁnite (truncat ed) mixture model with T components, that
+is optimized to minimize the KL distance to the posterior. However, a downside of their model is
+that the variational families are not nested over T , and locating an optimal truncation level T may
+be difﬁcult (see Section 3).
+
+In this paper we propose an alternative variational mean- ﬁe ld algorithm, called VDP (Variational
+DP), in which the variational families are nested over T . In our model we allow for an unbounded
+number of components for the variational mixture, but we tie the variational distributions after level
+
+1 http://aluminum.cse.buffalo.edu:8079/npbayes/nipsws05/topics
+http://www.cs.toronto.edu/∼ beal/npbayes/
+http://www2.informatik.hu-berlin.de/∼ bickel/npb-workshop.html
+
+T to their priors. Our algorithm proceeds in a greedy manner by starting with T = 1 and releasing
+components when this improves (signi ﬁcantly) the KL bound. Releasing is most effectively done
+by splitting a component in two children and updating them to convergence. Our approach essen-
+tially resolves the issue in [7] of searching for an optimal truncation level of the variational mixture
+(see Section 4).
+
+Additionally, a signi ﬁcant contribution is that we incorpo rate kd-trees into the VDP algorithm as a
+way to speed up convergence [8, 9]. A kd-tree structure recursively partitions the data space into a
+number of nodes, where each node contains a subset of the data-cases. Following [9], for a given tree
+expansion we tie together the responsibility over mixture components of all data-cases contained in
+each outer node of the tree. By caching certain sufﬁcient sta tistics in each node of the kd-tree we
+then achieve computational gains, while the variational approximation becomes a function of the
+depth of the tree at which one operates (see Section 6).
+
+The resulting Fast-VDP algorithm provides an elegant way to trade off computational resources
+against accuracy. We can always release new components from the pool and split kd-tree nodes as
+long as we have computational resources left. Our setup guarantees that this will always (at least
+in theory) improve the KL bound (in practice local optima may force us to reject certain splits,
+see Section 7). As we empirically demonstrate in Section 8, a kd-tree can offer signi ﬁcant speedups,
+allowing our algorithm to handle millions of data-cases. As a result, Fast-VDP is the ﬁrst algo-
+rithm entertaining an unbounded number of clusters that is practical for modern day data-mining
+applications.
+
+2 The Dirichlet Process Mixture in the Stick-Breaking Representation
+
+A DP mixture model in the stick-breaking representation can be viewed as possessing an inﬁnite
+number of components with random mixing weights [4]. In particular, the generative model of a DP
+mixture assumes:
+
+i=1 that are independently drawn from a
+• An inﬁnite collection of components H = {ηi }∞
+prior pη (ηi |λ) with hyperparameters λ.
+i=1 , vi ∈ [0, 1], ∀i, that are independently
+• An inﬁnite collection of ‘stick lengths’ V = {vi }∞
+drawn from a prior pv (vi |α) with hyperparameters α. They deﬁne the mixing weights
+i=1 of the mixture as πi (V ) = vi Qi−1
+j=1 (1 − vj ), for i = 1, . . . , ∞.
+{πi }∞
+• An observation model px (x|η) that generates a datum x from component η .
+Given a dataset X = {xn }N
+n=1 , each data-case xn is assumed to be generated by ﬁrst drawing a
+component label zn = k ∈ {1, . . . , ∞} from the inﬁnite mixture with probability pz (zn = k |V ) ≡
+πk (V ), and then drawing xn from the corresponding observation model px (xn |ηk ).
+n=1 the set of all labels, W = {H, V , Z } the set of all latent variables
+We will denote Z = {zn }N
+of the DP mixture, and θ = {λ, α} the hyperparameters. In clustering problems we are mainly
+interested in computing the posterior over data labels p(zn |X, θ), as well as the predictive density
+p(x|X, θ) = RH,V p(x|H, V ) RZ p(W |X, θ), which are both intractable since p(W |X, θ) cannot be
+computed analytically.
+
+3 Variational Inference in Dirichlet Process Mixtures
+
+For variational inference, the intractable posterior p(W |X, θ) of the DP mixture can be approxi-
+mated with a parametric family of factorized variational distributions q(W ; φ) of the form
+
+q(W ; φ) =
+
+L
+N
+i )i
+Yi=1 hqvi (vi ; φv
+Yn=1
+i ) qηi (ηi ; φη
+i ) and qηi (ηi ; φη
+i and φη
+i ) are parametric models with parameters φv
+i (one parameter
+where qvi (vi ; φv
+per i), and qzn (zn ) are discrete distributions over the component labels (one distribution per n).
+Blei and Jordan [7] deﬁne an explicit truncation level L ≡ T for the variational mixture in (1) by
+setting qvT (vT = 1) = 1 and assuming that data-cases assign zero responsibility to components
+
+qzn (zn )
+
+(1)
+
+with index higher than the truncation level T , i.e., qzn (zn > T ) = 0. Consequently, in their model
+only components of the mixture up to level T need to be considered. Variational inference then
+i , φη
+n=1 ,
+i=1 and a set of N distributions {qzn (zn )}N
+consists in estimating a set of T parameters {φv
+i }T
+collectively denoted by φ, that minimize the Kullback-Leibler divergence D[q(W ; φ)||p(W |X, θ)]
+between the true posterior and the variational approximation, or equivalently that minimize the free
+energy F (φ) = Eq [log q(W ; φ)] − Eq [log p(W, X |θ)]. Since each distribution qzn (zn ) has nonzero
+support only for zn ≤ T , minimizing F (φ) results in a set of update equations for φ that involve
+only ﬁnite sums [7].
+
+However, explicitly truncating the variational mixture as above has the undesirable property that
+the variational family with truncation level T is not contained within the variational family with
+truncation level T + 1, i.e., the families are not nested.2 The result is that there may be an optimal
+ﬁnite truncation level T for q , that contradicts the intuition that the more components we allow in
+q the better the approximation should be (reaching its best when T → ∞). Moreover, locating a
+near-optimal truncation level may be difﬁcult since F as a function of T may exhibit local minima
+(see Fig. 4 in [7]).
+
+4 Variational Inference with an In ﬁnite Variational Model
+
+F =
+
+Here we propose a slightly different variational model for q that allows families over T to be nested.
+In our setup, q is given by (1) where we let L go to inﬁnity but we tie the parameters of all mod-
+els after a speci ﬁc level T (with T ≪ L).
+In particular, we impose the condition that for all
+components with index i > T the variational distributions for the stick-lengths qvi (vi ) and the
+variational distributions for the components qηi (ηi ) are equal to their corresponding priors, i.e.,
+i ) = pv (vi |α) and qηi (ηi ; φη
+i ) = pη (ηi |λ). In our model we deﬁne the free energy F as
+qvi (vi ; φv
+the limit F = limL→∞ FL , where FL is the free energy deﬁned by q in (1) and a truncated DP
+mixture at level L (justi ﬁed by the almost sure convergence of an L-truncated Dirichlet process to
+an inﬁnite Dirichlet process when L → ∞ [6]). Using the parameter tying assumption for i > T , the
+free energy reads
+T
+N
+qηi (ηi ; φη
+qvi (vi ; φv
+(cid:26)Eqvi(cid:20)log
+Eq(cid:20)log
+pz (zn |V )px (xn |ηzn ) (cid:21). (2)
+pη (ηi |λ) (cid:21)(cid:27)+
+pv (vi |α) (cid:21)+Eqηi(cid:20)log
+i )
+qzn (zn )
+i )
+Xi=1
+Xn=1
+In our scheme T deﬁnes an implicit truncation level of the variational mixt ure, since there are no free
+parameters to optimize beyond level T . As in [7], the free energy F is a function of T parameters
+i , φη
+n=1 . However, contrary to [7], data-cases may now
+i=1 and N distributions {qzn (zn )}N
+{φv
+i }T
+assign nonzero responsibility to components beyond level T , and therefore each qzn (zn ) must now
+have inﬁnite support (which requires computing inﬁnite sum s in the various quantities of interest).
+An important implication of our setup is that the variational families are now nested with respect
+to T (since for i > T , qvi (vi ) and qηi (ηi ) can always revert to their priors), and as a result it is
+guaranteed that as we increase T there exist solutions that decrease F . This is an important result
+because it allows for optimization with adaptive T starting from T = 1 (see Section 7).
+¿From the last term of (2) we directly see that the qzn (zn ) that minimizes F is given by
+exp(Sn,i )
+P∞
+j=1 exp(Sn,j )
+(4)
+[log px (xn |ηi )].
+Sn,i = EqV [log pz (zn = i|V )] + Eqηi
+i and φη
+i can be carried out by direct differentiation of (2) for particular
+Minimization of F over φv
+choices of models for qvi and qηi (see Section 5). Using qzn from (3), the free energy (2) reads
+T
+N
+qηi (ηi ; φη
+∞
+qvi (vi ; φv
+(cid:26)Eqvi (cid:20)log
+pη (ηi |λ) (cid:21) (cid:27) −
+pv (vi |α) (cid:21) + Eqηi (cid:20)log
+i )
+i )
+Xi=1
+Xi=1
+Xn=1
+Evaluation of F requires computing the inﬁnite sum P∞
+i=1 exp(Sn,i ) in (5). The difﬁcult part is
+i=T +1 exp(Sn,i ). Under the parameter tying assumption for i > T , most terms of Sn,i in (4)
+P∞
+2We thank David Blei for pointing this out.
+
+qzn (zn = i) =
+
+where
+
+(3)
+
+F =
+
+log
+
+exp(Sn,i ).
+
+(5)
+
+exp(Sn,i ) =
+
+factor out of the inﬁnite sum as constants (since they do not d epend on i) except for the term
+Pi−1
+j=T +1 Epv [log(1 − v)] = (i − 1 − T )Epv [log(1 − v)]. From the above, the inﬁnite sum can
+be shown to be
+
+∞
+Sn,T +1
+Xi=T +1
+1 − exp (cid:0)Epv [log(1 − v)](cid:1)
+Using the variational q(W ) as an approximation to the true posterior p(W |X, θ), the required pos-
+terior over data labels can be approximated by p(zn |X, θ) ≈ qzn (zn ). Although qzn (zn ) has inﬁnite
+support, in practice it sufﬁces to use the individual qzn (zn = i) for the ﬁnite part
+i ≤ T , and the
+cumulative qzn (zn > T ) for the inﬁnite part. Finally, using the parameter tying ass umption for
+i=1 πi (V ) = 1, the predictive density p(x|X, θ) can be approximated by
+i > T , and the identity P∞
+T
+T
+Epv [πi (V )]iEpη [px (x|η)].
+[px (x|ηi )] + h1 −
+Xi=1
+Xi=1
+EqV [πi (V )]Eqηi
+p(x|X, θ) ≈
+Note that all quantities of interest, such as the free energy (5) and the predictive distribution (7), can
+be computed analytically even though they involve inﬁnite s ums.
+
+(6)
+
+(7)
+
+.
+
+5 Solutions for the exponential family
+
+The results in the previous section apply independently of the choice of models for the DP mixture.
+In this section we provide analytical solutions for models in the exponential family. In particular we
+i,2 ), and that px (x|η), pη (η |λ),
+i ) = Beta(φv
+assume that pv (vi |α) = Beta(α1 , α2 ) and qvi (vi ; φv
+i,1 , φv
+and qηi (ηi ; φη
+i ) are given by
+px (x|η) = h(x) exp{ηT x − a(η)}
+pη (η |λ) = h(η) exp{λ1 η + λ2 (−a(η)) − a(λ)}
+qηi (ηi ; φη
+i ) = h(ηi ) exp{φη
+i,1 ηi + φη
+i,2 (−a(ηi )) − a(φη
+i )}.
+In this case, the probabilities qzn (zn = i) are given by (3) with Sn,i computed from (4) using
+i,1 + φv
+[log vi ] = Ψ(φv
+i,1 ) − Ψ(φv
+i,2 )
+Eqvi
+[log(1 − vj )] = Ψ(φv
+i,2 ) − Ψ(φv
+i,1 + φv
+i,2 )
+Eqvj
+[ηi ]T xn − Eqηi
+[a(ηi )]
+[log px (xn |ηi )] = Eqηi
+Eqηi
+where Ψ(·) is the digamma function. The optimal parameters φv , φη can be found to be
+
+(8)
+(9)
+(10)
+
+(11)
+(12)
+
+(13)
+
+qzn (zn = i)
+
+qzn (zn = j )
+
+φv
+i,1 = α1 +
+
+φv
+i,2 = α2 +
+
+qzn (zn = i)xn
+
+∞
+Xj=i+1
+
+φη
+i,1 = λ1 +
+
+φη
+i,2 = λ2 +
+
+N
+N
+Xn=1
+Xn=1
+N
+N
+Xn=1
+Xn=1
+The update equations are similar to those in [7] except that we have used Beta(α1 , α2 ) instead of
+j=i+1 qzn (zn = j ) which can be computed using (3)
+Beta(1, α), and φv
+i,2 involves an inﬁnite sum P∞
+and (6). In [7] the corresponding sum is ﬁnite since qzn (zn ) is truncated at T .
+Note that the VDP algorithm operates in a space where component labels are distinguishable, i.e.,
+if we permute the labels the total probability of the data changes. Since the average a priori mix-
+ture weights of the components are ordered by their size, the optimal labelling of the a posteriori
+variational components is also ordered according to cluster size. Hence, we have incorporated a re-
+ordering step of components according to approximate size after each optimization step in our ﬁnal
+algorithm (a feature that was not present in [7]).
+
+qzn (zn = i).
+
+(14)
+
+(15)
+
+6 Accelerating inference using a kd-tree
+
+In this section we show that we can achieve accelerated inference for large datasets when we store
+the data in a kd-tree [10] and cache data sufﬁcient statistic s in each node of the kd-tree [8]. A kd-tree
+
+is a binary tree in which the root node contains all points, and each child node contains a subset of
+the data points contained in its father node, where points are separated by a (typically axis-aligned)
+hyperplane. Each point in the set is contained in exactly one node, and the set of outer nodes of a
+given expansion of the kd-tree form a partition of the data set.
+
+Suppose the kd-tree containing our data X is expanded to some level. Following [9], to achieve
+accelerated update equations we constrain all xn in outer node A to share the same qzn (zn ) ≡
+qzA (zA ). We can then show that, under this constraint, the qzA (zA ) that minimizes F is given by
+
+exp(SA,i )
+P∞
+j=1 exp(SA,j )
+[a(ηi )],
+where SA,i is computed as in (4) using (11) –(13) with (13) replaced by Eqηi
+[ηi ]T hxiA −Eqηi
+and hxiA denotes average over all data xn contained in node A. Similarly, if |nA | is the number of
+data in node A, the optimal parameters can be shown to be
+
+qzA (zA = i) =
+
+(16)
+
+(18)
+
+F =
+
+|nA | log
+
+|nA |
+
+qzA (zA = j )
+
+(17)
+
+|nA |qzA (zA = i)
+
+|nA |qzA (zA = i)hxiA
+
+∞
+Xj=i+1
+|nA |qzA (zA = i).
+
+i,1 = α1 + XA
+i,2 = α2 + XA
+φv
+φv
+i,1 = λ1 + XA
+i,2 = λ2 + XA
+φη
+φη
+Finally, using qzA (zA ) from (16) the free energy (5) reads
+T
+qηi (ηi ; φη
+∞
+qvi (vi ; φv
+pv (vi |α) (cid:21) + Eqηi (cid:20)log
+pη (ηi |λ) (cid:21) (cid:27) − XA
+(cid:26)Eqvi (cid:20)log
+i )
+i )
+Xi=1
+Xi=1
+The inﬁnite sums in (17) and (19) can be computed from (6) with Sn,T +1 replaced by SA,T +1 . Note
+that the cost of each update cycle is O(T |A|), which can be a signi ﬁcant improvement over the
+O(T N ) cost when not using a kd-tree. (The cost of building the kd-tree is O(N log N ) but this is
+amortized by multiple optimization steps.) Note that by reﬁ ning the tree (expanding outer nodes)
+the free energy F cannot increase. This allows us to control the trade-off between computational
+resources and approximation: we can always choose to descend the tree until our computational
+resources run out, and the level of approximation will be directly tied to F (deeper levels will mean
+lower F ).
+
+exp(SA,i ). (19)
+
+7 The algorithm
+
+The proposed framework is quite general and allows ﬂexibili
+ty in the design of an algorithm. Below
+we show in pseudocode the algorithm that we used in our experiments (for DP Gaussian mixtures).
+n=1 that is already stored in a kd-tree structure. Output is a set of
+Input is a dataset X = {xn }N
+i , φη
+i=1 and a value for T . From that we can compute responsibilities qzn using (3).
+parameters {φv
+i }T
+
+1. Set T = 1. Expand the kd-tree to some initial level (e.g. four).
+2. Sample a number of ‘candidate’ components c according to size PA |nA |qzA (zA = c), and split the
+component that leads to the maximal reduction of FT . For each candidate c do:
+(a) Expand one-level deeper the outer nodes of the kd-tree that assign to c the highest responsibility
+qzA (zA = c) among all components.
+(b) Split c in two components, i and j , through the bisector of its principal component. Initialize
+the responsibilities qzA (zA = i) and qzA (zA = j ).
+j , φη
+i , φη
+i and SA,j , φv
+(c) Update only SA,i , φv
+j for the new components i and j , keeping all other
+parameters as well as the kd-tree expansion ﬁxed.
+t , φη
+3. Update SA,t , φv
+t for all t ≤ T + 1, while expanding the kd-tree and reordering components.
+4. If FT +1 > FT − ǫ then halt, else set T := T + 1 and go to step 2.
+
+In the above algorithm, the number of sampled candidate components in step 2 can be tuned ac-
+cording to the desired cost/accuracy tradeoff. In our experiments we used 10 candidate components.
+In step 2b we initialized the responsibilities by qzA (zA = i) = 1 = 1 − qzA (zA = j ) if hxiA is
+
+Fast-VDP
+VDP
+BJ
+
+ 23
+r
+o
+t
+c
+ 9
+a
+ 1
+f
+ 
+p
+u
+d
+e
+e
+p
+s
+
+ 1000
+
+ 2000
+
+#data
+
+o
+i
+t
+a
+r
+ 
+y
+g
+r
+e
+n
+e
+ 
+e
+e
+r
+f
+
+ 1
+ 0.9
+ 0.8
+ 5000
+
+Figure 1: Relative runtimes and free energies of Fast-VDP, VDP, and BJ.
+
+Fast-VDP
+VDP
+
+ 160
+
+ 40
+ 1
+
+ 15
+ 10
+ 5
+ 1
+
+ 1.02
+ 1.01
+ 1
+
+ 5
+ 3
+ 1
+
+ 1.02
+ 1.01
+ 1
+
+ 1.02
+ 1.01
+ 1
+
+ 10
+ 100
+ 1000
+#data in thousands
+
+ 128
+ 64
+ 32
+ 16
+dimensionality
+
+ 1
+
+ 2
+c-separation
+
+ 3
+
+Figure 2: Speedup factors and free energy ratios between Fast-VDP and VDP. Top and bottom
+ﬁgures show speedups and free energy ratios, respectively.
+
+closer to i than to j (according to distance to the expected ﬁrst moment). In orde r to speed up the
+partial updates in step 2c, we additionally set qzA (zA = k) = 0 for all k 6= i, j (so all responsibility
+is shared between the two new components). In step 3 we reordered components every one cycle
+and expanded the kd-tree every three update cycles, controlling the expansion by the relative change
+of qzA (zA ) between a node and its children (alternatively one can measure the change of FT +1 ).
+Finally, in step 2c we monitored convergence of the partial updates through FT +1 which can be
+efﬁciently computed by adding/subtracting terms involvin g the new/old components.
+
+8 Experimental results
+
+In this section we demonstrate VDP, and its kd-tree extension Fast-VDP, on synthetic and real
+datasets. In all experiments we assumed a Gaussian observation model px (x|η) and a Gaussian-
+inverse Wishart for pη (η |λ) and qηi (ηi ; φη
+i ).
+Synthetic datasets. As argued in Section 4, an important advantage of VDP over the ‘BJ’ algo-
+rithm of [7] is that in VDP the variational families are nested over T , which ensures that the free
+energy is a monotone decreasing function of T and therefore allows for an adaptive T (starting with
+the trivial initialization T = 1). On the contrary, BJ optimizes the parameters for ﬁxed T (and
+potentially minimizes the resulting free energy over different values of T ), which requires a nontriv-
+ial initialization step for each T . Clearly, both the total runtime as well as the quality of the ﬁnal
+solution of BJ depend largely on its initialization step, which makes the direct comparison of VDP
+with BJ difﬁcult. Still, to get a feeling of the relative perf ormance of VDP, Fast-VDP, and BJ, we
+applied all three algorithms on a synthetic dataset containing 1000 to 5000 data-cases sampled from
+10 Gaussians in 16 dimensions, in which the free parameters of BJ were set exactly as described
+in [7] (20 initialization trials and T = 20). VDP and Fast-VDP were also executed until T = 20. In
+Fig. 1 we show the speedup factors and free energy ratios3 among the three algorithms. Fast-VDP
+
+3Free energy ratio is deﬁned as 1 + (FA − FB )/|FB |, where A and B are either Fast-VDP, VDP or BJ.
+
+Fast-VDP
+
+VDP
+
+Figure 3: Clustering results of Fast-VDP and VDP, with a speedup of 21. The clusters are ordered
+according to size (from top left to bottom right).
+
+was approximately 23 times faster than BJ, and three times faster than VDP on 5000 data-cases.
+Moreover, Fast-VDP and VDP were always better than BJ in terms of free energy.
+
+In a second synthetic set of experiments we compared the speedup of Fast-VDP over VDP. We
+sampled data from 10 Gaussians in dimension D with component separation4 c. Using default
+number of data-cases N = 10, 000, dimensionality D = 16, and separation c = 2, we varied
+each of them, one at a time. In Fig. 2 we show the speedup factor (top) and the free energy ratio
+(bottom) between the two algorithms. Note that the latter is always worse for Fast-VDP since it is an
+approximation to VDP (ratio closer to one means better approximation). Fig. 2-left illustrates that
+the speedup of Fast-VDP over VDP is at least linear in N , as expected from the update equations
+in Section 6. The speedup factor was approximately 154 for one million data-cases, while the free
+energy ratio was almost constant over N . Fig. 2-center shows an interesting dependence of speed on
+dimensionality, with D = 64 giving the largest speedup. The three plots in Fig. 2 are in agreement
+with similar plots in [8, 9].
+Real datasets.
+In this experiment we applied VDP and Fast-VDP for clustering image data. We
+used the MNIST dataset (http://yann.lecun.com/exdb/mnist/) which consists of 60, 000
+images of the digits 0–9 in 784 dimensions (28 by 28 pixels). W e ﬁrst applied PCA to reduce the
+dimensionality of the data to 50. Fast-VDP found 96 clusters in 3, 379 seconds with free energy
+F = 1.759 × 107 , while VDP found 88 clusters in 72, 037 seconds with free energy 1.684 × 107 .
+The speedup was 21 and the free energy ratio was 1.044. The mean images of the discovered
+components are illustrated in Fig. 3. The results of the two algorithms seem qualitatively similar,
+while Fast-VDP computed its results much faster than VDP.
+
+In a second real data experiment we clustered documents from citeseer (http://citeseer.ist.
+psu.edu). The dataset has 30, 696 documents, with a vocabulary size of 32, 473 words. Each
+document is represented by the counts of words in its abstract. We preprocessed the dataset by
+Latent Dirichlet Allocation [12] with 200 topics5 . We subsequently transformed these topic-counts
+yj,k (count value of k’th topic in the j ’th document) into xj,k = log(1 + yj,k ) to ﬁt a normal
+distribution better. In this problem the elapsed time of Fast-VDP and VDP were 335 seconds and
+2,256 seconds, respectively, hence a speedup of 6.7. The free energy ratio was 1.040. Fast-VDP
+found ﬁve clusters, while VDP found six clusters. Table 1 sho ws the three most frequent topics in
+each cluster. Although the two algorithms found a different number of clusters, we can see that the
+clusters B and F found by VDP are similar clusters, whereas Fast-VDP did not distinguish between
+these two. Table 2 shows words included in these topics, showing that the documents are well-
+clustered.
+
+9 Conclusions
+
+We described VDP, a variational mean- ﬁeld algorithm for Dir ichlet Process mixtures, and its fast
+extension Fast-VDP that utilizes kd-trees to achieve speedups. Our contribution is twofold: First,
+
+4A Gaussian mixture is c-separated if for each pair (i, j ) of components we have ||mi − mj ||2 ≥
+) , where λmax denotes the maximum eigenvalue of their covariance [11].
+c2D max(λmax
+, λmax
+i
+j
+5We thank David Newman for this preprocessing.
+
+cluster
+(in descending order)
+1
+the three most
+2
+frequent topics
+3
+
+a
+
+81
+102
+59
+
+Fast-VDP
+b
+c
+
+73
+174
+40
+
+35
+50
+110
+
+d
+
+49
+92
+94
+
+e
+
+A
+
+B
+
+VDP
+C
+
+D
+
+76
+4
+129
+
+81
+102
+59
+
+73
+40
+174
+
+35
+50
+110
+
+76
+4
+129
+
+E
+
+49
+92
+94
+
+F
+
+73
+174
+40
+
+Table 1: The three most frequent topics in each clusters. Fast-VDP found ﬁve clusters, a–e, while
+VDP found six clusters, A–F.
+
+cluster
+
+a, A
+b, B, F
+c, C
+d, E
+e, D
+
+the most
+frequent topic
+81
+73
+35
+49
+76
+
+words
+
+economic, policy, countries, bank, growth, ﬁrm, public, trade, marke t, ...
+trafﬁc, packet, tcp, network, delay, rate, bandwidth, buffer, end, lo ss, ...
+algebra, algebras, ring, algebraic, ideal, ﬁeld, lie, group, theory, ..
+.
+motion, tracking, camera, image, images, scene, stereo, object, ...
+grammar, semantic, parsing, syntactic, discourse, parser, linguistic, ...
+
+Table 2: Words in the most frequent topic of each cluster.
+
+we extended the framework of [7] to allow for nested variational families and an adaptive truncation
+level for the variational mixture. Second, we showed how kd-trees can be employed in the frame-
+work offering signi ﬁcant speedups, thus extending related results for ﬁnite mixture models [8, 9]. To
+our knowledge, the VDP algorithm is the ﬁrst nonparametric B ayesian approach to large-scale data
+mining. Future work includes extending our approach to other models in the stick-breaking repre-
+sentation (e.g., priors of the form pvi (vi |ai , bi ) = Beta(ai , bi )), as well as alternative DP mixture
+representations such as the Chinese restaurant process [3].
+
+Acknowledgments
+We thank Dave Newman for sharing code and David Blei for helpful comments. This material is
+based upon work supported by ONR under Grant No. N00014-06-1-0734 and the National Science
+Foundation under Grant No. 0535278
+
+References
+
+[1] T. Ferguson. A Bayesian analysis of some nonparametric problems. Ann. Statist., 1:209–230, 1973.
+[2] C. Antoniak. Mixtures of Dirichlet processes with applications to Bayesian nonparametric problems. Ann.
+Statist., 2(6):1152–1174, 1974.
+[3] D. Aldous. Exchangeability and related topics. In ´Ecole d’ ´et ´e de Probabilit ´e de Saint-Flour XIII, 1983.
+[4] J. Sethuraman. A constructive deﬁnition of Dirichlet priors. Statist. Sinica, 4:639–650, 1994.
+[5] C.E. Rasmussen. The inﬁnite Gaussian mixture model. In NIPS 12. MIT Press, 2000.
+[6] H. Ishwaran and M. Zarepour. Exact and approximate sum-representations for the Dirichlet process. Can.
+J. Statist., 30:269–283, 2002.
+[7] D.M. Blei and M.I. Jordan. Variational inference for Dirichlet process mixtures. Journal of Bayesian
+Analysis, 1(1):121–144, 2005.
+[8] A.W. Moore. Very fast EM-based mixture model clustering using multiresolution kd-trees. In NIPS 11.
+MIT Press, 1999.
+[9] J.J. Verbeek, J.R.J. Nunnink, and N. Vlassis. Accelerated EM-based clustering of large data sets. Data
+Mining and Knowledge Discovery, 13(3):291–307, 2006.
+[10] J.L. Bentley. Multidimensional binary search trees used for associative searching. Commun. ACM,
+18(9):509–517, 1975.
+[11] S. Dasgupta. Learning mixtures of Gaussians. In IEEE Symp. on Foundations of Computer Science, 1999.
+[12] D.M. Blei, A.Y. Ng, and M.I. Jordan. Latent Dirichlet allocation. Journal of Machine Learning Research,
+3:993–1022, 2003.
+
+

@@ -1,0 +1,863 @@
+Dynamic Social Network Analysis using Latent
+Space Models
+
+Purnamrita Sarkar, Andrew W. Moore
+Center for Automated Learning and Discovery
+Carnegie Mellon University
+Pittsburgh, PA 15213
+(psarkar,awm)@cs.cmu.edu
+
+Abstract
+This paper explores two aspects of social network modeling. First,
+we generalize a successful static model of relationships into a dynamic
+model that accounts for friendships drifting over time. Second, we show
+how to make it tractable to learn such models from data, even as the
+number of entities n gets large. The generalized model associates each
+entity with a point in p-dimensional Euclidian latent space. The points
+can move as time progresses but large moves in latent space are improb-
+able. Observed links between entities are more likely if the entities are
+close in latent space. We show how to make such a model tractable (sub-
+quadratic in the number of entities) by the use of appropriate kernel func-
+tions for similarity in latent space; the use of low dimensional kd-trees; a
+new ef(cid:2)cient dynamic adaptation of multidimensional scaling for a (cid:2)rst
+pass of approximate projection of entities into latent space; and an ef(cid:2)-
+cient conjugate gradient update rule for non-linear local optimization in
+which amortized time per entity during an update is O(log n). We use
+both synthetic and real-world data on upto 11,000 entities which indicate
+linear scaling in computation time and improved performance over four
+alternative approaches. We also illustrate the system operating on twelve
+years of NIPS co-publication data. We present a detailed version of this
+work in [1].
+
+1 Introduction
+
+Social network analysis is becoming increasingly important in many (cid:2)elds besides sociol-
+ogy including intelligence analysis [2], marketing [3] and recommender systems [4]. Here
+we consider learning in systems in which relationships drift over time.
+Consider a friendship graph in which the nodes are entities and two entities are linked if
+and only if they have been observed to collaborate in some way. In 2002, Raftery et al
+[5]introduced a model similar to Multidimensional Scaling in which entities are associated
+with locations in p-dimensional space, and links are more likely if the entities are close in
+latent space. In this paper we suppose that each observed link is associated with a discrete
+timestep, so each timestep produces its own graph of observed links, and information is
+preserved between timesteps by two assumptions. First we assume entities can move in
+latent space between timesteps, but large moves are improbable. Second, we make a stan-
+dard Markov assumption that latent locations at time t + 1 are conditionally independent
+of all previous locations given the latent locations at time t and that the observed graph at
+
+time t is conditionally independent of all other positions and graphs, given the locations at
+time t (see Figure 1).
+Let Gt be the graph of observed pairwise links at time t. Assuming n entities, and a
+p-dimensional latent space, let Xt be an n £ p matrix in which the ith row, called xi , cor-
+responds to the latent position of entity i at time t. Our conditional independence structure,
+familiar in HMMs and Kalman (cid:2)lters, is shown in Figure 1. For most of this paper we treat
+the problem as a tracking problem in which we estimate Xt at each timestep as a function
+of the current observed graph Gt and the previously estimated positions Xt¡1 . We want
+(1)
+P (X jGt ; Xt¡1 ) = arg max
+Xt = arg max
+P (Gt jX )P (X jXt¡1 )
+X
+X
+In Section 2 we design models of P (Gt jXt ) and P (Xt jXt¡1 ) that meet our modeling
+needs and which have learning times that are tractable as n gets large. In Sections 3 and
+4 we introduce a two-stage procedure for locally optimizing equation (1). The (cid:2)rst stage
+generalizes linear multidimensional scaling algorithms to the dynamic case while carefully
+maintaining the ability to computationally exploit sparsity in the graph. This gives an
+approximate estimate of Xt . The second stage re(cid:2)nes this estimate using an augmented
+conjugate gradient approach in which gradient updates can use kd-trees over latent space
+to allow O(n log n) computation per step.
+
+X0
+
+X1
+
+G0
+
+G1
+
+XT
+
+GT
+
+Figure 1: Model through time
+
+2 The DSNL (Dynamic Social Network in Latent space) Model
+Let dij = jxi ¡ xj j be the Euclidian distance between entities i and j in latent space at time
+t. For clarity we will not use a t subscript on these variables except where it is needed. We
+denote linkage at time t by i » j , and absence of a link by i 6» j . p(i » j ) denotes the
+probability of observing the link. We use p(i » j ) and pij interchangeably.
+2.1 Observation Model
+The likelihood score function P (Gt jXt ) intuitively measures how well the model explains
+pairs of entities which are actually connected in the training graph as well as those that are
+not. Thus it is simply
+
+(2)
+
+(1 ¡ pij )
+
+pij Yi6»j
+P (Gt jXt ) = Yi»j
+Following [5] the link probability is a logistic function of dij and is denoted as pL
+ij , i.e.
+1
+(3)
+pL
+ij =
+1 + e(dij ¡ﬁ)
+where ﬁ is a constant whose signi(cid:2)cance is explained shortly. So far this model is similar
+to [5]. To extend this model to the dynamic case, we now make two important alterations.
+First, we allow entities to vary their sociability. Some entities participate in many links
+while others are in few. We give each entity a radius, which will be used as a sphere of
+interaction within latent space. We denote entity i’s radius as ri . We introduce the term
+rij to replace ﬁ in equation (3). rij is the maximum of the radii of i and j . Intuitively, an
+entity with higher degree will have a larger radius. Thus we de(cid:2)ne the radius of entity i
+with degree –i as, c(–i + 1), so that rij is c £ (max(–i ; –j ) + 1), and c will be estimated
+from the data. In practice, we estimate the constant c by a simple line-search on the score
+function. The constant 1 ensures a nonzero radius.
+
+…
+Simple
+Logistic
+
+0.6
+
+0.55
+
+0.5
+
+0.45
+
+0.4
+
+0.35
+
+0.3
+
+0.25
+
+0.2
+
+0.15
+
+0.1
+
+New
+Linkage
+Probability
+
+1
+
+0.5
+
+0
+0
+
+0.2
+
+0.4
+
+0.6
+
+0.8
+
+1
+
+70
+
+60
+
+50
+
+40
+
+30
+
+20
+
+10
+
+0
+
+1
+
+0
+
+−1
+
+−2
+
+1
+
+0
+
+−1
+
+−2
+
+(B)
+(A)
+Figure 2: A. The actual logistic function, and our kernelized version with ‰ = 0:1. B.The actual
+((cid:3)at, with one minimum), and the modi(cid:2)ed (steep with two minima) constraint functions, for two
+dimensions, with Xt varying over a 2-d grid, from (¡2; ¡2) to (2; 2), and Xt¡1 = (1; 1)
+
+The second alteration is to weigh the link probabilities by a kernel function. We alter the
+simple logistic link probability pL
+ij , such that two entities have high probability of linkage
+only if their latent coordinates are within distance rij of one another. Beyond this range
+there is a constant noise probability ‰ of linkage. Later we will need the kernelized function
+to be continuous and differentiable at rij . Thus we pick the biquadratic kernel.
+when dij • rij
+K (dij ) = (1 ¡ (dij =rij )2 )2 ;
+(4)
+otherwise
+= 0;
+Using this function we rede(cid:2)ne our link probability pij as pL
+ij K (dij ) + ‰(1 ¡ K (dij )) .
+This is equivalent to having,
+1
+1 + e(dij ¡rij ) K (dij ) + ‰(1 ¡ K (dij ))
+= ‰
+We plot this function in Figure 2A.
+2.2 Transition Model
+The second part of the score penalizes large displacements from the previous time step. We
+use the most obvious Gaussian model: each coordinate of each latent position is indepen-
+dently subjected to a Gaussian perturbation with mean 0 and variance (cid:190) 2 . Thus
+n
+jXi;t ¡ Xi;t¡1 j2 =2(cid:190)2 + const
+X
+log P (Xt jXt¡1 ) = ¡
+i=1
+
+when dij • rij
+
+pij =
+
+otherwise
+
+(5)
+
+(6)
+
+3 Learning Stage One: Linear Approximation
+We generalize classical multidimensional scaling (MDS) [6] to get an initial estimate of the
+positions in the latent space. We begin by recapping what MDS does. It takes as input an
+n £ n matrix of non-negative distances D where Di;j denotes the target distance between
+entity i and entity j . It produces an n £ p matrix X where the ith row is the position
+of entity i in p-dimensional latent space. MDS (cid:2)nds arg minX j ~D ¡ XX T jF where j ¢ jF
+denotes the Frobenius norm [7]. ~D is the similarity matrix obtained from D , using standard
+linear algebra operations. Let ¡ be the matrix of the eigenvectors of ~D , and ⁄ be a diagonal
+matrix with the corresponding eigenvalues. Denote the matrix of the p positive eigenvalues
+by ⁄p and the corresponding columns of ¡ by ¡p . From this follows the expression of
+1
+classical MDS, i.e. X = ¡p⁄
+p .
+2
+Two questions remain. Firstly, what should be our target distance matrix D? Secondly,
+how should this be extended to account for time? The (cid:2)rst answer follows from [5] and
+
+de(cid:2)nes Dij as length of the shortest path from i to j in graph G. We restrict this length to
+a maximum of three hops in order to avoid the full n2 computation of all-shortest paths. D
+thus has a dense mostly constant structure.
+When accounting for time, we do not want the positions of entities to change drastically
+from one time step to another. Hence we try to minimize jXt ¡ Xt¡1 jF along with the
+main objective of MDS. Let ~Dt denote the ~D matrix derived from Gt . We formulate the
+t jF + ‚jXt ¡ Xt¡1 jF , where ‚ is a parameter
+above problem as minimization of j ~Dt ¡ XtX T
+which controls the importance of the two parts of the objective function. The above does
+not have a closed form solution. However, by constraining the objective function further,
+we can obtain a closed form solution for a closely related problem. The idea is to work
+with the distances and not the positions themselves. Since we are learning the positions
+from distances, we change our constraint (during this linear stage of learning) to encourage
+the pairwise distance between all pairs of entities to change little between each time step,
+instead of encouraging the individual coordinates to change little. Hence we try to minimize
+(7)
+j ~Dt ¡ XtX T
+t jF + ‚jXtX T
+t ¡ Xt¡1X T
+t¡1 jF
+which is equivalent to minimizing the trace of ( ~Dt ¡ XtX T
+t )T ( ~Dt ¡ XtX T
+t ) + ‚(XtX T
+t ¡
+t¡1 ): The above expression has an analytical solution: an
+Xt¡1X T
+t¡1 )T (XtX T
+t ¡ Xt¡1X T
+af(cid:2)ne combination of the current information from the graph and the coordinates at the last
+timestep. Namely, the new solution satis(cid:2)es,
+‚
+1
+~Dt +
+1 + ‚
+1 + ‚
+We plot the two constraint functions in Figure 2B. When ‚ is zero, XtX T
+t equals ~Dt ,
+and when ‚ ! 1, it is equal to Xt¡1X T
+t¡1 . As in MDS, eigendecomposition of the right
+hand side of equation 8 yields the solution Xt which minimizes the objective function in
+equation 7.
+We now have a method which (cid:2)nds latent coordinates for time t that are consistent with
+Gt and have similar pairwise distances as Xt¡1 . But although all pairwise distances may
+be similar, the coordinates may be very different. Indeed, even if ‚ is very large and we
+only care about preserving distances, the resulting X may be any re(cid:3)ection, rotation or
+translation of the original Xt¡1 . We solve this by applying the Procrustes transform to the
+solution Xt of equation 8. This transform (cid:2)nds the linear area-preserving transformation
+of Xt that brings it closest to the previous con(cid:2)guration Xt¡1 . The solution is unique
+t Xt¡1 is nonsingular [8], and for zero centered Xt and Xt¡1 , is given by X ⁄
+if X T
+t =
+t Xt¡1 = U SV T using Singular Value Decomposition (SVD).
+XtU V T , where X T
+Before moving on to stage two’s nonlinear optimization we must address the scalability of
+stage one. The naive implementation (SVD of the matrix from equation 8) has a cost of
+t , are dense n £ n matrices. However in [1]
+O(n3 ), for n nodes, since both ~Dt , and XtX T
+we show how we use the power method [9] to exploit the dense mostly constant structure of
+Dt and the fact that XtX T
+is just an outer product of two thin n £ p matrices. The power
+t
+method is an iterative eigendecomposition technique which only involves multiplying a
+matrix by a vector. Its net cost can be shown to be O(n2 f + n + pn) per iteration, where
+f is the fraction of non-constant entries in Dt .
+
+Xt¡1X T
+t¡1
+
+XtX T
+t =
+
+(8)
+
+4 Stage Two: Nonlinear Search
+Stage One places entities in reasonably consistent locations which (cid:2)t our intuition, but it is
+not tied to the probabilistic model from Section 2. Stage two uses these locations as ini-
+tializations for applying nonlinear optimization directly to the model in equation 1. We use
+conjugate gradient (CG) which was the most effective of several alternatives attempted. The
+most important practical question is how to make these gradient computations tractable,
+especially when the model likelihood involves a double sum over all entities. We must
+
+compute the partial derivatives of logP (Gt jXt ) + logP (Xt jXt¡1 ) with respect to all values
+xi;k;t for i 2 1:::n and k 2 1::p. First consider the P (Gt jXt ) term:
+
+@ log P (Gt jXt )
+@Xi;k;t
+
+=X
+j;i»j
+
+@ log pij
+@Xi;k;t
+
++X
+j;i6»j
+
+@ log(1 ¡ pij )
+@Xi;k;t
+
+= X
+j;i»j
+
+@ pij =@Xi;k;t
+pij
+
+¡X
+j;i6»j
+
+@ pij =@Xi;k;t
+1 ¡ pij
+
+(9)
+
+= ˆi;j;k;t
+
+@ (pL
+ij K + ‰(1 ¡ K ))
+@Xi;k;t
+
+= K
+
+@ pL
+ij
+@Xi;k;t
+
++ pL
+ij
+
+@K
+@Xi;k;t
+
+¡ ‰
+
+@K
+@Xi;k;t
+
+@ pij =@Xi;k;t =
+
+(10)
+However K , the biquadratic kernel introduced in equation 4, evaluates to zero and has a
+zero derivative when dij > rij . Plugging this information in (10), we have,
+@ pij =@Xi;k;t = ‰ˆi;j;k;t when dij • rij ;
+otherwise:
+0
+Equation (9) now becomes
+@ log P (Gt jXt )
+@Xi;k;t
+
+= X
+¡ X
+j;i»j
+j;i6»j
+dij •rij
+dij •rij
+when dij • rij and zero otherwise. This simpli(cid:2)cation is very important because we
+can now use a spatial data structure such as a kd-tree in the low dimensional latent space to
+retrieve all pairs of entities that lie within each other’s radius in time O(rn + n log n) where
+r is the average number of in-radius neighbors of an entity [10, 11]. The computation of the
+gradient involves only those pairs. A slightly more sophisticated trick, omitted for space
+reasons, lets us compute log P (Gt jXt ), in O(rn + n log n) time. From equation(6), we
+have
+
+ˆi;j;k;t
+1 ¡ pij
+
+ˆi;j;k;t
+pij
+
+(11)
+
+(12)
+
+= ¡
+
+@ log P (Xt jXt¡1 )
+Xi;k;t ¡ Xi;k;t¡1
+(cid:190)2
+@Xi;k;t
+In the early stages of Conjugate Gradient, there is a danger of a plateau in our score
+function in which our (cid:2)rst derivative is insensitive to two entities that are connected, but
+are not within each other’s radius. To aid the early steps of CG, we add an additional term
+to the score function, which penalizes all pairs of connected entities according to the square
+ij . Weighting this by a constant pC onst,
+of their separation in latent space, i.e. Pi»j d2
+our (cid:2)nal CG gradient becomes
+@ log P (Xt jXt¡1 )
+@ log P (Gt jXt )
+@S coret
++
+=
+@Xi;k;t
+@Xi;k;t
+@Xi;k;t
+
+(Xi;k;t ¡ Xj;k;t )
+
+(13)
+
+¡ pC onst £ 2 X
+j
+i»j
+
+5 Results
+We report experiments on synthetic data generated by a model described below and the
+NIPS co-publication data 1 . We investigate three things: ability of the algorithm to re-
+construct the latent space based only on link observations, anecdotal evaluation of what
+happens to the NIPS data, and scalability results on large datasets from Citeseer.
+
+5.1 Comparing with ground truth
+We generate synthetic data for six consecutive timesteps. At each timestep the next set of
+two-dimensional latent coordinates are generated with the former positions as mean, and a
+gaussian noise of standard deviation (cid:190) = 0:01. Each entity is assigned a random radius.
+At each step , each entity is linked with a relatively higher probability to the ones falling
+within its radius, or containing it within their radii. There is a noise probability of 0:1, by
+1 See http://www.cs.toronto.edu/»roweis/data.html
+
+which any two entities i and j outside the maximum pairwise radii rij are connected. We
+generate graphs of sizes 20 to 1280, doubling the size every time. Accuracy is measured
+by drawing a test set from the same model, and determining the ROC curve for predicting
+whether a pair of entities will be linked in the test set. We experiment with six approaches:
+A. The True model that was used to generate the data (this is an upper bound on the perfor-
+mance of any learning algotihm).
+B. The DSNL model learned using the above algorithms.
+C. A random model, guessing link probabilities randomly (this should have an AUC of 0.5).
+D. The Simple Counting model (Control Experiment). This ranks the likelihood of being
+linked in the testset according to the frequency of linkage in the training set. It can be
+considered as the equivalent of the 1-nearest-neighbor method in classi(cid:2)cation: it does not
+generalize, but merely duplicates the training set.
+E. Time-varying MDS: The model that results from running stage one only.
+F. MDS with no time: The model that results from ignoring time information and running
+independent MDS on each timestep.
+Figure 3 shows the ROC curves for the third timestep on a test set of size 160. Table 1
+shows the AUC scores of our approach and the (cid:2)ve alternatives for 3 different sizes of the
+dataset over the (cid:2)rst, third, and last time steps.
+
+Table 1. AUC score on graphs of size n for six
+different models (A) True (B) Model learned
+by DSNL,(C) Random Model,(D) Simple
+Counting model(Control), (E) MDS with time,
+and (F) MDS without time.
+
+D
+
+C
+n=80
+0.48
+0.76
+0.81
+0.48
+0.50
+0.76
+n=320
+0.70
+0.50
+0.51
+0.70
+0.50
+0.71
+n=1280
+0.68
+0.50
+0.69
+0.50
+0.50
+0.68
+
+E
+
+0.77
+0.77
+0.77
+
+0.72
+0.72
+0.74
+
+F
+
+0.67
+0.65
+0.67
+
+0.65
+0.62
+0.64
+
+0.61
+0.74
+0.70
+
+0.70
+0.71
+0.70
+
+600
+
+500
+
+400
+
+300
+
+200
+
+100
+
+e
+v
+i
+t
+i
+s
+o
+P
+ 
+e
+u
+r
+T
+
+True Model
+Random Model
+MDS without time
+Time−varying MDS
+Model Learned
+Control Experiment
+
+0
+
+0
+
+2000
+
+4000
+
+6000
+8000
+False Positive
+
+10000
+
+12000
+
+14000
+
+Time A
+
+1
+3
+6
+
+1
+3
+6
+
+0.94
+0.93
+0.93
+
+0.86
+0.86
+0.86
+
+B
+
+0.85
+0.88
+0.82
+
+0.83
+0.79
+0.81
+
+1
+3
+6
+
+0.81
+0.80
+0.81
+
+0.79
+0.79
+0.78
+
+Figure 3: ROC curves of the six different
+models described earlier for test set of size
+160 at timestep 3, in simulated data.
+In all the cases we see that the true model has the highest AUC score, followed by the
+model learned by DSNL. The simple counting model rightly guesses some of the links in
+the test graph from the training graph. However it also predicts the noise as links, and ends
+up being beaten by the model we learn. The results show that it is not suf(cid:2)cient to only
+perform Stage One. When the number of links is small, MDS without time does poorly
+compared to our temporal version. However as the number of links grows quadratically
+with the number of entities, regular MDS does almost as well as the temporal version:
+this is not a surprise because the generalization bene(cid:2)t from the previous timestep becomes
+unnecessary with suf(cid:2)cient data on the current timestep. Further experiments we conducted
+[1] show that the experiments initialized with time-variant MDS converges almost twice as
+fast as those with random initialization, and also converges to a better log-likelihood.
+5.2 Visualizing the NIPS coauthorship data over time
+For clarity we present a subset of the NIPS dataset, obtained by choosing a well-connected
+author, and including all authors and links within a few hops. We dropped authors who
+
+appeared only once and we merged the timesteps into three groups: 1987-1990 (Figure 4A),
+1991-1994(Figure 4B), and 1995-1998(Figure 4C). In each picture we have the links for
+that timestep, a few well connected people highlighted, with their radii. These radii are
+learnt from the model. Remember that the distance between two people is related to the
+radii. Two people with very small radii, are considered far apart in the model even if they
+are physically close. To give some intuition of the movement of the rest of the points, we
+divided the area in the (cid:2)rst timestep in 4 parts, and colored and shaped the points in each
+differently. This coloring and shaping is preserved throughout all the timesteps.
+In this paper we limit ourselves to anecdotal examination of the latent positions. For ex-
+ample, with BurgesC and V apnikV we see that they had very small radii in the (cid:2)rst four
+years, and were further apart from one another, since there was no co-publication. However
+in the second timestep they move closer, though there are no direct links. This is because
+of the fact that they both had co-published with neighbors of one another. On the third time
+step they make a connection, and are assigned almost identical coordinates, since they have
+a very overlapping set of neighbors.
+We end the discussion with entities H intonG , GhahramaniZ , and J ordanM . In the (cid:2)rst
+timestep they did not coauthor with one another, and were placed outside one-another’s
+radii. In the second timestep GhahramaniZ , and H intonG coauthor with J ordanM .
+However since H intonG had a large radius and more links than the former, it is harder
+for him to meet all the constraints, and he doesn’t move very close to J ordanM . In the
+next timestep however GhahramaniZ has a link with both of the others, and they move
+substantially closer to one another.
+5.3 Performance Issues
+Figure 4D shows the performance against the number of entities. When kd-trees are used
+and the graphs are sparse scaling is clearly sub-quadratic and nearly linear in the number
+of entities, meeting our expectation of O(n log n) performance. We successfully applied
+our algorithms to networks of sizes up to 11,000 [1]. The results show subquadratic time-
+complexity along with satisfactory link prediction on test sets.
+
+6 Conclusions and Future Work
+This paper has described a method for modeling relationships that change over time. We
+believe it is useful both for understanding relationships in a mass of historical data and also
+as a tool for predicting future interactions, and we plan to explore both directions further.
+In [1] we develop a forward-backward algorithm, optimizing the global likelihood instead
+of treating the model as a tracking model. We also plan to extend this to (cid:2)nd the posterior
+distributions of the coordinates following the approach used by [5].
+Acknowledgments
+We are very grateful to Anna Goldenberg for her valuable insights. We also thank Paul
+Komarek and Sajid Siddiqi for some very helpful discussions and useful comments. This
+work was partially funded by DARPA EELD grant F30602-01-2-0569.
+
+References
+[1] P. Sarkar and A. Moore. Dynamic social network analysis using latent space models. SIGKDD
+Explorations: Special Issue on Link Mining, 2005.
+[2] J. Schroeder, J. J. Xu, and H. Chen. Crimelink explorer: Using domain knowledge to facilitate
+automated crime association analysis. In ISI, pages 168(cid:150)180, 2003.
+[3] J. J. Carrasco, D. C. Fain, K. J. Lang, and L. Zhukov. Clustering of bipartite advertiser-keyword
+graph. In ICDM, 2003.
+[4] J. Palau, M. Montaner, and B. L ·opez. Collaboration analysis in recommender systems using
+social networks. In Eighth Intl. Workshop on Cooperative Info. Agents (CIA’04), 2004.
+
+Burges
+C
+Vapnik
+V
+
+Koch
+C
+
+Manwani
+A
+
+Viola
+Sejnowski
+P
+T
+Hinton
+G
+
+Jordan
+M
+Ghahramani
+Z
+
+(B)
+
+quadratic score
+score using kd−tree
+
+Koch
+C
+
+Viola
+P
+
+Sejnowski
+T
+
+Manwani
+A
+
+Burges
+C
+
+Vapnik
+V
+
+Jordan
+Hinton
+M
+G
+Ghahramani
+
+Z
+
+(A)
+
+Manwani
+A
+Koch
+C
+
+Viola
+P
+Sejnowski
+T
+Hinton
+Ghahramani
+G
+Z
+Jordan
+M
+
+Burges
+C
+
+Vapnik
+V
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+s
+d
+n
+o
+c
+e
+S
+ 
+n
+i
+ 
+e
+m
+i
+T
+
+(C)
+
+0
+300
+
+400
+
+500
+
+800
+
+900
+
+1000
+
+600
+700
+Number of entities
+(D)
+
+Figure 4: NIPS coauthorship data at A. Timestep 1: green stars in upper-left corner, ma-
+genta pluses in top right, cyan spots in lower right, and blue crosses in the bottom-left. B.
+Timestep 2. C. Timestep 3. D. Time taken for score calculation vs number of entities.
+
+[5] A. E. Raftery, M. S. Handcock, and P. D. Hoff. Latent space approaches to social network
+analysis. J. Amer. Stat. Assoc., 15:460, 2002.
+[6] R. L. Breiger, S. A. Boorman, and P. Arabie. An algorithm for clustering relational data with
+applications to social network analysis and comparison with multidimensional scaling. J. of
+Math. Psych., 12:328(cid:150)383, 1975.
+[7] I. Borg and P. Groenen. Modern Multidimensional Scaling. Springer-Verlag, 1997.
+[8] R. Sibson. Studies in the robustness of multidimensional scaling : Perturbational analysis of
+classical scaling. J. Royal Stat. Soc. B, Methodological, 41:217(cid:150)229, 1979.
+[9] David S. Watkins. Fundamentals of Matrix Computations. John Wiley & Sons, 1991.
+[10] F. Preparata and M. Shamos. Computational Geometry: An Introduction. Springer, 1985.
+[11] A. G. Gray and A. W. Moore. N-body problems in statistical learning. In NIPS, 2001.
+
+

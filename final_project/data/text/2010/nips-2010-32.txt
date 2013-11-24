@@ -1,0 +1,691 @@
+Bootstrapping Apprenticeship Learning
+
+Abdeslam Boularias
+Department of Empirical Inference
+Max-Planck Institute for Biological Cybernetics
+72076 T ¨ubingen, Germany
+abdeslam.boularias@tuebingen.mpg.de
+
+Brahim Chaib-Draa
+Department of Computer Science
+Laval University
+Quebec G1V 0A6, Canada
+chaib@damas.ift.ulaval.ca
+
+Abstract
+
+We consider the problem of apprenticeship learning where the examples, demon-
+strated by an expert, cover only a small part of a large state space. Inverse Rein-
+forcement Learning (IRL) provides an efﬁcient tool for generalizing the demon-
+stration, based on the assumption that the expert is maximizing a utility function
+that is a linear combination of state-action features. Most IRL algorithms use a
+simple Monte Carlo estimation to approximate the expected feature counts under
+the expert’s policy. In this paper, we show that the quality of the learned policies
+is highly sensitive to the error in estimating the feature counts. To reduce this
+error, we introduce a novel approach for bootstrapping the demonstration by as-
+suming that: (i), the expert is (near-)optimal, and (ii), the dynamics of the system
+is known. Empirical results on gridworlds and car racing problems show that our
+approach is able to learn good policies from a small number of demonstrations.
+
+1
+
+Introduction
+
+Modern robots are designed to perform complicated planning and control tasks, such as manipulat-
+ing objects, navigating in outdoor environments, and driving in urban settings. Unfortunately, man-
+ually programming these tasks is almost infeasible in practice due to their high number of states.
+Markov Decision Processes (MDPs) provide an efﬁcient tool for handling such tasks with a little
+help from an expert. The expert’s help consists in simply specifying a reward function. However, in
+many practical problems, even specifying a reward function is not easy. In fact, it is often easier to
+demonstrate examples of a desired behavior than to deﬁne a reward function (Ng & Russell, 2000).
+Learning policies from demonstration, a.k.a. apprenticeship learning, is a technique that has been
+widely used in robotics. An efﬁcient approach to apprenticeship learning, known as Inverse Re-
+inforcement Learning (IRL) (Ng & Russell, 2000; Abbeel & Ng, 2004), consists in recovering a
+reward function under which the policy demonstrated by an expert is near-optimal, rather than di-
+rectly mimicking the expert’s actions. The learned reward is then used for ﬁnding an optimal policy.
+Consequently, the expert’s actions can be predicted in states that have not been encountered during
+the demonstration. Unfortunately, as already pointed by Abbeel & Ng (2004), recovering a reward
+function is an ill-posed problem. In fact, the expert’s policy can be optimal under an inﬁnite number
+of reward functions. Most of the work on apprenticeship learning via IRL focused on solving this
+particular problem by using different types of regularization and loss cost functions (Ratliff et al.,
+2006; Ramachandran & Amir, 2007; Syed & Schapire, 2008; Syed et al., 2008).
+In this paper, we focus on another important problem occurring in IRL. IRL-based algorithms rely on
+the assumption that the reward function is a linear combination of state-action features. Therefore,
+the value function of any policy is a linear combination of the expected discounted frequency (count)
+of encountering each state-action feature. In particular, the value function of the expert’s policy is
+approximated by a linear combination of the empirical averages of the features, estimated from
+the demonstration (the trajectories). In practice, this method works efﬁciently only if the number
+
+1
+
+of examples is sufﬁciently large to cover all the states, or the dynamics of the system is nearly
+deterministic. For the tasks related to systems with a stochastic dynamics and a limited number of
+available examples, we propose an alternative method for approximating the expected frequencies
+of the features under the expert’s policy. Our approach takes advantage of the fact that the expert’s
+partially demonstrated policy is near-optimal, and generalizes the expert’s policy beyond the states
+that appeared in the demonstration. We show that this technique can be efﬁciently used to improve
+the performance of two known IRL algorithms, namely Maximum Margin Planning (MMP) (Ratliff
+et al., 2006), and Linear Programming Apprenticeship Learning (LPAL) (Syed et al., 2008).
+
+2 Preliminaries
+Formally, a ﬁnite-state Markov Decision Process (MDP) is a tuple (S , A, {T a}, R, α, γ ), where: S
+is a set of states, A is a set of actions, T a is a transition matrix deﬁned as ∀s, s(cid:48) ∈ S , a ∈ A :
+T a (s, s(cid:48) ) = P r(st+1 = s(cid:48) |st = s, at = a), R is a reward function (R(s, a) is the reward associ-
+ated with the execution of action a in state s), α is the initial state distribution, and γ is a discount
+factor. We denote by MDP\R a Markov Decision Process without a reward function, i.e. a tuple
+feature vectors fi with weights wi : ∀s ∈ S , ∀a ∈ A : R(s, a) = (cid:80)k
+(S , A, {T a}, α, γ ). We assume that the reward function R is given by a linear combination of k
+i=0 wi fi (s, a). A deterministic
+policy π is a function that returns an action π(s) for each state s. A stochastic policy π is a probabil-
+be followed, i.e. V (π) = E [(cid:80)∞
+ity distribution on the action to be executed in each state, deﬁned as π(s, a) = P r(at = a|st = s).
+The value V (π) of a policy π is the expected sum of rewards that will be received if policy π will
+bution, deﬁned as: µπ (s, a) = E [(cid:80)∞
+t=0 γ tR(st , at )|α, π , T ]. An optimal policy π is one satisfying
+also use µπ (s) to denote (cid:80)
+π = arg maxπ V (π). The occupancy µπ of a policy π is the discounted state-action visit distri-
+t=0 γ t δst ,s δat ,a |α, π , T ] where δ is the Kronecker delta. We
+a µπ (s, a). The following linear constraints, known as Bellman-ﬂow
+µπ (s(cid:48) , a)T a (s(cid:48) , s)(cid:1), (cid:0) (cid:88)
+(cid:88)
+(cid:88)
+µπ (s, a) = µπ (s)(cid:1), (cid:0)µπ (s, a) (cid:62) 0(cid:1)} (1)
+{(cid:0)µπ (s) = α(s) + γ
+constraints, are necessary and sufﬁcient for deﬁning an occupancy measure of a policy:
+s(cid:48)∈S
+a∈A
+a∈A
+A policy π is well-deﬁned by its occupancy measure µπ , one can interchangeably use π and µπ
+to denote a policy. The set of feasible occupancy measures is denoted by G . The frequency of a
+feature fi for a policy π is given by vi,π = F (i, .)µπ , where F is a k by |S ||A| feature matrix, such
+that F (i, (s, a)) = fi (s, a). Using this deﬁnition, the value of a policy π can be written as a linear
+function of the frequencies: V (π) = wT F µπ = wT vπ , where vπ is the vector of vi,π . Therefore,
+the value of a policy is completely determined by the frequencies (or counts) of the features fi .
+
+3 Apprenticeship Learning
+
+3.1 Overview
+
+The aim of apprenticeship learning is to ﬁnd a policy π that is at least as good as a policy πE
+demonstrated by an expert, i.e. V (π) (cid:62) V (πE ). The value functions of π and πE cannot be
+directly compared, unless a reward function is provided. To solve this problem, Ng & Russell
+(2000) proposed to ﬁrst learn a reward function, assuming that the expert is optimal, and then use it
+to recover the expert’s complete policy. However, the problem of learning a reward function given an
+optimal policy is ill-posed (Abbeel & Ng, 2004). In fact, a large class of reward functions, including
+all constant functions for instance, may lead to the same optimal policy. To overcome this problem,
+Abbeel & Ng (2004) did not consider recovering a reward function, instead, their algorithm returns
+a policy π with a bounded loss in the value function, i.e. (cid:107) V (π) − V (πE ) (cid:107)(cid:54) , where the value
+is calculated by using the worst-case reward function. This property is derived from the fact that
+when the frequencies of the features under two policies match, the cumulative rewards of the two
+policies match as well, assuming that the reward is a linear function of these features. In the next two
+subsections, we brieﬂy describe two algorithms for apprenticeship learning via IRL. The ﬁrst one,
+known as Maximum Margin Planning (MMP) (Ratliff et al., 2006), is a robust algorithm based on
+learning a reward function under which the expert’s demonstrated actions are optimal. The second
+one, known as Linear Programming Apprenticeship Learning (LPAL) Syed et al. (2008), is a fast
+algorithm that directly returns a policy with a bounded loss in the value.
+
+2
+
+3.2 Maximum Margin Planning
+
+Maximum Margin Planning (MMP) returns a vector of reward weights w , such that the value of the
+expert’s policy wT F µπE is higher than the value of an alternative policy wT F µπ by a margin that
+(cid:16)
+(cid:17)q
+scales with the number of expert’s actions that are different from the actions of the alternative policy.
+This criterion is explicitly speciﬁed in the cost function minimized by the algorithm:
+µ∈G (wT F + l)µ − wT F µπE
+(cid:107) w(cid:107)2
++ λ
+max
+cq (w) =
+(2)
+2
+where q ∈ {1, 2} deﬁnes the slack penalization, λ is a regularization parameter, and l is a deviation
+cost vector, that can be deﬁned as: l(s, a) = 1 − πE (s, a). A policy maximizing the cost-augmented
+reward vector (wT F + l) is almost completely different from πE , since an additional reward l(s, a)
+is given for the actions that are different from those of the expert. This algorithm minimizes the
+difference between the value divergence wT F µπE − wT F µ and the policy divergence lµ.
+(cid:16)
+(cid:17)q−1
+The cost function cq is convex, but nondifferentiable. Ratliff et al. (2006) showed that cq can be
+minimized by using a subgradient method. For a given reward w , a subgradient gq
+w is given by:
+(wT F + l)µ+ − wT F µπE
+w = q
+F ∆w µπE + λw
+gq
+where µ+ = arg maxµ∈G (wT F + l)µ, and ∆w µπE = µ+ − µπE .
+
+(3)
+
+3.3 Linear Programming Apprenticeship Learning
+
+Linear Programming Apprenticeship Learning (LPAL) is based on the following observation: if the
+reward weights are positive and sum to 1, then V (π) (cid:62) V (πE ) + mini [vi,π − vi,πE ], for any policy
+π . LPAL consists in ﬁnding a policy that maximizes the margin mini [vi,π − vi,πE ]. The maximal
+margin is found by solving the following linear program:
+max
+v
+(cid:88)
+− (cid:88)
+(cid:88)
+∀i ∈ {0, . . . , k − 1} : v (cid:54) (cid:88)
+v ,µπ
+subject to
+(cid:125)
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+(cid:123)(cid:122)
+(cid:124)
+µπE (s, a)fi (s, a)
+µπ (s, a)fi (s, a)
+a∈A
+s∈S
+a∈A
+s∈S
+(cid:88)
+(cid:88)
+(cid:88)
+vi,πE
+vi,π
+µπ (s(cid:48) , a)T (s(cid:48) , a, s),
+µπ (s, a) = µπ (s), µπ (s, a) (cid:62) 0
+s(cid:48)∈S
+a∈A
+a∈A
+
+µπ (s) = α(s) + γ
+
+(4)
+
+The last three constraints in this linear program correspond to the Bellman-ﬂow constraints (Equa-
+tion (1)) deﬁning G , the feasible set of µπ . The learned policy π is given by:
+(cid:80)
+µπ (s, a)
+π(s, a) =
+a(cid:48)∈A µπ (s, a(cid:48) )
+
+3.4 Approximating feature frequencies
+
+def= F (i, .)µπE .
+Notice that both MMP and LPAL require the knowledge of the frequencies vi,ππE
+These frequencies can be analytically calculated (using Bellman-ﬂow constraints) only if πE is com-
+H , ),
+pletely speciﬁed. Given a sequence of M demonstrated trajectories tm = (sm
+1 , . . . , sm
+H , am
+1 , am
+M(cid:88)
+H(cid:88)
+the frequencies vi,πE are estimated as:
+1
+M
+t=1
+m=1
+There are nevertheless many problems related to this approximation. First, the estimated frequencies
+ˆvi,πE can be very different from the true ones when the demonstration trajectories are scarce. Sec-
+ond, the frequencies ˆvi,πE are estimated for a ﬁnite horizon H , whereas the frequencies vi,π used in
+the objective function (Equations (2) and (4)), are calculated for an inﬁnite horizon (Equation (1)).
+In practice, these two values are too different and cannot be compared as done in these cost func-
+tions. Finally, the frequencies vi,πE are a function of both a policy and the transition probabilities,
+the empirical estimation of vi,πE does not take advantage of the known transition probabilities.
+
+γ t fi (sm
+t )
+t , am
+
+ˆvi,πE =
+
+(5)
+
+3
+
+4 Reward loss in Maximum Margin Planning
+
+Vl
+
+vπE
+
+ˆvπE
+
+ˆw
+
+wE
+
+V
+
+Vl − ˆvπE
+
+Vl − vπE
+
+To show the effect of the error in the
+estimated feature frequencies on the
+quality of the learned rewards, we
+present an analysis of the distance be-
+tween the vector of reward weights
+ˆw returned by MMP with estimated
+frequencies ˆvπE = F ˆµπE , calculated
+from the examples by using Equa-
+tion (5), and the vector wE returned
+by MMP with accurate frequencies
+vπE = F µπE , calculated by using
+Equations (1) with the full policy πE .
+We adopt
+the following notations:
+∆vπ = ˆvπE − vπE , ∆w = ˆw − wE ,
+and Vl (w) = maxµ∈G (wT F + l)µ,
+and we consider q = 1. The fol-
+lowing proposition shows how the re-
+ward error ∆w is related to the fre-
+quency error ∆vπ . Due to the fact
+that the cost function of MMP is piecewise deﬁned, one cannot ﬁnd a closed-form relation be-
+tween ∆w and ∆vπ . However, we show that for any ˆw ∈ Rk , there is a monotonically decreasing
+function f such that for any  ∈ R+ , if (cid:107) ∆vπ (cid:107)2< f () then (cid:107) ∆w (cid:107)2(cid:54) .
+Proposition 1 Let  ∈ R+ , if ∀w ∈ Rk , such that (cid:107) w − ˆw (cid:107)2= , if the following condition is
+veriﬁed:
+
+Figure 1: Reward loss in MMP with approximate frequen-
+cies ˆvπE . We indicate by vπE (resp. ˆvπE ) the linear function
+deﬁned by the vector vπE (resp. ˆvπE ).
+
+(cid:107) ∆vπ (cid:107)2<
+then (cid:107) ∆w (cid:107)2(cid:54) .
+
+Vl (w) − Vl ( ˆw) + ( ˆw − w)T ˆvπE + λ
+2 ((cid:107) w (cid:107)2 − (cid:107) ˆw (cid:107)2 )
+
+
+Proof The condition stated in the proposition implies:
+(cid:107) ˆw − w (cid:107)2(cid:107) ∆vπ (cid:107)2< Vl (w) − Vl ( ˆw) + ( ˆw − w)T ˆvπE + λ((cid:107) w (cid:107)2 − (cid:107) ˆw (cid:107)2 )
+2
+⇒ ( ˆw − w)T ∆vπ < Vl (w) − Vl ( ˆw) + ( ˆw − w)T ˆvπE + λ((cid:107) w (cid:107)2 − (cid:107) ˆw (cid:107)2 )
+(cid:1) < Vl (w) − (cid:0)wT vπE − λ
+⇒ Vl ( ˆw) − (cid:0) ˆwT vπE − λ
+(cid:1)
+(H ¨older)
+2
+(cid:107) ˆw (cid:107)2
+(cid:107) w (cid:107)2
+2
+2
+In other terms, the point ( ˆwT vπE − λ
+2 (cid:107) ˆw (cid:107)2 ) is closer to the surface Vl than any other point
+(wT vπE − λ
+2 (cid:107) w (cid:107)2 ), where w is a point on the sphere centered around ˆw with a radius of .
+vπE − λ
+2 (cid:107) wE (cid:107)2 ) is by deﬁnition the closest point to
+Since the function Vl is convex and (wE T
+the surface Vl , then wE should be inside the ball centered around ˆw with a radius of . Therefore,
+(cid:107) wE − ˆw (cid:107)2(cid:54)  and thus (cid:107) ∆w (cid:107)2(cid:54) . (cid:3)
+Consequently, the reward loss (cid:107) ∆w (cid:107)2 approaches zero as the error of the estimated feature fre-
+quencies (cid:107) ∆vπ (cid:107)2 approaches zero. A simpler bound can be easily derived given admissible
+heuristics of Vl .
+Corollary: Let Vl and Vl be respectively a lower and an upper bound on Vl , then Proposition (1)
+holds if Vl (w) − Vl ( ˆw) is replaced by Vl (w) − Vl ( ˆw).
+Figure (1) illustrates the divergence from the optimal reward weight wE when approximate fre-
+quencies are used. The error is not a continuous function of ∆vπ when the cost function is not
+regularized, because the vector returned by MMP is always a fringe point. Informally, the error is
+proportional to the maximum subgradient of the function Vl − vπE at the fringe point wE .
+
+4
+
+5 Bootstrapping Maximum Margin Planning
+
+(6)
+
+The feature frequency error ∆vπ can be signiﬁcantly reduced by using the known transition func-
+tion for calculating ˆvπE and solving the ﬂow Equations (1), instead of the Monte Carlo estimator
+(Equation (5)). However, this cannot be done unless the complete expert’s policy πE is provided.
+Assuming that the expert’s policy πE is optimal and deterministic, the value wT F µπE in Equa-
+tion (2) can be replaced by maxµ∈GπE wT F µ, the value of the optimal policy, according to the
+current reward weight w , that selects the same actions as the expert in all the states that occurred in
+(cid:16)
+(cid:17)q
+the demonstration. The cost function of the bootstrapped Maximum Margin Planning becomes:
+µ1∈G (wT F + l)µ1 − max
+(cid:107) w(cid:107)2
++ λ
+max
+cq (w) =
+wT F µ2
+µ2∈GπE
+2
+(cid:88)
+(cid:88)
+µπ (s(cid:48) ) (cid:88)
+(cid:88)
+where GπE is the set of vectors µπ , subject to the following modiﬁed Bellman-ﬂow constraints:
+πE (s(cid:48) , a)T a (s(cid:48) , s) + γ
+µπ (s(cid:48) , a)T a (s(cid:48) , s)
+(cid:88)
+µπ (s) = α(s) + γ
+s(cid:48)∈Se
+a∈A
+a∈A
+s(cid:48)∈S \Se
+µπ (s, a) = µπ (s), µπ (s, a) (cid:62) 0
+a∈A
+Se is the set of states encountered in the demonstrations, where the expert’s policy is known.
+Unfortunately, the new cost function (Equation (6)) is not necessarily convex.
+In fact, it corre-
+sponds to a margin between two convex functions: the value of the bootstrapped expert’s policy
+maxµ∈GπE wT F µ and the value of the best alternative policy maxµ∈G (wT F + l)µ. Yet, a local
+optimal solution of this modiﬁed cost function can be found by using the same subgradient as in
+Equation (3), and replacing µπE by arg maxµ∈GπE wT F µ. In practice, as we will show in the ex-
+perimental analysis, the solution returned by the bootstrapped MMP outperforms the solution of
+MMP where the expert’s frequency is calculated without taking into account the known transition
+probabilities. This improvement is particularly pronounced in highly stochastic environments. The
+computational cost of minimizing this modiﬁed cost function is twice the one of MMP, since two
+optimal policies are found at each iteration.
+In the remainder of this section, we provide a theoretical analysis of the cost function given by
+Equation (6). For the sake of simplicity, we consider q = 1 and λ = 0.
+Proposition 2 The cost function deﬁned by Equation (6), has at most |A||S |
+|A||Se | different local minima.
+
+(7)
+
+Proof If q = 1 and λ = 0, then the cost cq (w) corresponds to a distance between the convex
+and piecewise linear functions maxµ∈G (wT F + l)µ and maxµ∈GπE wT F µ. Therefore, for any
+vector µ(cid:48) ∈ GπE , the function cq is monotone in the interval of w where µ(cid:48) is optimal, i.e. where
+wT F µ(cid:48) = maxµ∈GπE wT F µ. Consequently, the number of local minima of the function cq is at
+most equal to the number of optimal vectors µ in GπE , which is upper bounded by the number of
+deterministic policies deﬁned on S \Se , i.e. by |A||S |−|Se | . (cid:3)
+
+Consequently, the number of different local minima of the function cq decreases as the number of
+states covered by the demonstration increases. Ultimately, the function cq becomes convex when the
+demonstration covers all the possible states.
+Theorem 1 If there exists a reward weight vector w∗ ∈ Rk , such that the expert’s policy πE is the
+only optimal policy with w∗ , i.e. arg maxµ∈G w∗ T F µ = {µπE }, then there exists α > 0 such that:
+(i), the expert’s policy πE is the only optimal policy with αw∗ , and (ii), cq (αw∗ ) is a local minimum
+of the function cq , deﬁned in Equation (6).
+Proof The set of subgradients of function cq at a point w ∈ Rk , denoted by ∇w cq (w), corre-
+sponds to vectors F µ(cid:48) − F µ(cid:48)(cid:48) , with µ(cid:48) ∈ arg maxµ∈G (wT F + l)µ and µ(cid:48)(cid:48) ∈ arg maxµ∈GπE wT F µ.
+In order that cq (w) will be a local minimum, it sufﬁces to ensure that (cid:126)0 ∈ ∇w cq (w), i.e.
+∃µ(cid:48) ∈ arg maxµ∈G (wT F + l)µ, ∃µ(cid:48)(cid:48) ∈ arg maxµ∈GπE wT F µ such that F µ(cid:48) = F µ(cid:48)(cid:48) . Let w∗ ∈ Rk
+
+5
+
+be a reward weight vector such that πE is the only optimal policy, and let  = w∗ T F µπE − w∗ T F µ(cid:48)
+where µ(cid:48) ∈ arg maxµ∈G−{µπE } w∗ T F µ. Then, αw∗ T F µπE − αw∗ T F µ(cid:48) = 2|Se |
+1−γ , where
+α = 2|Se |
+(1−γ ) . Notice that by multiplying w∗ by α > 0, πE remains the only optimal policy,
+i.e. arg maxµ∈G αw∗ T F µ = {µπE }, and µ(cid:48) ∈ arg maxµ∈G−{µπE } αw∗ T F µ. Therefore, it suf-
+(cid:1)+ |Se |
+maxµ∈G−{πE } αw∗ T F µ+maxµ∈G−{πE } lµ (cid:54) (cid:0)αw∗ T F µπE − 2|Se |
+ﬁces to show that µπE ∈ arg maxµ∈G (αw∗ T F + l)µ. Indeed, maxµ∈G−{πE } (αw∗ T F + l)µ (cid:54)
+(cid:54) αw∗ T F µπE − |Se |
+1−γ ,
+1−γ
+1−γ
+therefore, µπE ∈ arg maxµ∈G (αw∗ T F + l)µ.(cid:3)
+
+6 Bootstrapping Linear Programming Apprenticeship Learning
+
+As with MMP, the feature frequencies in LPAL can be analytically calculated only when a complete
+policy πE of the expert is provided. Alternatively, the same error bound V (π) (cid:62) V (πE ) + v can be
+guaranteed by setting v = mini=0,...,k−1 minπ (cid:48)∈ΠE [vi,π − vi,π (cid:48) ], where ΠE denotes the set of all the
+policies that select the same actions as the expert in all the states that occurred in the demonstration,
+assuming πE is deterministic (In LPAL, πE is not necessarily an optimal policy). Instead of enumer-
+ating all the policies of the set ΠE in the constraints, note that v = mini=0,...,k−1 [vi,π − vE
+i ], where
+def= maxπ (cid:48)∈ΠE vi,π (cid:48) for each feature i. Therefore, LPAL can be reformulated as maximizing the
+vE
+margin mini=0,...,k−1 [vi,π − vE
+i
+i ].
+The maximal margin is found by solving the following linear program:
+max
+v
+(cid:88)
+− (cid:88)
+(cid:88)
+∀i ∈ {0, . . . , k − 1} : v (cid:54) (cid:88)
+v ,µπ
+subject to
+(cid:125)
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+(cid:123)(cid:122)
+(cid:124)
+µi,π (cid:48) (s, a)fi (s, a)
+µπ (s, a)fi (s, a)
+s∈S
+a∈A
+s∈S
+a∈A
+(cid:88)
+(cid:88)
+(cid:88)
+vi,π
+vE
+i
+µπ (s(cid:48) , a)T (s(cid:48) , a, s),
+µπ (s, a) = µπ (s), µπ (s, a) (cid:62) 0
+a∈A
+s(cid:48)∈S
+a∈A
+where the values vE
+i are found by solving k separate optimization problems (k is the number of
+is the value of the optimal policy in the set ΠE under the reward
+features). For each feature i, vE
+weights w deﬁned as: wi = 1 and wj = 0, ∀j (cid:54)= i.
+i
+
+µπ (s) = α(s) + γ
+
+7 Experimental Results
+
+To validate our approach, we experimented on two simulated navigation problems: a gridworld and
+two racetrack domains, taken from (Boularias & Chaib-draa, 2010). While these are not meant to be
+challenging tasks, they allow us to compare our approach to other methods of apprenticeship learn-
+ing, namely MMP and LPAL with Monte Carlo estimation, and a simple classiﬁcation algorithm
+where the action in a given state is selected by performing a majority vote on the k-nearest neighbor
+states where the expert’s action is known. For each state, the distance k is gradually increased until
+at least one known state is encountered. The distance between two states corresponds to the shortest
+path between them with a positive probability.
+
+7.1 Gridworld
+We consider 16 × 16 and 24 × 24 gridworlds. The state corresponds to the location of the agent on
+the grid. The agent has four actions for moving in one of the four directions of the compass. The
+actions succeed with probability 0.9. The gridworld is divided into non-overlapping regions, and
+the reward varies depending on the region in which the agent is located. For each region i, there is a
+feature fi , where fi (s) indicates whether state s is in region i. The expert’s policy πE corresponds
+to the optimal deterministic policy found by value iteration. In all our experiments on gridworlds,
+we used only 10 demonstration trajectories, which is a signiﬁcantly small number compared to other
+methods ( Neu & Szepesvri (2007) for example). The duration of the trajectories is 50 time-steps.
+
+6
+
+Size
+
+Features
+
+Expert
+
+k-NN
+
+MMP + MC MMP + Bootstrap
+
+LPAL + MC
+
+LPAL + Bootstrap
+
+16 × 16
+16 × 16
+16 × 16
+24 × 24
+24 × 24
+24 × 24
+
+16
+64
+256
+
+64
+144
+576
+
+0.4672
+0.5281
+0.3988
+
+0.5210
+0.5916
+0.3102
+
+0.4635
+0.5198
+0.4062
+
+0.6334
+0.5876
+0.2814
+
+0.0000
+0.0000
+0.0537
+
+0.0000
+0.0122
+0.0974
+
+0.4678
+0.5252
+0.3828
+
+0.5217
+0.5252
+0.0514
+
+0.0380
+0.0255
+0.0555
+
+0.0149
+0.0400
+0.0439
+
+0.1572
+0.4351
+0.1706
+
+0.2767
+0.4432
+0.0349
+
+Table 1: Gridworld average reward results
+
+Table 1 shows the average reward per step of the learned policy, averaged over 103 independent trials
+of the same duration as the demonstration trajectories. Our ﬁrst observation is that Bootstrapped
+MMP learned policies just as good as the expert’s policy, while both MMP and LPAL using Monte
+Carlo (MC) estimator remarkably failed to collect any reward. This is due to the fact that we used a
+very small number of demonstrations (10 × 50 time-steps) compared to the size of these problems.
+Note that this problem is not speciﬁc to MMP or LPAL. In fact, any other algorithm using the same
+approximation method would produce similar results. The second observation is that the values of
+the policies learned by bootstrapped LPAL were between the values of LPAL with Monte Carlo
+and the optimal ones. In fact, the policy learned by the bootstrapped LPAL is one that minimizes
+the difference between the expected frequency of a feature using this policy and the maximal one
+among all the policies that resemble to the expert’s policy. Therefore, the learned policy maximizes
+the frequency of a feature that is not necessary a good one (with a high reward weight). We also
+notice that the performance of all the tested algorithms was low when 576 features were used. In
+this case, every feature takes a non null weight in one state only. Therefore, the demonstrations did
+not provide enough information about the rewards of the states that were not visited by the expert.
+Finally, we remark that k-NN performed as an expert in this experiment. In fact, since there are no
+obstacles on the grid, neighboring states often have similar optimal actions.
+
+7.2 Racetrack
+
+We implemented a simpliﬁed car race simulator, a detailed description of the corresponding race-
+tracks was provided in (Boularias & Chaib-draa, 2010). The states correspond to the position of the
+car on the racetrack and its velocity. For racetrack (1), the car always starts from the same initial
+position, and the duration of each demonstration trajectory is 20 time-steps. For racetrack (2), the
+car starts at a random position, and the length of each trajectory is 40 time-steps. A high reward
+is given for reaching the ﬁnish line, a low cost is associated to each movement, and high cost is
+associated to driving off-road (or hitting an obstacle). Figure 2 (a-f) shows the average reward per
+step of the learned policies, the average proportion of off-road steps, and the average number of
+steps before reaching the ﬁnish line, as a function of the number of trajectories in the demonstra-
+tion. We ﬁrst notice that k-NN performed poorly, this is principally caused by the effect of driving
+off-road on both the cumulated reward and the velocity of the car. In this context, neighbor states
+do not necessarily share the same optimal action. Contrary to the gridworld experiments, MMP
+with Monte Carlo achieved good performances on racetrack (1). In fact, by ﬁxing the initial state,
+the demonstration covers most of the reachable states, and the feature frequencies are accurately
+estimated from the demonstration. On racetrack (2) however, MMP with MC was unable to learn a
+good policy because all the states were reachable from the initial distribution. Similarly, LPAL with
+both MC and bootstrapping failed to achieve good results on racetracks (1) and (2). This is due to
+the fact that LPAL tries to maximize the frequency of features that are not necessary associated to
+a high reward, such as hitting obstacles. Finally, we notice the nearly optimal performance of the
+bootstrapped MMP, on both racetracks (1) and (2).
+
+8 Conclusion and Future Work
+
+The main question of apprenticeship learning is how to generalize the expert’s policy to states that
+have not been encountered during the demonstration. Inverse Reinforcement Learning (IRL) pro-
+vides an efﬁcient answer which consists in ﬁrst learning a reward function that explains the observed
+behavior, and then using it for the generalization. A strong assumption considered in IRL-based al-
+
+7
+
+(a) Average reward in racetrack 1
+
+(b) Average number of steps in racetrack 1
+
+(c) Average number of off-roads, racetrack 1
+
+(d) Average reward in racetrack 2
+
+(e) Average number of steps in racetrack 2
+
+(f) Average number of off-roads, racetrack 2
+
+Figure 2: Racetrack results
+
+gorithms is that the reward is a linear function of state-action features, and the frequencies of these
+features can be estimated from a few demonstrations even if these demonstrations cover only a small
+part of the state space. In this paper, we showed that this assumption does not hold in highly stochas-
+tic systems. We also showed that this problem can be solved by modifying the cost function so that
+the value of the learned policy is compared to the exact value of a generalized expert’s policy. We
+also provided theoretical insights on the modiﬁed cost function, showing that it admits the expert’s
+true reward as a locally optimal solution, under mild conditions. The empirical analysis conﬁrmed
+the outperformance of Bootstrapped MMP in particular. These promising results push us to further
+investigate the theoretical properties of the modiﬁed cost function.
+As a future work, we mainly target to compare this approach with the one proposed by Ratliff et al.
+(2007), where the base features are boosted by using a classiﬁer.
+
+8
+
+ 4 6 8 10 12 14 16 18 20 2 4 6 8 10 12Average reward per stepNumber of trajectories in the demonstrationExpertMMP + MCMMP + BootstrappingLPAL + MCLPAL + Bootstrappingk−NN 20 22 24 26 28 30 32 34 2 4 6 8 10 12Average number of stepsNumber of trajectories in the demonstrationExpertMMP + MCMMP + BootstrappingLPAL + MCLPAL + Bootstrappingk−NN 0 0.1 0.2 0.3 0.4 0.5 2 4 6 8 10 12Average number of hitted obstacles per stepNumber of trajectories in the demonstrationExpertMMP + MCMMP + BootstrappingLPAL + MCLPAL + Bootstrappingk−NN 0 5 10 15 20 2 4 6 8 10 12Average reward per stepNumber of trajectories in the demonstrationExpertMMP + MCMMP + BootstrappingLPAL + MCLPAL + Bootstrappingk−NN 20 30 40 50 60 2 4 6 8 10 12Average number of stepsNumber of trajectories in the demonstrationExpertMMP + MCMMP + BootstrappingLPAL + MCLPAL + Bootstrappingk−NN 0 0.2 0.4 0.6 0.8 1 1.2 1.4 2 4 6 8 10 12Average number of hitted obstacles per stepNumber of trajectories in the demonstrationExpertMMP + MCMMP + BootstrappingLPAL + MCLPAL + Bootstrappingk−NNReferences
+Abbeel, Pieter and Ng, Andrew Y. Apprenticeship Learning via Inverse Reinforcement Learning. In
+Proceedings of the Twenty-ﬁrst International Conference on Machine Learning (ICML’04), pp.
+1–8, 2004.
+Boularias, Abdeslam and Chaib-draa, Brahim. Apprenticeship Learning via Soft Local Homomor-
+In Proceedings of 2010 IEEE International Conference on Robotics and Automation
+phisms.
+(ICRA’10), pp. 2971–2976, 2010.
+Neu, Gergely and Szepesvri, Csaba. Apprenticeship Learning using Inverse Reinforcement Learning
+and Gradient Methods. In Conference on Uncertainty in Artiﬁcial Intelligence (UAI’07), pp. 295–
+302, 2007.
+Ng, Andrew and Russell, Stuart. Algorithms for Inverse Reinforcement Learning. In Proceedings of
+the Seventeenth International Conference on Machine Learning (ICML’00), pp. 663–670, 2000.
+Ramachandran, Deepak and Amir, Eyal. Bayesian Inverse Reinforcement Learning. In Proceedings
+of The twentieth International Joint Conference on Artiﬁcial Intelligence (IJCAI’07), pp. 2586–
+2591, 2007.
+In Proceedings of the
+Ratliff, N., Bagnell, J., and Zinkevich, M. Maximum Margin Planning.
+Twenty-third International Conference on Machine Learning (ICML’06), pp. 729–736, 2006.
+Ratliff, Nathan, Bradley, David, Bagnell, J. Andrew, and Chestnutt, Joel. Boosting Structured
+In Advances in Neural Information Processing Systems 19
+Prediction for Imitation Learning.
+(NIPS’07), pp. 1153–1160, 2007.
+Syed, Umar and Schapire, Robert. A Game-Theoretic Approach to Apprenticeship Learning. In
+Advances in Neural Information Processing Systems 20 (NIPS’08), pp. 1449–1456, 2008.
+Syed, Umar, Bowling, Michael, and Schapire, Robert E. Apprenticeship Learning using Linear
+Programming. In Proceedings of the Twenty-ﬁfth International Conference on Machine Learning
+(ICML’08), pp. 1032–1039, 2008.
+
+9
+
+

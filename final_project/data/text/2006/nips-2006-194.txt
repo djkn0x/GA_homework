@@ -1,0 +1,891 @@
+Stochastic Relational Models
+for Discriminative Link Prediction
+
+Kai Yu
+NEC Laboratories America
+Cupertino, CA 95014
+
+Wei Chu
+CCLS, Columbia University
+New York, NY 10115
+
+Shipeng Yu, Volker Tresp, Zhao Xu
+Siemens AG, Corporate Research & Technology,
+81739 Munich, Germany
+
+Abstract
+
+We introduce a Gaussian process (GP) framework, stochastic relational models
+(SRM), for learning social, physical, and other relational phenomena where in-
+teractions between entities are observed. The key idea is to model the stochastic
+structure of entity relationships (i.e., links) via a tensor interaction of multiple
+GPs, each deﬁned on one type of entities. These models in fact deﬁne a set of
+nonparametric priors on inﬁnite dimensional tensor matrices, where each element
+represents a relationship between a tuple of entities. By maximizing the marginal-
+ized likelihood, information is exchanged between the participating GPs through
+the entire relational network, so that the dependency structure of links is messaged
+to the dependency of entities, reﬂected by the adapted GP kernels. The framework
+offers a discriminative approach to link prediction, namely, predicting the exis-
+tences, strengths, or types of relationships based on the partially observed linkage
+network as well as the attributes of entities (if given). We discuss properties and
+variants of SRM and derive an efﬁcient learning algorithm. Very encouraging ex-
+perimental results are achieved on a toy problem and a user-movie preference link
+prediction task. In the end we discuss extensions of SRM to general relational
+learning tasks.
+
+1
+
+Introduction
+
+Relational learning concerns the modeling of physical, social, or other phenomena, where rich types
+of entities interact via complex relational structures. If compared to the traditional machine learning
+settings, the entity relationships provide additional structural information.
+
+A simple example of a relational setting is the user-movie rating database, which contains user enti-
+ties with user attributes (e.g., age, gender, education), movie entities with movie attributes (e.g., year,
+genre, director), and ratings (i.e., relations between users and movies). A typical relational learning
+problem is entity classi ﬁcation , for example, segmenting users into groups. One may apply usual
+clustering or classiﬁcation methods based on a ﬂat structure of data, where each user is associated
+with a vector of user attributes. However a sound model should additionally explore the user-movie
+relations as well as even the movie attributes, since like-minded users tend to give similar ratings on
+the same movie, and may like (or dislike) movies with similar genres. Relational learning addresses
+this and similar situation where it is not natural to transform the data into a ﬂat structure.
+
+Entity classiﬁcation in a relational setting has gained considerable attentions, like webpage clas-
+siﬁcation using both textual contents and hyperlinks. However, in other occasions relationships
+themselves are often of central interest. For example, one may want to predict protein-protein in-
+
+teractions, or in another application, user ratings for products. The family of these problems has
+been called link prediction1 , which is the primary topic of this paper. In general, link prediction
+includes link existence prediction (i.e., does a link exist?), link classi ﬁcation (i.e., what type of the
+relationship?), and link regression (i.e., how does the user rate the item?).
+
+In this paper we propose a family of stochastic relational models (SRM) for link prediction and
+other relational learning tasks. The key idea of SRM is a stochastic link-wise process induced by
+a tensor interplay of multiple entity-wise Gaussian processes (GP). These models in fact de ﬁne a
+set of nonparametric priors on an inﬁnite dimensional tensor matrix, where each element represents
+a relationship between a tuple of entities. By maximizing the marginalized likelihood, informa-
+tion is exchanged between the participating GPs through the entire relational network, so that the
+dependency structure of links is messaged to the dependency of entities, reﬂected by the learned
+entity-wise GP kernels (i.e., GP covariance functions). SRM is discriminative because training is
+on a conditional model of links. We present various models of SRM and address the computational
+issue, which is crucial in link prediction because the number of potential links grows exponentially
+with the entity size. SRM has shown encouraging results in our experiments.
+
+This paper is organized as follows. We introduce the stochastic relational models in Sec. 2, and
+describe the algorithms for inference and parameter estimation in Sec. 3 and Sec. 4, followed by Sec.
+5 on implementation details. Then we discuss the related work in Sec. 6 and report experimental
+results in Sec. 7, followed by conclusions and extensions in Sec. 8.
+
+2 Stochastic Relational Models
+We ﬁrst consider pairwise asymmetric links r between entities u ∈ U and v ∈ V . The two sets
+U and V can be identical or different. We use u or v to represent the attribute vectors of entities
+or their identity when entity attributes are unavailable. Note that ri,n ≡ r(ui , vn ) does not have
+to be identical to rn,i when U = V , i.e. relationships can be asymmetrical. Extensions to involve
+more than two entity sets, multi-way relations (i.e., links connecting more than two entities), and
+symmetric links are straightforward and will be brieﬂy discussed in Sec. 8.
+We assume that the observable links r are derived as local measurements of a real-valued latent
+relational function t : U × V → R, and each link ri,n is solely dependent on its latent value ti,n ,
+modeled by the likelihood p(ri,n |ti,n ). The focus of this paper is a family of stochastic relational
+processes acting on U × V , the space of entity pairs, to generate the latent relational function t, via
+a tensor interaction of two independent entity-speciﬁc GPs, one acting on U and the other on V .
+We call them processes because U and V can both encompass an in ﬁnite number of entities. Let
+the relational processes be characterized by hyperparameters θ = {θΣ , θΩ }, θΣ for the GP kernel
+function on U and θΩ for the GP kernel function on V , a SRM thus deﬁnes a Bayesian prior p(t|θ)
+(cid:1) (cid:2)
+for the latent variables t. Let I be the index set of entity pairs having observed links, the marginal
+likelihood (also called evidence) under such a prior is
+θ = {θΣ , θΩ }
+p(RI |θ) =
+p(ri,n |ti,n )p(t|θ)dt,
+(1)
+(i,n)∈I
+where RI = {ri,n }(i,n)∈I . We estimate the hyperparameters θ by maximizing the evidence, which is
+an empirical Bayesian approach to learning the relational structure of data. Once θ are determined,
+we can predict the link for a new pair of entities via marginalization over the a posteriori p(t|RI , θ).
+2.1 Choices for the Piror p(t|θ)
+In order to represent a rich class of link structures, p(t|θ) should be sufﬁciently expressive. In the
+following subsections, we will present three cases of p(t|θ), from speciﬁc to general, by gradually
+extending conventional GP models.
+
+2.1.1 A Brief Introduction to Gaussian Processes
+
+A GP deﬁnes a nonparametric prior distribution over functions in Bayesian inference. A random
+real-valued function f : X → R follows a GP prior, denoted by GP (µ, Σ), if for every ﬁnite set
+1We will use “link” and “relationship” interchangeably throughout this paper.
+
+i=1 follows a multivariate Gaussian distribution with mean µ = {µ(xi )}N
+i=1 , f = {f (xi }N
+{xi }N
+and covariance (or kernel) Σ = {Σ(xi , xj ; θΣ )}N
+i,j=1 with parameter θΣ . Given D = {xi , yi }N
+i=1
+(cid:3)
+i=1 ,
+where yi is a measurement of f (xi ) corrupted by Gaussian noise, one can make predictions via
+the marginal likelihood p(y |x, D , θΣ ) =
+p(y |f , x)p(f |D , θΣ )df . For non-Gaussian measurement
+processes, as in classi ﬁcation models, the integral cannot be solved analytically, and approximation
+for inference is required. A comprehensive coverage of GP models can be found in [9].
+
+2.1.2 Hierarchical Gaussian Processes
+By observing the relational data collectively, one may notice that two entities ui and uj in U demon-
+strate correlated relationships to entities in V . For example, two users often show opposite or close
+opinions on movies, or two hub web pages are co-linked by a set of other authority web pages. In
+this case, the dependency structure of links can be reduced to a dependency structure of entities
+in U . A hierarchical GP (HGP) model [13], originally proposed for multi-task learning, can be
+conveniently applied in such a situation. The model assumes that, for every v ∈ V , its relational
+function t(·, v) : U → R is an i.i.d. sample drawn from a common entity-wise GP with covariance
+Σ : U × U → R. This provides a case of p(t|θ) in a SRM, where θ = θΣ determines the GP kernel
+function Σ. Optimizing the GP kernel Σ via evidence maximization means to learn the dependency
+of entities in U , summarized over all the entities v ∈ V .
+There is a drawback if applying HGP to link prediction. The model only learns a one-side structure,
+while ignoring the dependency in V . In particular, the attributes of entities v cannot be incorporated
+even if their entity attributes are available. However, for the mentioned applications, it also makes
+sense to explore the dependency between movies, or the dependency between authority web pages.
+
+2.1.3 Tensor Gaussian Processes
+
+To overcome the shortcoming of HGP, we consider a more complex SRM, which employs two
+GP kernel functions Σ : U × U → R and Ω : V × V → R. The model explains the relational
+dependency through the entity dependencies of both V and U . Let θ = {θΣ , θΩ }, we describe a
+stochastic relational process p(t|θ) as the following:
+Deﬁnition 2.1 (Tensor Gaussian Processes). Given two sets U and V , a collection of random vari-
+ables {t(u, v)|t : U × V → R} follow a tensor Gaussian processes (TGP), if for every ﬁnite sets
+{u1 , . . . , uN } and {v1 , . . . , vM }, random variables T = {t(ui , vn )}, organized into an N × M
+(cid:4)
+(cid:5)
+matrix, have a matrix-variate normal distribution
+NN ×M (T|B, Σ, Ω) = (2π)
+−1 (T − B)
+−1 (T − B)Ω
+2 |Ω|− N
+2 |Σ|− M
+− 1
+− M N
+(cid:2)
+Σ
+2 etr
+2
+characterized by mean B = {b(ui , vn )} and positive deﬁnite covariance matrices Σ =
+{Σ(ui , uj ; θΣ )} and Ω = {Ω(vn , vm ; θΩ )}. This random process is denoted as T GP (b, Σ, Ω).2
+In the above theorem etr[·] is a shortcut for exp[trace(·)]. It is easy to see that the model reduces
+to the HGP model if Ω = I. As a key difference, the new model treats the relational function
+t as a whole sample from a TGP, instead of being formed by i.i.d. functions in the HGP model.
+. If T ∼ NN ×M (T|B, Σ, Ω), then
+(cid:2)
+) = [t1,1 , t1,2 , . . . , t1,M , t2,1 , . . . , t2,M , . . . , tN ,M ](cid:2)
+Let vec(T
+) ∼ N (0, Υ), where the covariance Υ = Σ ⊗ Ω is the Kronecker product of two co-
+(cid:2)
+vec(T
+variance matrices [6]. In other words, TGP is in fact a GP for the relational function t, where the
+kernel function Υ : (U × V ) × (U × V ) → R is deﬁned via a tensor product of two GP kernels
+Cov(ti,n , tj,m ) = Υ[(ui , vn ), (uj , vm )] = Σ(ui , uj )Ω(vn , vm ). The model explains the dependence
+structure of links by the dependence structure of participating entities.
+
+It is well known that a linear predictive model has a GP interpretation if its linear weights follow a
+Gaussian prior. A similar connection exists for TGP.
+Theorem 2.2. Let U ⊆ R
+Q , and W ∼ NP ×Q (0, IP , IQ ), where IP denotes a P × P
+P , V ⊆ R
+identity matrix and (cid:7)·, ·(cid:8) denotes the inner product, then the bilinear function t(u, v) = u
+(cid:2)Wv
+follows T GP (0, Σ, Ω) with Σ(ui , uj ) = (cid:7)ui , uj (cid:8) and Ω(vn , vm ) = (cid:7)vn , vm (cid:8).
+2Hereafter we always assume b(u, v) = 0 in TGP for simplicity.
+
+straightforward through Cov[t(ui , vn ), t(uj , vm )] = (cid:7)ui , uj (cid:8)(cid:7)vn , vm (cid:8) and
+The proof
+is
+E[t(ui , vn )] = 0, where E[·] means expectation. In practice, the linear model will help to provide an
+efﬁcient discriminative approach to link prediction.
+
+It appears that link prediction using TGP is almost the same as a normal GP regression or classiﬁ-
+cation, except that the hyperparameters θ now have two parts, θΣ for Σ and θΩ for Ω. Unfortunately
+TGP inference suffers from a serious computational problem – it does not scale well for even a small
+size of entities. For example, if there is a ﬁxed portion of missing data for pairwise relationships be-
+tween N u-entities and M v -entities, the size of observations scales in O(N M ). Since GP inference
+has the complexity cubic to the size of data, the complexity O(N 3M 3 ) of TGP is computationally
+prohibitive.
+
+2.1.4 A Family of Stochastic Processes for Entity Relationships
+
+To improve the scalability of SRM, and also describe the relational dependency in a way similar to
+TGP, we propose a family of stochastic processes p(t|θ) for entity relationships.
+(cid:6)d
+Deﬁnition 2.3 (Stochastic Relational Processes). A relational function t : U × V → R is said to
+k=1 fk (u)gk (v), fk (u) iid∼ GP (0, Σ),
+follow a stochastic relational process (SRP), if t(u, v) = 1√
+d
+gk (v) iid∼ GP (0, Ω). We denote t ∼ SRP d (0, Σ, Ω), where d is the degrees of freedom.
+Interestingly, there exists an intimate connection between SRP and TGP:
+Theorem 2.4. SRP d (0, Σ, Ω) converges to T GP (0, Σ, Ω) in the limit d → ∞.
+Proof. Based on the central limit theory, for every (ui , vn ), ti,n ≡ t(ui , vn ) converges to a
+d {(cid:6)d
+(cid:6)d
+In the next steps, we prove E[ti,n ] = 0 and Cov(ti,n , tj,m ) =
+Gaussian random variable.
+(cid:6)d
+k (cid:4)=κ E[fk (ui )fκ (uj )gk (vn )gκ (vm )]} =
+E[ti,n tj,m ] = 1
+k=1 E[fk (ui )fk (uj )gk (vn )gk (vm )] +
+1
+k=1 E[fk (ui )fk (uj )gk (vn )gk (vm )] = Σ(ui , uj )Ω(vn , vm ).
+d
+
+The theorem suggests that there is a constructive deﬁnition of TGP, where relationships are formed
+via interactions between inﬁnite samples from two GPs. Moreover, given a sufﬁciently large
+d, SRP
+will provide a close approximation to TGP.
+
+SRP is a general family of priors for modeling the relationships between entities, in which HGP and
+TGP are special cases. The generalization offers several advantages: (1) SRP can model symmetric
+links between the same set of entities. If we build a generative process where U = V , Σ = Ω and
+fk = gk , then on every ﬁnite sets {ui}N
+i=1 , T = {t(ui , uj )} is always a symmetric matrix; (2) Given
+a ﬁxed d, the inference with SRP obtains a much reduced complexity. In Sec. 3 we will introduce
+an inference algorithm that scales in O [d(N 3 + M 3 )], which is much less than O(N 3M 3 ).
+2.2 Choices for the Likelihood p(ri,n |ti,n )
+The likelihood term describes the dependency of observable relationships on the latent variables. It
+should be tailored to the types of observations to be modeled. Here we list three possible situations:
+• Binary Classiﬁcation : Relationships may take categorical states, e.g., “cue” or ”no cue” in
+disease-treatment relationship prediction.
+It is popular to consider binary classiﬁcation and em-
+ploy the probit function to model the Bernoulli distribution over class labels, i.e. p(ri,n |ti,n ) =
+Φ (ri,n ti,n ), where Φ(·) is a cumulative normal function, and ri,n ∈ {−1, +1}.
+• Regression: In this case we consider ri,n taking continuous values. For example, one may want to
+predict the rating of user u for movie v . The corresponding likelihood function is essentially deﬁned
+by a noise model, e.g. a univariate Gaussian noise with variance ρ2 and zero mean.
+• One-class Problem: Sometimes one observed the presence of links between entities, for example,
+the hyperlinks between web pages. Based on the open-world assumption, if a web page does not
+link to another, it does not mean that they are unrelated. Therefore, we employ the likelihood
+p(ri,n |ti,n ) = Φ(ri,n ti,n − b) for those observed links ri,n = 1, where b is an offset.
+
+3
+
+Inference with Laplacian Approximation
+
+p
+
+, G
+
+∝
+
+p
+
+ri,n
+
+exp
+
+f
+
+(cid:2)
+k Ω
+
+−1gk
+
+(cid:2)
+−1 f k + g
+k Σ
+
+We have described the relational model under a prior of SRP, in which HGP and TGP are subcases.
+Now we develop the inference algorithm to compute the sufﬁcient statistics of the a posteriori dis-
+tribution of latent variables.
+Let F = {fi,k }, G = {gn,k }, f k = [f1,k , . . . , fN ,k ](cid:2)
+and gk = [g1,k , . . . , gM ,k ](cid:2)
+, where fi,k =
+fk (ui ), gn,k = gk (vn ). Then the posterior distribution p(F, G|RI , θ) is proportional to the joint
+(cid:12)
+(cid:11)
+(cid:9)
+(cid:15)(cid:16)
+(cid:10)(cid:10)(cid:10) (cid:6)d
+(cid:7)
+(cid:8)
+(cid:14)
+(cid:2)
+d(cid:13)
+distribution of the complete data:
+√
+− 1
+RI , F, G|θ
+k=1 fi,k gn,k
+2
+(i,n)∈I
+d
+k=1
+An exact inference is intractable due to the coupling between fi,k and gn,k in the likelihood term. In
+this paper we apply Laplacian approximation, which approximates p(F, G|RI , θ) by a multivariate
+normal distribution q(F, G|β) with sufﬁcient statistics β . At the ﬁrst step, we compute the means
+(cid:17)
+(cid:18)
+by ﬁnding the mode in the posterior,
+J (F, G) = − log p(RI , F, G|θ)
+∗ } = arg min{F,G}
+{F
+∗
+We solve the minimization by the conjugate gradient method. The gradients are calculated by
+1√
+1√
+∂J (F, G)
+∂J (F, G)
+−1F,
+(cid:2)
+−1G,
+(cid:6)d
+SG + Σ
+=
+=
+F + Ω
+S
+∂F
+∂G
+d
+d
+√
+where S ∈ R
+N ×M have elements si,n = ∂ [− log p(ri,n |ti,n )]/∂ ti,n , ti,n =
+d,
+k=1 fi,k gn,k /
+if (i, n) ∈ I, otherwise si,n = 0. At the second step we calculate the covariance by C = H
+−1 ,
+where H is the Hessian, i.e., the second-order derivatives of J (F, G) with respect to {F, G}.
+However the inverse is prohibitive because H is a huge matrix. To reduce the complexity, we
+(cid:19)d
+assume that there exist disjoint groups of latent variables, each group is second-order independent
+to any other at their equilibriums. We factorize the approximating distribution as q(F, G|β) =
+k=1 q(f k |f
+k , Σk )q(gk |g∗
+∗
+∗
+k and g∗
+(cid:6)
+k , Ωk ), where f
+k are the solution from Eq. (2), and Σk , Ωk are
+the covariances matrices. This follows the facts: (1) Each f k (or gk ) indirectly interacts with other
+f κ (or gκ ), κ (cid:12)= k , through the sum
+κ(cid:4)=k f κg(cid:2)
+κ , indicating that f k (or gk ) across different k are
+only loosely dependent to each other, especially for a large d; (2) The dependency between fi,k and
+gn,k is witnessed via at most only one observation in RI . Therefore we can compute the Hessian for
+(cid:13)
+each group separately and obtain the covariances:
+−1 )
+−1 , with φ
+Σk = (Φ(k) + Σ
+(cid:13)
+n:(i,n)∈I
+i:(i,n)∈I
+
+−1 )
+−1 , with ψ (k)
+n,n =
+
+Ωk = (Ψ(k) + Ω
+
+ζi,n g2
+n,k
+d
+
+ζi,n f 2
+i,k
+d
+
+, ψ (k)
+n,m = 0
+
+, φ
+
+(k)
+i,j = 0
+
+(k)
+i,i =
+
+(2)
+
+(3)
+
+(4)
+
+where ζi,n = ∂ 2 [− log p(ri,n |ti,n )]/∂ t2
+, {Σk }
+∗
+∗
+, G
+i,n . Then we obtain the sufﬁcient statistics F
+and {Ωk }. Finally we note that, the posterior distribution of {F, G} has many modes (Simply,
+shufﬂing the order of latent dimensions or changing the signs of both f k and gk does not change the
+probability.). However each mode is equally well in constructing the relational function t.
+
+4 Structural Learning by Hyperparameter Estimation
+(cid:5)
+(cid:4)
+(cid:1)
+(cid:1)
+We assign a hyper prior p(θ |α) and estimate θ by maximizing a penalized marginal likelihood
+p(RI , F, G|θ)dFdG + log p(θ |α)
+∗
+
+log
+
+θ
+
+= arg max
+θ={θΣ ,θΩ }
+
+G
+
+F
+
+(5)
+
+So far the optimization (5) is quite general. In principal, it allows to learn some parametric forms
+of kernel functions Σ(ui , uj ; θΣ ) and Ω(vn , vm ; θΩ ) that are generalizable to new entities. In this
+
+paper we particularly consider an situation where entity attributes are not fully informative or even
+absent. Therefore we introduce a direct parameterization θΣ = Σ, θΩ = Ω, and assign conjugate
+inverse-Wishart priors Σ ∼ IW N (λd, Σ0 ) and Ω ∼ IW M (λd, Ω0 ), namely
+(cid:21)
+(cid:20) − λd
+p(Σ|λd, Σ0 ) ∝ det(Σ)
+−1Σ0
+− λd
+(cid:21)
+(cid:20) − λd
+2 etr
+Σ
+2
+p(Ω|λd, Ω0 ) ∝ det(Ω)
+−1Ω0
+− λd
+2 etr
+Ω
+2
+where λ > 0 so that λd denotes the degrees of freedom, Σ0 and Ω0 are the base kernels. Then
+we apply an iterative expectation-maximization (EM) algorithm to solve the problem (5). In the
+E-step, we follow Sec. 3 to compute q(F, G|β). In the M-step, we update the hyperparameters by
+maximizing the expected log-likelihood of the complete data
+{Σ,Ω} Eq [log p(RI , F, G|Σ, Ω)] + log p(Σ|λd, Σ0 ) + log p(Ω|λd, Ω0 )
+max
+where Eq [·] is the expectation over q(F, G|β). Due to the conjugacy of the hyper prior, the maxi-
+(cid:6)d
+(cid:6)d
+mization have an analytical solution,
+∗
+∗
+k=1 (g∗
+k g∗
+λΣ0 + 1
+k=1 (f
+k f
+k
+k
+d
+λ + 1
+λ + 1
+
+λΩ0 + 1
+d
+
+, Ω =
+
++ Σk )
+
+Σ =
+
+,
+
+,
+
+(cid:2)
+
+(cid:2)
+
++ Ωk )
+
+.
+
+(6)
+
+5
+
+Implementation Details
+
+The parameters Σ0 , Ω0 , d and λ have to be pre-speci ﬁed. We let the base kernels have the form
+Σ0 (ui , uj ) = (1 − a)γ (ui , uj ) + aδi,j and Ω0 (vn , vm ) = (1 − η)ξ (vn , vm ) + ηδn,m , where 1 ≥
+a, η ≥ 0, δ is a Dirac delta kernel (δi,j = 1 if i = j , otherwise δi,j = 0), γ (·, ·) and ξ (·, ·)
+are some kernel functions deﬁned on entity attributes, which reﬂect our prior notion of similarities
+between entities. We use a and η to penalize the effects of γ (·, ·) and ξ (·, ·), respectively, when entity
+attributes are deﬁcient. If the attributes are unavailable, we set a = η = 1. The dimensionality d
+should be properly chosen, otherwise a too small d may deteriorate the modeling ﬂexibility. We
+determine d and λ based on the prediction performance on a validation set of links. The learning
+algorithm iterates the E-step with Eq. (2), (3), (4), and the M-step with Eq. (6) until convergence.
+In the experiments of this paper we use p(ri,n |t
+∗
+∗
+i,n ) to make predictions, where t
+is computed from
+∗
+∗
+F
+and G
+. In a longer version the predictive uncertainty of ti,n will be considered.
+
+6 Related Work
+
+There is a history of probabilistic relational models (PRM) [8] in machine learning. Getoor et al.
+[5] introduced link uncertainty and deﬁned a generative model for both entity attributes and links.
+Recently, [12] and [7] independently introduced an inﬁnite (hidden) relational model to avoid the
+difﬁculty of structural learning in PRM by explaining links via a potentially inﬁnite number of
+hidden states of entities. Since discriminatively trained models generally outperform generative
+models in prediction tasks, Taskar et al. proposed relational Markov networks (RMNs) for link
+prediction [11], by describing a conditional distribution of links given entity attributes and other
+links. RMN has to deﬁne a class of potential functions on cliques of random variables based on
+the observed relational structure. Compared to RMN, SRM is nonparametric because structural
+information (e.g., cliques as well as the classes of potential functions) is not pre-deﬁned but learned
+from data. Very recently a GP model was developed to learn from undirected graphs [4], which
+turns out to be a special rank-one case of SRM with d = 1, Σ = Ω, and fk = hk . In another work
+[1] a SVM using a tensor kernel based on user and item attributes was used to predict user ratings
+on items, which is similar to our TGP case and suffers a salability problem. When attributes are
+deﬁcient or unavailable, the model does not work well, while SRM can learn informative kernels
+purely from only links (see Sec. 7). SRM is interestingly related to the recent fast maximum-margin
+matrix factorization (MMMF) in [10]. If we ﬁx Σ and Ω as uninformative Dirac kernels, the mode
+of our Laplacian approximation is equivalent to the solution of Eq.(5) in [10] with the loss function
+l(ri,n , ti,n ) = − log p(ri,n |ti,n ). However SRM signi ﬁcantly differs from MMMF in two important
+aspects: (1) SRM is a supervised predictive model because entity attributes enter the model by
+forming informative priors (Σ, Ω) and hyper priors (Σ0 , Ω0 ); (2) More importantly, SRM deals with
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+10
+
+20
+
+30
+
+5
+
+10
+
+15
+
+20
+
+15
+
+20
+
+5
+
+10
+(f)
+
+5
+
+10
+
+15
+
+20
+
+10
+
+20
+
+30
+
+10
+
+20
+
+30
+
+15
+
+20
+
+5
+
+10
+(g)
+
+10
+
+20
+
+30
+
+10
+
+20
+
+30
+
+5
+
+10
+
+15
+
+20
+
+15
+
+20
+
+5
+
+10
+(h)
+
+5
+
+10
+
+15
+
+20
+
+10
+
+20
+
+30
+
+10
+
+20
+
+30
+
+15
+
+20
+
+5
+
+10
+(i)
+
+10
+
+20
+
+30
+
+10
+
+20
+
+30
+
+5
+
+10
+
+15
+
+20
+
+10
+
+20
+
+30
+
+(j)
+
+5
+
+10
+
+15
+
+20
+
+Figure 1: Link prediction on synthetic data: (a) training data, where black entry means positive links, white
+means negative links, and gray means missing; (b) prediction of MMMF (classiﬁcation rate 0.906); (c) predic-
+tion of SRM with noninformative prior (classiﬁcation rate 0.942); (d) prediction of SRM with informative prior
+(classiﬁcation rate 0.965); (e-f) informative Σ0 and Ω0 ; (g-h) learned Σ and Ω with noninformative prior; (i-j)
+learned Σ and Ω with informative prior.
+
+structural learning by adapting the kernels and marginalizing out the latent relational function, while
+MMMF only estimates the mode of the latent relational function with ﬁxed Dirac kernels.
+
+7 Experiments
+Synthetic Data: We generated two sets of entities U = {ui }20
+i=1 and V = {vn}30
+n=1 on a real line
+such that ui = 0.1i and vn = 0.1n. The positions of entities were used to compute two RBF kernels
+that serve as informative Σ0 and Ω0 . Then we further made a deformation on the real line to form
+2 clusters in U and 3 clusters in V . RBF function computed on the deformed scale gives two kernel
+matrices Σ and Ω whose diagonal block structure reﬂects the clusters. Binary links between U
+and V are obtained by taking the sign of a function, which is a sample from T GP (0, Σ, Ω). We
+randomly withdrew 50% of links for training, and left the remaining for test (see Fig. 1-(a)). We
+performed two variants of SRM, one with informative Σ0 and Ω0 (see Fig. 1-(e,f)) and the other
+with noninformative Dirac kernels Σ0 = Ω0 = I, and compared with MMMF [10]. In all the cases
+we set d = 20. The classiﬁcation accuracy rates of two SRMs, 0.942 and 0.965, are both better than
+0.906 of MMMF. As shown in Fig. 1, the block structures of learned kernels indicate that both SRMs
+can learn the cluster structure of entities from links. The structural kernel optimization enables SRM
+to outperform MMMF, even with a completely noninformative prior. Note that the informative prior
+really helps SRM to achieve the best accuracy.
+Eachmovie Data: We tested our algorithms on a data set from [3], which is a subset of EachMovie
+data, containing 5000 users’ ratings, i.e., 1, 2, 3, 4, 5, or 6, on 1623 movies. We selected the ﬁrst 1000
+users and organized the data into a 1000 × 1623 table with 63, 592 observed ratings. We compared
+SRM with MMMF in a regression task to predict the ‘rating link’ between users and movies. In
+SRM we set Σ0 = Ω0 = I. For both methods the dimensionality was chosen as d = 20. In MMMF
+we used the square error loss. We repeated the experiments for 10 times, where at each time we
+randomly withdrew 70% ratings for training and left the remaining for test. Root-mean-square error
+(RMSE) and mean-absolute error (MAE) were used to evaluate the accuracy. The results of all the
+repeats, as well as the means and standard deviations, are shown in Table 1 and Table 2. Compared
+to MMMF, SRM signiﬁcantly reduces the prediction error by over 12% in terms of both RMSE and
+MAE.
+
+8 Conclusions and Future Extensions
+
+In this paper we proposed a stochastic relational model (SRM) for learning relational data. Entity re-
+lationships are modeled by a tensor interaction of multiple Gaussian processes (GPs). We proposed
+a family of relational processes and showed its convergence to a tensor Gaussian process if the de-
+grees of freedom goes to inﬁnity. The process imposes an effective prior on the entity relationships,
+
+Table 1: User-movie rating prediction error measured by RMSE
+10
+9
+8
+7
+6
+5
+3
+2
+4
+1.373
+1.358
+1.380
+1.356
+1.368
+1.363
+1.377
+1.372
+1.367
+1.199
+1.192
+1.200
+1.198
+1.209
+1.204
+1.208
+1.189
+1.209
+
+1
+1.366
+1.195
+
+mean ± std.
+1.368 ± 0.008
+1.200±0.007
+
+Repeats
+MMMF
+SRM
+
+Table 2: User-movie rating prediction error measured by MAE
+10
+9
+8
+7
+6
+5
+3
+2
+4
+1.072
+1.062
+1.074
+1.060
+1.073
+1.066
+1.076
+1.074
+1.066
+0.928
+0.924
+0.923
+0.924
+0.934
+0.931
+0.932
+0.918
+0.933
+
+1
+1.067
+0.924
+
+mean ± std.
+1.060±0.006
+0.927± 0.005
+
+Repeats
+MMMF
+SRM
+
+and leads to a discriminative link prediction model. We demonstrated the excellent results of SRM
+on a synthetic data set and a user-movie rating prediction problem.
+
+Though the current work focused on the application of link prediction, the model can be used for
+general relational learning purposes. There are several directions to extend the current model: (1)
+SRM can describe a joint distribution of entity links and entity classes conditioned on entity-wise
+GP kernels. Therefore entity classiﬁcation can be solved in a relational context; (2) One can extend
+SRM to model multi-way relations where more than two entities participate in a single relationship;
+(3) SRM can also be applied to model pairwise relations between multiple entity sets, where kernel
+updates amount to propagation of information through the entire relational network; (4) As discussed
+in Sec. 2.1.2, SRM is a natural extension of hierarchical Bayesian multi-task models, by explicitly
+modeling the dependency over tasks. In a recent work [2] a tensor GP for multi-task learning was
+independently suggested; (5) Finally, it is extremely important to make the algorithm scalable to very
+large relational data, like the Netﬂix problem, containing about 480,000 users and 17,000 movies.
+
+Acknowledgement
+
+The authors thank Andreas Krause, Chris Williams, Shenghuo Zhu, and Wei Xu for the fruitful
+discussions.
+
+References
+[1] J. Basilico and T. Hofmann. Unifying collaborative and content-based ﬁltering. In Proceedings of the
+21st International Conference on Machine Learning (ICML), 2004.
+[2] E. V. Bonilla, F. V. Agakov, and C. K. I. Williams. Kernel multi-task learning using task-speciﬁc features.
+In Proceedings of the 11th International Conference on Artiﬁcial Intelligence and Statistics (AISTATS) ,
+2007. To appear.
+[3] J. S. Breese, D. Heckerman, and C. Kadie. Empirical analysis of predictive algorithms for collaborative
+ﬁltering. In Proceedings of the 14th Conference on Uncertainty in Artiﬁcial Intelligence (UAI) , 1998.
+[4] W. Chu, V. Sindhwani, Z. Ghahramani, and S. S. Keerthi. Relational learning with gaussian processes. In
+Neural Information Processing Systems (NIPS), 2007. To appear.
+[5] L. Getoor, E. Segal, B. Taskar, and D. Koller. Probabilistic models of text and link structure for hypertext
+classiﬁcation. In Proceedings ICJAI Workshop on Text Learning: Beyond Supervision, 2001.
+[6] Arjun K. Gupta and Daya K. Naga. Matrix Variate Distributions. 1999.
+[7] C. Kemp, J. B. Tenenbaum, T. L. Grifﬁths, T. Yamada, and N. Ueda. Learning systems of concepts with
+an inﬁnite relational model.
+In Proceedings of the 21st National Conference on Artiﬁcial Intelligence
+(AAAI), 2006.
+[8] D. Koller and A. Pfeffer. Probabilistic frame-based systems. In Proceedings of National Conference on
+Artiﬁcial Intelligence (AAAI) , 1998.
+[9] C. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning. MIT Press, 2006.
+[10] Jason D. M. Rennie and Nati Srebro. Fast maximum margin matrix factorization for collaborative predic-
+tion. In Proceedings of the 22nd International Conference on Machine Learning (ICML), 2005.
+[11] B. Taskar, M. F. Wong, P. Abbeel, and D. Koller. Link prediction in relational data. In Neural Information
+Processing Systems Conference (NIPS), 2004.
+[12] Z. Xu, V. Tresp, K. Yu, and H.-P. Kriegel. Inﬁnite hidden relational models. In Proceedings of the 22nd
+International Conference on Uncertainty in Artiﬁcial Intelligence (UAI) , 2006.
+[13] K. Yu, V. Tresp, and A. Schwaighofer. Learning Gaussian processes from multiple tasks. In Proceedings
+of 22nd International Conference on Machine Learning (ICML), 2005.
+
+

@@ -1,0 +1,1420 @@
+Large Scale Nonparametric Bayesian Inference:
+Data Parallelisation in the Indian Buffet Process
+
+Finale Doshi-Velez∗
+University of Cambridge
+Cambridge, CB21PZ, UK
+finale@alum.mit.edu
+
+David Knowles∗
+University of Cambridge
+Cambridge, CB21PZ, UK
+dak33@cam.ac.uk
+
+Shakir Mohamed∗
+University of Cambridge
+Cambridge, CB21PZ, UK
+sm694@cam.ac.uk
+
+Zoubin Ghahramani
+University of Cambridge
+Cambridge, CB21PZ, UK
+zoubin@eng.cam.ac.uk
+
+Abstract
+
+Nonparametric Bayesian models provide a framework for ﬂexi ble probabilistic
+modelling of complex datasets. Unfortunately, the high-dimensional averages re-
+quired for Bayesian methods can be slow, especially with the unbounded repre-
+sentations used by nonparametric models. We address the challenge of scaling
+Bayesian inference to the increasingly large datasets found in real-world appli-
+cations. We focus on parallelisation of inference in the Indian Buffet Process
+(IBP), which allows data points to have an unbounded number of sparse latent
+features. Our novel MCMC sampler divides a large data set between multiple
+processors and uses message passing to compute the global likelihoods and pos-
+teriors. This algorithm, the ﬁrst parallel inference schem e for IBP-based models,
+scales to datasets orders of magnitude larger than have previously been possible.
+
+1
+
+Introduction
+
+From information retrieval to recommender systems, from bioinformatics to ﬁnancial market anal-
+ysis, the amount of data available to researchers has exploded in recent years. While large, these
+datasets are often still sparse: For example, a biologist may have expression levels from thousands
+of genes from only a few people. A ratings database may contain millions of users and thousands
+of movies, but each user may have only rated a few movies. In such settings, Bayesian methods
+provide a robust approach to drawing inferences and making predictions from sparse information.
+At the heart of Bayesian methods is the idea that all unknown quantities should be averaged over
+when making predictions. Computing these high-dimensional average is thus a key challenge in
+scaling Bayesian inference to large datasets, especially for nonparametric models.
+
+Advances in multicore and distributed computing provide one answer to this challenge: if each pro-
+cessor can consider only a small part of the data, then inference in these large datasets might become
+more tractable. However, such data parallelisation of inference is nontrivial —while simple models
+might only require pooling a small number of sufﬁcient stati stics [1], inference in more complex
+models might require the frequent communication of complex, high-dimensional probability distri-
+butions between processors. Building on work on approximate asynchronous multicore inference
+for topic models [2], we develop a message passing framework for data-parallel Bayesian inference
+applicable to a variety of models, including matrix factorization and the Indian Buffet Process (IBP).
+
+∗ Authors contributed equally.
+
+1
+
+Nonparametric models are attractive for large datasets because they automatically adapt to the com-
+plexity of the data, relieving the researcher from the need to specify aspects of the model such as the
+number of latent factors. Much recent work in nonparametric Bayesian modelling has focused on
+the Chinese restaurant process (CRP), which is a discrete distribution that can be used to assign data
+points to an unbounded number of clusters. However, many real-world datasets have observations
+that may belong to multiple clusters —for example, a gene may h ave multiple functions; an image
+may contain multiple objects. The IBP [3] is a distribution over inﬁnite sparse binary matrices that
+allows data points to be represented by an unbounded number of sparse latent features or factors.
+While the parallelisation method we present in this paper is applicable to a broad set of models, we
+focus on inference for the IBP because of its unique challenges and potential.
+
+Many serial procedures have been developed for inference in the IBP, including variants of Gibbs
+sampling [3, 4], which may be augmented with Metropolis split-merge proposals [5], slice sam-
+pling [6], particle ﬁltering [7], and variational inferenc e [8]. With the exception of the accelerated
+Gibbs sampler of [4], these methods have been applied to datasets with less than 1,000 observations.
+
+To achieve efﬁcient paralellisation, we exploit an idea rec ently introduced in [4], which maintains
+a distribution over parameters while sampling. Coupled with a message passing scheme over pro-
+cessors, this idea enables computations for inference to be distributed over many processors with
+few losses in accuracy. We demonstrate our approach on a problem with 100,000 observations. The
+largest application of IBP inference to date, our work opens the use of the IBP and similar models
+to a variety of data-intensive applications.
+
+2 Latent Feature Model
+
+The IBP can be used to deﬁne models in which each observation i s associated with a set of latent
+factors or features. A binary feature-assignment matrix Z represents which observations possess
+which hidden features, where Znk = 1 if observation n has feature k and Znk = 0 otherwise.
+For example, the observations might be images and the hidden features could be possible objects in
+those images. Importantly, the IBP allows the set of such possible hidden features to be unbounded.
+
+To generate a sample from the IBP, we ﬁrst imagine that the row s of Z (the observations) are cus-
+tomers and the columns of Z (the features) are dishes in an inﬁnite buffet. The ﬁrst cust
+omer takes
+the ﬁrst Poisson( α) dishes. The following customers try previously sampled dishes with probability
+mk /n, where mk is the number of people who tried dish k before customer n. Each customer also
+takes Poisson(α/n) new dishes. The value Znk records if customer n tried dish k . This generative
+process allows an unbounded set of features but guarantees that a ﬁnite dataset will contain a ﬁnite
+number of features with probability one. The process is also exchangeable in that the order in which
+customers visit the buffet has no impact on the distribution of Z . Finally, if the effect of possessing
+a feature is independent of the feature index, the model is also exchangeable in the columns of Z .
+We associate with the feature assignment matrix Z , a feature matrix A with rows that parameterise
+the effect that possessing each feature has on the data. Given these matrices, we write the probability
+of the data as P (X |Z, A). Our work requires that P (A|X, Z ) can be computed or approximated
+efﬁciently by an exponential family distribution. Speci ﬁc
+ally, we apply our techniques to both a
+fully-conjugate linear-Gaussian model and non-conjugate Bernoulli model.
+
+Linear Gaussian Model. We model an N ×D real-valued data matrix X as a product:
+(1)
+X = ZA + ǫ,
+where Z is the binary feature-assignment matrix and A is a K by D real-valued matrix with an
+a ) on each element (see cartoon in Figure 1(a)). Each element
+independent Gaussian prior N (0, σ2
+of the N by D noise matrix ǫ is independent with a N (0, σ2
+n ) distribution. Given Z and X , the
+posterior on the features A is Gaussian, given by mean and covariance
+I (cid:19)−1
+I (cid:19)−1
+µA = (cid:18)Z T Z +
+x (cid:18)Z T Z +
+ΣA = σ2
+Bernoulli Model. We use a leaky, noisy-or likelihood for each element of an N ×D matrix X :
+P (Xnd = 1|Z, A) = 1 − ǫ λPk
+2
+
+ZnkAkd .
+
+σ2
+x
+σ2
+a
+
+(2)
+
+(3)
+
+Z T X
+
+σ2
+x
+σ2
+a
+
+X
+
+N
+
+D
+
+K
+
+Z
+
+~ N
+
+A
+*
+
+...
+
+D
+
+.
+.
+.
+
+K
+
++ ε
+
+prior
+
+statistics
+posterior
+
+Root
+
+statistic
+sp
+o
+sterio
+r
+
+P1
+
+P2
+
+statistics
+posterior
+
+statistic
+p
+o
+s
+sterio
+r
+
+P3
+
+P4
+
+(a) Representation of the linear-Gaussian model.
+The data X is generated from the product of the
+feature assignment matrix Z and feature matrix A.
+In the Bernoulli model, the product ZA adjusts the
+probability of X = 1
+
+(b) Message passing process. Pro-
+cessors send sufﬁcient statistics of
+the likelihood up to the root, which
+calculates and sends the (exact) pos-
+terior back to the processors.
+
+Figure 1: Diagrammatic representation of the model structure and the message passing process.
+
+Each element of the A matrix is binary with independent Bernoulli(pA ) priors. The parameters ǫ
+and λ determine how “leaky” and how “noisy” the or-function is, re
+spectively. Typical hyperpa-
+rameter values are ǫ = 0.95 and λ = 0.2. The posterior P (A|X, Z ) cannot be computed in closed
+form; however, a mean- ﬁeld variational posterior in which w e approximate P (A|X, Z ) as product
+of independent Bernoulli variables QK,D
+k,d qkd (akd ) can be readily derived.
+3 Parallel Inference
+
+We describe both synchronous and asynchronous procedures for approximate, parallel inference in
+the IBP that combines MCMC with message passing. We ﬁrst part
+ition the data among the proces-
+sors, using X p to denote the subset of observations X assigned to processor p. We use Z p to denote
+the latent features associated with the data on processor p. In [4], the distribution P (A|X−n , Z−n )
+was used to derive an accelerated sampler for sampling Zn , where n indexes the nth observation and
+−n is the set of all observations except n. In our parallel inference approach, each processor p main-
+tains a distribution P p (A|X−n , Z−n ), a local approximation to P (A|X−n , Z−n ). The distributions
+P p are updated via message passing between the processors.
+The inference alternates between three steps:
+• Message passing: processors communicate to compute the exact P (A|X, Z ).
+• Gibbs sampling: processors sample a new set of Z p ’s in parallel.
+• Hyperparameter sampling: a root processor resamples global hyperparameters
+
+The sampler is approximate because during Gibbs sampling, all processors resample elements of Z
+at the same time; their posteriors P p (A|X, Z ) are no longer the true P (A|X, Z ).
+
+(4)
+
+P (X p |Z p , A)
+
+Message Passing We use Bayes rule to factorise the posterior over features P (A|Z, X ):
+P (A|Z, X ) ∝ P (A) Yp
+If the prior P (A) and the likelihoods P (X p |Z p , A) are conjugate exponential family models, then
+the sufﬁcient statistics of P (A|Z, X ) are the sum of the sufﬁcient statistics of each term on the rig ht
+side of equation (4). For example, the sufﬁcient statistics
+in the linear-Gaussian model are means
+and covariances; in the Bernoulli model, they are counts of how often each element Akd equals one.
+The linear-Gaussian messages have size O(K 2 + KD), and the Bernoulli messages O(KD), where
+K is the number of features. For nonparametric models such as the IBP, the number of features K
+grows as O(log N ). This slow growth means that messages remain small, even for large datasets.
+The most straightforward way to compute the full posterior is to arrange processors in a tree archi-
+tecture, as belief propagation is then exact. The message s from processor p to processor q is:
+sp→q = lp + Xr∈N (p)\q
+
+sr→p
+
+3
+
+where N (p)\q are the processors attached to p besides q and lp are the sufﬁcient statistics from
+processor p. A dummy neighbour containing the statistics of the prior is connected to (an arbitrarily
+designated) root processor. Also passed are the feature counts mp
+k = Pn∈X p Z p
+nk , the popularity of
+feature k within processor p. (See ﬁgure 1(b) for a cartoon.)
+In general, Znk can be Gibbs-sampled using Bayes rule
+
+Gibbs Sampling
+
+P (Znk |Z−nk , X ) ∝ P (Znk |Z−nk )P (X |Z ).
+
+The probability P (Znk |Z−nk ) depends on the size of the dataset N and the number of observations
+mk using feature k . At the beginning of the Gibbs sampling stage, each processor has the correct
+values of mk . We compute m−p
+k = mk − mp
+k , and, as the processor’s internal feature counts mp
+k are
+updated, approximate mk ≈ m−p
+k . This approximation assumes m−p
+k + mp
+stays ﬁxed during the
+k
+current stage (good for popular features).
+
+P (Xn |Zn , A)P (A|Z−n , X−n )dA,
+
+The collapsed likelihood P (X |Z ) integrating out the feature values A is given by:
+P (X |Z ) ∝ ZA
+where the partial posterior P (A|Z−n , X−n ) ∝ P (A|Z,X )
+P (Xn |Zn ,A) . In conjugate models, P (A|Z−n , X−n )
+can be efﬁciently computed by subtracting observation n’s contribution to the sufﬁcient statistics. 1
+For non-conjugate models, we can use an exponential family distribution Q(A) to approximate
+P (A|X, Z ) during message passing. A draw A ∼ Q−p (A) is then used to initialise an uncollapsed
+Gibbs sampler. The outputted samples of A are used to compute sufﬁcient statistics for the likelihood
+P (X |Z ). In both cases, new features are added as described in [3].
+
+Hyperparameter Resampling The IBP concentration parameter α and hyperparameters of the
+likelihood can also be sampled during inference. Resampling α depends only on the total number of
+active features; thus it can easily be resampled at the root and propagated to the other processors. In
+the linear-Gaussian model, the posteriors on the noise and feature variances (starting from gamma
+priors) depend on various squared-errors, which can also be computed in a distributed fashion.
+
+For more general, non-conjugate models, resampling the hyperparameters requires two steps. In
+the ﬁrst step, a hyperparameter value is proposed by the root
+and propagated to the processors.
+The processors each compute the likelihood of the current and proposed hyperparameter values and
+propagate this value back to root. The root evaluates a Metropolis step for the hyperparameters
+and propagates the decision back to the leaves. The two-step approach introduces a latency in the
+resampling but does not require any additional message passing rounds.
+
+Asynchronous Operation So far we have discussed message passing, Gibbs sampling, and hy-
+perparameter resampling as if they occur in separate phases. In practice, these phases may occur
+asynchronously: between its Gibbs sweeps, each processor updates its feature posterior based on
+the most current messages it has received and sends likelihood messages to its parent. Likewise,
+the root continuously resamples hyperparameters and propagates the values down through the tree.
+While another layer of approximation, this asynchronous form of message passing allows faster pro-
+cessors to share information and perform more inference on their data instead of waiting for slower
+processors.
+
+Implementation Note When performing parallel inference in the IBP, a few factors need to be
+considered with care. Other parallel inference for nonparametric models, such as the HDP [2],
+simply matched features by their index, that is, assumed that the ith feature on processor p was also
+the ith feature on processor q . In the IBP, we ﬁnd that this indiscriminate feature merging is often
+disastrous when adding or deleting features: if none of the observations in a particular processor are
+using a feature, we cannot simply delete that column of Z and shift the other features over—doing
+so destroys the alignment of features across processors.
+
+1 In the IBP, only the linear-Gaussian model exhibits this conjugate structure. However, many other matrix
+factorization models (such as PCA) often have this conjugate form.
+
+4
+
+4 Comparison to Exact Metropolis
+
+Because all Z p ’s are sampled at once, the posteriors P p (A|X, Z ) used by each processor in section 3
+are no longer exact. Below we show how Metropolis –Hastings ( MH) steps can make the parallel
+sampler exact, but introduce signi ﬁcant computational ove rheads both in computing the transition
+probabilities and in the message passing. We argue that trying to do exact inference is a poor
+use of computational resources (especially as any ﬁnite cha in will not be exact); empirically, the
+approximate sampler behaves similarly to the MH sampler while ﬁnding higher likelihood regions
+in the data.
+
+Exact Parallel Metropolis Sampler.
+Ideally, we would simply add an MH accept/reject step after
+each stage of the approximate inference to make the sampler exact. Unfortunately, the approximate
+sampler makes several non-independent random choices in each stage of the inference, making the
+reverse proposal inconvenient to compute. We circumvent this issue by ﬁxing the random seed, mak-
+ing the initial stage of the approximate sampler a deterministic function, and then add independent
+random noise to create a proposal distribution. This approach makes both the forward and reverse
+transition probabilities simple to compute.
+
+Formally, let ˆZ p be the matrix output after a set of Gibbs sweeps on Z p . We use all the ˆZ p ’s to
+propose a new Z ′ matrix. The acceptance probability of the proposal is
+
+min(1,
+
+P (X |Z ′ )P (Z ′ )Q(Z ′ → Z )
+P (X |Z )P (Z )Q(Z → Z ′ )
+
+),
+
+(5)
+
+where the likelihood terms P (X |Z ) and P (Z ) are readily computed in a distributed fashion. For
+the transition distribution Q, we note that if we set the random seed r , then the matrix ˆZ p from the
+Gibbs sweeps in the processor is some deterministic function of the input matrix Z p . The proposal
+Z p′ is a (stochastic) noisy representation of ˆZ p in which for example
+
+P (Z p′
+nk = 1) = .99 if
+
+ˆZ p
+nk = 1,
+
+P (Z p′
+nk = 1) = .01 if
+
+ˆZ p
+nk = 0
+
+(6)
+
+where K should be at least the number of features in ˆZ p . We set Z p′
+nk = 0 for k > K . (See cartoon
+in ﬁgure 2.)
+
+To compute the backward probability, we take Z p′ and apply the same number of Gibbs sampling
+sweeps with the same random seed r . The resulting ˆZ p′ is a deterministic function of Z p′ . The
+backward probability Q(Z p′
+→ Z p ) which is the probability of going from Z p′ to Z p using 6.
+While the transition probabilities can be computed in a distributed, asynchronous fashion, all of the
+processors must synchronise when deciding whether to accept the proposal.
+
+Experimental Comparison To compare the exact Metropolis and approximate inference tech-
+niques, we ran each inference type on 1000 block images of [3] on 5 simulated processors. Each
+test was repeated 25 times. For each of the 25 tests, we create a held out dataset by setting elements
+of the last 100 images as missing values. For the ﬁrst 50 test i mages, we set all even numbered
+dimensions as the missing elements, and every odd numbered dimension as the missing values for
+the last 50 images. Each sampler was run for 10,000 iterations with 5 Gibbs sweeps per iteration;
+statistics were collected from the second half of the chain. To keep the probability of an acceptance
+reasonable, we allowed each processor to change only small parts of its Z p : the feature assignments
+Zn for 1, 5, or 10 data points each during each sweep.
+In table 1, we see that the approximate sampler runs about ﬁve times faster than the exact samplers
+while achieving comparable (or better) predictive likelihoods and reconstruction errors on held-
+out data. Both the acceptance rates and the predictive likelihoods fall as the exact sampler tries
+to take larger steps, suggesting that the difference between the approximate and exact sampler’s
+performance on predictive likelihood is due to poor mixing by the exact sampler. Figure 4 shows
+empirical CDFs for the number of features k , IBP concentration parameter α, the noise variance σ2
+n ,
+and the feature variance σ2
+a . The approximate sampler (black) produces similar CDFs to the various
+exact Metropolis samplers (gray) for the variances; the concentration parameter is smaller, but the
+feature counts are similar to the single-processor case.
+
+5
+
+Z p
+Z p
+Gibbs with
+fixed seed
+
+Z p’
+Random
+noise
+
+Figure 2: Cartoon of MH
+proposal
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+y
+t
+i
+l
+i
+b
+a
+b
+o
+r
+P
+ 
+e
+v
+i
+t
+a
+l
+i
+m
+u
+C
+
+Empirical CDF for IBP Concentration
+
+ 
+
+Single Processor
+Approximate Sampling
+Exact Sampling, various windows
+
+0
+
+ 
+5
+
+6
+
+7
+
+8
+
+9
+11
+10
+Feature Count
+
+12
+
+13
+
+14
+
+15
+
+(a) Active feature count k
+
+Method
+
+Time (s)
+
+MH, n = 1
+MH, n = 5
+MH, n = 10
+Approximate
+
+717
+1075
+1486
+179
+
+Test L2
+Error
+0.0468
+0.0488
+0.0555
+0.0487
+
+Test Log
+Likelihood
+0.1098
+0.0893
+0.0196
+0.1292
+
+MH Accept
+Proportion
+0.1106
+0.0121
+0.0062
+-
+
+Table 1: Evaluation of exact and approximate methods.
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+y
+t
+i
+l
+i
+b
+a
+b
+o
+r
+P
+ 
+e
+v
+i
+t
+a
+l
+i
+m
+u
+C
+
+Empirical CDF for IBP Concentration
+
+ 
+
+Single Processor
+Approximate Sampling
+Exact Sampling, various windows
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+y
+t
+i
+l
+i
+b
+a
+b
+o
+r
+P
+ 
+e
+v
+i
+t
+a
+l
+i
+m
+u
+C
+
+Empirical CDF for Noise Variance
+
+ 
+
+Single Processor
+Approximate Sampling
+Exact Sampling, various windows
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+y
+t
+i
+l
+i
+b
+a
+b
+o
+r
+P
+ 
+e
+v
+i
+t
+a
+l
+i
+m
+u
+C
+
+Empirical CDF for Feature Variance
+
+ 
+
+Single Processor
+Approximate Sampling
+Exact Sampling, various windows
+
+ 
+0
+0.5
+
+1
+
+1.5
+2.5
+2
+IBP Concentration Parameter
+(b) IBP Concentration α
+
+3.5
+
+3
+
+ 
+0
+0.1
+
+0.2
+
+0.45
+
+0.25
+
+0.15
+
+0.3
+0.4
+0.35
+Noise Variance
+(c) Noise variance σ2
+x
+
+0.55
+
+0.5
+
+0.6
+
+0
+
+ 
+
+0.2
+
+0.25
+
+0.3
+0.35
+Feature Variance
+(d) Feature variance σ2
+a
+
+0.45
+
+0.4
+
+0.5
+
+Figure 3: Empirical CDFs: The solid black line is the approximate sampler; the three solid gray lines
+are the MH samplers with n equal to 1, 5, and 10 (lighter shades indicate larger n. The approximate
+sampler and the MH samplers for smaller n have similar CDFs; the n = 10 MH sampler’s differing
+CDF indicates it did not mix in 7500 iterations (reasonable since its acceptance rate was 0.0062).
+
+5 Analysis of Mixing Properties
+
+We ran a series of experiments on 10,000 36-dimensional block images of [3] to study the effects
+of various sampler conﬁgurations on running time, performa nce, and mixing time properties of
+the sampler. 5000 elements of the data matrix were held-out as test data. Figure 4 shows test
+log-likelihoods using 1, 7, 31 and 127 parallel processors simulated in software, using 1000 outer
+iterations with 5 Gibbs inner iterations each. The parallel samplers have similar test likelihoods as
+the serial algorithm with signi ﬁcant savings in running tim e. The characteristic shape of the test
+likelihood, similar across all testing regimes, indicates how the features are learned. Initially, a large
+number of features are added, which provides improvements in the test likelihood. A reﬁnement
+phase, in which excess features are pruned, provides further improvements.
+
+Figure 4 shows hairiness-index plots for each of the test cases after thinning and burn-in. The hairi-
+ness index, based on the method of CUSUM for monitoring MCMC convergence [9, 10], monitors
+the number of features, the test likeli-
+how often the derivatives of sampler statistics —in our case,
+hood, and α —change in sign; infrequent changes in sign indicate that the
+sampler may not be mixed.
+The outer bounds on the plots are the 95% conﬁdence bounds. Th e index stays within the bounds
+suggesting that the chains are mixing.
+
+Finally, we considered the trade-off between mixing and running time as the number of outer it-
+erations and inner Gibbs iterations are varied. Each combination of inner and outer iterations was
+set so that the total number of Gibbs sweeps through the data was 5000. Mixing efﬁciency was
+
+0.5
+
+0
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+g
+o
+l
+ 
+t
+s
+e
+T
+
+−0.5
+
+−1
+
+−1.5
+
+−2
+ 
+−1
+
+Test Loglikelihood for inner = 5 and outer = 1000 iterations
+
+Processors = 1
+
+Processors = 7
+
+ 
+
+x
+e
+d
+n
+I
+ 
+s
+s
+e
+n
+i
+r
+i
+a
+H
+
+1
+
+0.5
+
+0
+
+1
+
+0.5
+
+0
+
+x
+e
+d
+n
+I
+ 
+s
+s
+e
+n
+i
+r
+i
+a
+H
+
+20 40 60 80100
+Processors = 31
+
+20 40 60 80 100
+Processors = 127
+
+x
+e
+d
+n
+I
+ 
+s
+s
+e
+n
+i
+r
+i
+a
+H
+
+1
+
+0.5
+
+0
+
+Proc = 1
+Proc = 7
+Proc = 31
+Proc = 127
+
+1
+
+0.5
+
+0
+
+x
+e
+d
+n
+I
+ 
+s
+s
+e
+n
+i
+r
+i
+a
+H
+
+0
+
+1
+
+2
+Time (s)
+
+3
+
+4
+
+5
+
+20 40 60 80 100
+
+20 40 60 80 100
+
+Figure 4: Change in likelihood for various numbers of processors over the simulation time. The
+corresponding hairiness index plots are shown on the left.
+
+6
+
+1
+
+0.9
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+.
+r
+e
+t
+I
+ 
+r
+e
+t
+u
+O
+ 
+r
+e
+p
+ 
+s
+e
+l
+p
+m
+a
+S
+ 
+e
+v
+i
+t
+c
+e
+f
+f
+E
+ 
+#
+
+ 
+
+Proc = 1
+Proc = 7
+Proc = 31
+Proc = 127
+
+105
+
+104
+
+103
+
+102
+
+)
+s
+(
+ 
+e
+m
+i
+T
+ 
+l
+a
+t
+o
+T
+
+ 
+
+i = 50, o = 100
+i = 20, o = 250
+i = 10, o = 500
+i = 5, o = 1000
+i = 1, o = 5000
+
+0.4
+ 
+0
+
+10
+
+20
+30
+#Inner Iterations
+
+40
+
+50
+
+101
+
+ 
+
+1
+
+7
+
+# Processors
+
+31
+
+127
+
+Figure 5: Effects of changing the number of inner iterations on: (a) The effective sample size (b)
+Total running time (Gibbs and Message passing).
+
+Table 2: Test log-likelihoods on real-world datasets for the serial, synchronous and asynchronous
+inference types.
+
+Dataset
+
+N
+
+D
+
+Description
+
+AR Faces [11]
+
+2600
+
+1598
+
+Piano [12]
+
+57931
+
+161
+
+Flickr [13]
+
+100000
+
+1000
+
+faces with lighting, acces-
+sories (real-valued)
+STDFT of a piano recording
+(real-valued)
+indicators
+of
+(binary-valued)
+
+image
+
+tags
+
+Serial
+p = 1
+-4.74
+
+Synch
+p = 16
+-4.77
+
+Async
+p = 16
+-4.84
+
+-1.435
+
+-1.182
+
+-1.228
+
+-0.0584
+
+measured via the effective number of samples per sample [10], which evaluates what fraction of
+the samples are independent (ideally, we would want all samples to be independent, but MCMC
+produces dependent chains). Running time for Gibbs sampling was taken to be the time required by
+the slowest processor (since all processors must synchronize before message passing); the total time
+reﬂected the Gibbs time and the message-passing time. As see n in ﬁgure 5, completing fewer inner
+Gibbs iterations per outer iteration results in faster mixing, which is sensible as the processors are
+communicating about their data more often. However, having fewer inner iterations requires more
+frequent message passing; as the number of processors becomes large, the cost of message passing
+becomes a limiting factor.2
+
+6 Real-world Experiments
+
+We tested our parallel scheme on three real world datasets on a 16 node cluster using the Matlab
+Distributed Computing Engine, using 3 inner Gibbs iterations per outer iteration. The ﬁrst dataset
+was a set of 2,600 frontal face images with 1,598 dimensions [11]. While not extremely large,
+the high-dimensionality of the dataset makes it challenging for other inference approaches. The
+piano dataset [12] consisted of 57,931 samples from a 161-dimensional short-time discrete Fourier
+transform of a piano piece. Finally, the binary-valued Flickr dataset [13] indicated whether each
+of 1000 popular keywords occurred in the tags of 100,000 images from Flickr. Performance was
+measured using test likelihoods and running time. Test likelihoods look only at held-out data and
+thus they allow us to ‘honestly’ evaluate the model’s ﬁt. Tab le 2 summarises the data and shows that
+all approaches had similar test-likelihood performance.
+
+In the faces and music datasets, the Gibbs time per iteration improved almost linearly as the number
+of processors increased ( ﬁgure 6). For example, we observed a 14x-speedup for p = 16 in the music
+dataset. Meanwhile, the message passing time remained small even with 16 processors —7% of the
+Gibbs time for the faces data and 0.1% of the Gibbs time for the music data. However, waiting for
+synchronisation became a signi ﬁcant factor in the synchron ous sampler. Figure 6(c) compares the
+times for running inference serially, synchronously and asynchronously with 16 processors. The
+
+2We believe part of the timing results may be an artifact, as the simulation overestimates the message passing
+time. In the actual parallel system (section 6), the cost of message passing was negligible.
+
+7
+
+—
+120
+
+100
+
+80
+
+60
+
+40
+
+20
+
+s
+/
+n
+o
+i
+t
+a
+r
+e
+t
+i
+ 
+r
+e
+t
+u
+o
+ 
+r
+e
+p
+ 
+e
+m
+i
+t
+ 
+n
+a
+e
+m
+
+ 
+
+sampling
+waiting
+
+1200
+
+1000
+
+800
+
+600
+
+400
+
+200
+
+s
+/
+n
+o
+i
+t
+a
+r
+e
+t
+i
+ 
+r
+e
+p
+ 
+e
+m
+i
+t
+ 
+n
+a
+e
+m
+
+ 
+
+sampling
+waiting
+
+x 107
+
+−1.8
+
+−2
+
+−2.2
+
+−2.4
+
+−2.6
+
+t
+n
+i
+o
+j
+ 
+g
+o
+l
+
+ 
+
+serial P=1
+synchronous P=16
+asynchronous P=16
+
+0
+
+ 
+
+1
+
+2
+16
+8
+4
+number of processors
+(a) Timing analysis for faces
+dataset
+
+0
+
+ 
+
+1
+
+2
+16
+8
+4
+number of processors
+(b) Timing analysis for music
+dataset
+
+ 
+−2.8
+10−2
+
+100
+
+102
+
+104
+
+time/s
+(c) Timing comparison for different
+approaches
+
+Figure 6: Bar charts comparing sampling time and waiting times for synchronous parallel inference.
+
+asynchronous inference is 1.64 times faster than the synchronous case, reducing the computational
+time from 11.8s per iteration to 7.2s.
+
+7 Discussion and Conclusion
+
+As datasets grow, parallelisation is an increasingly attractive and important feature for doing infer-
+ence. Not only does it allow multiple processors/multicore technologies to be leveraged for large-
+scale analyses, but it also reduces the amount of data and associated structures that each processor
+needs to keep in memory. Existing work has focused both on general techniques to efﬁciently split
+variables across processors in undirected graphical models [14] and factor graphs [15] and speci ﬁc
+models such as LDA [16, 17]. Our work falls in between: we leverage properties of a speci ﬁc kind
+of parallelisation—data parallelisation—for a fairly broad
+class of models.
+
+Speci ﬁcally, we describe a parallel inference procedure th at allows nonparametric Bayesian models
+based on the Indian Buffet Process to be applied to large datasets. The IBP poses speci ﬁc challenges
+to data parallelisation in that the dimensionality of the representation changes during inference and
+may be unbounded. Our contribution is an algorithm for data-parallelisation that leverages a com-
+pact representation of the feature posterior that approximately decorrelates the data stored on each
+processor, thus limiting the communication bandwidth between processors. While we focused on
+the IBP, the ideas presented here are applicable to a more general problems in unsupervised learning
+including bilinear models such as PCA, NMF, and ICA.
+
+Our sampler is approximate, and we show that in conjugate models, it behaves similarly to an ex-
+act sampler—but with much less computational overhead. Howe ver, as seen in the Bernoulli case,
+variational message passing for non-conjugate data doesn’t always produce good results if the ap-
+proximating distribution is a poor match for the true feature posterior. Determining when variational
+message passing is successful is an interesting question for future work. Other interesting directions
+include approaches for dynamically optimising the network topology (for example, slower proces-
+sors could be moved lower in the tree). Finally, we note that a middle ground between synchronous
+and asynchronous operations as we presented them might be a system that gives each processor a
+certain amount of time, instead of a certain number of iterations, to do Gibbs sweeps. Further study
+along these avenues should lead to even more efﬁcient data-p arallel Bayesian inference techniques.
+
+8
+
+References
+
+[1] C. Chu, S. Kim, Y. Lin, Y. Yu, G. Bradski, A. Ng, and K. Olukotun, “Map-reduce for machine
+learning on multicore,” in Advances in Neural Information Processing Systems, p. 281, MIT
+Press, 2007.
+[2] A. Asuncion, P. Smyth, and M. Welling, “Asynchronous dis tributed learning of topic models,”
+in Advances in Neural Information Processing Systems 21, 2008.
+[3] T. Grifﬁths and Z. Ghahramani, “Inﬁnite latent feature m odels and the Indian buffet process,”
+in Advances in Neural Information Processing Systems, vol. 16, NIPS, 2006.
+[4] F. Doshi-Velez and Z. Ghahramani, “Accelerated inferen ce for the Indian buffet process,” in
+International Conference on Machine Learning, 2009.
+[5] E. Meeds, Z. Ghahramani, R. Neal, and S. Roweis, “Modelin g dyadic data with binary latent
+factors,” in Advances in Neural Information Processing Systems, vol. 19, pp. 977–984, 2007.
+[6] Y. W. Teh, D. G ¨or ¨ur, and Z. Ghahramani, “Stick-breaking construction for th e Indian buffet
+process,” in Proceedings of the Intl. Conf. on Arti ﬁcial Intelligence an d Statistics, vol. 11,
+pp. 556–563, 2007.
+[7] F. Wood and T. L. Grifﬁths, “Particle ﬁltering for nonpar
+ametric Bayesian matrix factoriza-
+tion,” in Advances in Neural Information Processing Systems, vol. 19, pp. 1513–1520, 2007.
+[8] F. Doshi-Velez, K. T. Miller, J. Van Gael, and Y. W. Teh, “V ariational inference for the In-
+dian buffet process,” in Proceedings of the Intl. Conf. on Arti ﬁcial Intelligence an d Statistics,
+vol. 12, pp. 137–144, 2009.
+[9] S. P. Brooks and G. O. Roberts, “Convergence assessment t echniques for Markov Chain Monte
+Carlo,” Statistics and Computing, vol. 8, pp. 319–335, 1998.
+[10] C. R. Robert and G. Casella, Monte Carlo Statistical Methods. Springer, second ed., 2004.
+[11] A. M. Mart’inez and A. C. Kak, “PCA versus LDA,”
+IEEE Trans. Pattern Anal. Mach. Intelli-
+gence, vol. 23, pp. 228–233, 2001.
+[12] G. E. Poliner and D. P. W. Ellis, “A discriminative model
+for polyphonic piano transcription,”
+EURASIP J. Appl. Signal Process., vol. 2007, no. 1, pp. 154–154, 2007.
+[13] T. Kollar and N. Roy, “Utilizing object-object and obje ct-scene context when planning to ﬁnd
+things.,” in International Conference on Robotics and Automation, 2009.
+[14] C. G. Joseph Gonzalez, Yucheng Low, “Residual splash fo r optimally parallelizing belief prop-
+agation,” in Proceedings of the Twelfth International Conference on Arti ﬁcial Intelligence and
+Statistics (D. van Dyk and M. Welling, eds.), vol. 5, pp. 177–184, JMLR, 2 009.
+[15] D. Stern, R. Herbrich, and T. Graepel, “Matchbox: Large scale online Bayesian recommenda-
+tions,” in 18th International World Wide Web Conference (WWW2009), April 2009.
+[16] R. Nallapati, W. Cohen, and J. Lafferty, “Parallelized variational EM for Latent Dirichlet Al-
+location: An experimental evaluation of speed and scalability,” in ICDMW ’07: Proceedings
+of the Seventh IEEE International Conference on Data Mining Workshops, (Washington, DC,
+USA), pp. 349–354, IEEE Computer Society, 2007.
+[17] D. Newman, A. Asuncion, P. Smyth, and M. Welling, “Distr ibuted inference for Latent Dirich-
+let Allocation,” in Advances in Neural Information Processing Systems 20 (J. Platt, D. Koller,
+Y. Singer, and S. Roweis, eds.), pp. 1081–1088, Cambridge, M A: MIT Press, 2008.
+
+9
+
+

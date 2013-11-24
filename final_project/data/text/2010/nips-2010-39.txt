@@ -1,0 +1,603 @@
+Evidence-Speciﬁc Structures for Rich Tractable CRFs
+
+Anton Chechetka
+Carnegie Mellon University
+antonc@cs.cmu.edu
+
+Carlos Guestrin
+Carnegie Mellon University
+guestrin@cs.cmu.edu
+
+Abstract
+
+We present a simple and effective approach to learning tractable conditional ran-
+dom ﬁelds with structure that depends on the evidence. Our approach retains the
+advantages of tractable discriminative models, namely efﬁcient exact inference
+and arbitrarily accurate parameter learning in polynomial time. At the same time,
+our algorithm does not suffer a large expressive power penalty inherent to ﬁxed
+tractable structures. On real-life relational datasets, our approach matches or ex-
+ceeds state of the art accuracy of the dense models, and at the same time provides
+an order of magnitude speedup.
+
+1
+
+Introduction
+
+Conditional random ﬁelds (CRFs, [1]) have been successful in modeling complex systems, with
+applications from speech tagging [1] to heart motion abnormality detection [2]. A key advantage
+of CRFs over other probabilistic graphical models (PGMs, [3]) stems from the observation that in
+almost all applications, some variables are unknown at test time (we will denote such variables X ),
+but others, called the evidence E , are known at test time. While other PGM formulations model the
+joint distribution P (X , E ), CRFs directly model conditional distributions P (X | E ).
+The discriminative approach adopted by CRFs allows for better approximation quality of the learned
+conditional distribution P (X | E ), because the representational power of the model is not “wasted”
+on modeling P (E ). However, the better approximation comes at a cost of increased computational
+complexity for both structure [4] and parameter learning [1] as compared to generative models. In
+particular, unlike Bayesian networks or junction trees [3], (a) the likelihood of a CRF structure does
+not decompose into a combination of small subcomponent scores, making many existing approaches
+to structure learning inapplicable, and, (b) instead of computing optimal parameters in closed form,
+with CRFs one has to resort to gradient-based methods. Moreover, computing the gradient of the
+log-likelihood with respect to the CRF parameters requires inference in the current model to be done
+for every training datapoint. For high-treewidth models, even approximate inference is NP-hard [5].
+To overcome the extra computational challenges posed by the conditional random ﬁelds, practition-
+ers usually resort to several of the following approximations throughout the process:
+• CRF structure is speciﬁed by hand, leading to suboptimal structures.
+• Approximate inference during parameter learning results in suboptimal parameters.
+• Approximate inference at test time results in suboptimal results [5].
+• Replacing the CRF conditional likelihood objective with a more tractable one (e.g. [6])
+results in suboptimal models (both in terms of learned structure and parameters).
+
+Not only do all of the above approximation techniques lack any quality guarantees, but also com-
+bining several of them in the same system serves to further compound the errors.
+A well-known way to avoid approximations in CRF parameter learning is to restrict the models to
+have low treewidth, where the dependencies between the variables X have a tree-like structure. For
+
+1
+
+such models, parameter learning and inference can be done exactly1 ; only structure learning involves
+approximations. The important dependencies between the variables X , however, usually cannot all
+be captured with a single tree-like structure, so low-treewidth CRFs are rarely used in practice.
+In this paper, we argue that it is the commitment to a single CRF structure irrespective of the evidence
+E that makes tree-like CRFs an inferior option. We show that tree CRFs with evidence-dependent
+structure, learned by a generalization of the Chow-Liu algorithm [7], (a) yield results equal to or
+signiﬁcantly better than densely-connected CRFs on real-life datasets, and (b) are an order of mag-
+nitude faster than the dense models. More speciﬁcally, our contributions are as follows:
+• Formally deﬁne CRFs with evidence-speciﬁc (ES) structure.
+• Observe that, given the ES structures, CRF feature weights can be learned exactly.
+• Generalize the Chow-Liu algorithm [7] to learn evidence-speciﬁc structures for tree CRFs.
+• Generalize tree CRFs with evidence-speciﬁc structure (ESS-CRFs) to the relational setting.
+• Demonstrate empirically the superior performance of ESS-CRFs over densely connected
+models in terms of both accuracy and runtime on real-life relational models.
+
+2 Conditional random ﬁelds
+(cid:26)(cid:88)
+(cid:27)
+(cid:88)
+A conditional random ﬁeld with pairwise features2 deﬁnes a conditional distribution P (X | E ) as
+P (X | E ) = Z −1 (E ) exp
+wijk fijk (Xi , Xj , E )
+(1)
+,
+(i,j )∈T
+k
+where functions f are called features, w are feature weights, Z (E ) is the normalization constant
+(which depends on evidence), and T is the set of edges of the model. To reﬂect the fact that P (X | E )
+depends on the weights w, we will write P (X | E ,w). To apply a CRF model, one ﬁrst deﬁnes the set
+of features f . A typical feature may mean that two pixels i and j in the same image segment tend to
+have have similar colors: f (Xi , Xj , E ) ≡ I(Xi = Xj , |colori − colorj | < δ), where I(·) is an indicator
+function. Given the features f and training data D that consists of fully observed assignments to X
+(cid:88)
+.
+and E , the optimal feature weights w∗ maximize the conditional log-likelihood (CLLH) of the data:
+(cid:88)
+(cid:88)
+wijk fijk (Xi ,Xj ,E) − logZ (E,w))
+logP (X | E,w) = arg max
+w∗= arg max
+(i,j )∈T ,k
+(X,E)∈D
+(X,E)∈D
+The problem (2) does not have a closed form solution, but has a unique global optimum that can be
+found using any gradient-based optimization technique because of the following fact [1]:
+Fact 1 Conditional log-likelihood (2), abbreviated CLLH, is concave in w. Moreover,
+∂ log P (X | E, w)
+= fijk (Xi ,Xj ,E) − EP (Xi ,Xj |E,w) [fijk (Xi ,Xj ,E)] ,
+∂wijk
+where EP denotes expectation with respect to a distribution P .
+Convexity of the negative CLLH objective and the closed-form expression for the gradient lets us use
+convex optimization techniques such as L-BFGS [9] to ﬁnd the unique optimum w∗ . However, the
+gradient (3) contains the conditional distribution over XiXj , so computing (3) requires inference in
+the model for every datapoint. Time complexity of the exact inference is exponential in the treewidth
+of the graph deﬁned by edges T [5]. Therefore, exact evaluation of the CLLH objective (2)and
+gradient (3) and exact inference at test time are all only feasible for models with low-treewidth T .
+Unfortunately, restricting the space of models to only those with low treewidth severely decreases
+the expressive power of CRFs. Complex dependencies of real-life distributions usually cannot be
+adequately captured by a single tree-like structure, so most of the models used in practice have high
+treewidth, making exact inference infeasible. Instead, approximate inference techniques, such as
+
+(2)
+
+(3)
+
+1Here and in the rest of the paper, by “exact parameter learning” we will mean “with arbitrary accuracy
+in polynomial time” using standard convex optimization techniques. This is in contrast to closed form exact
+parameter learning possible for generative low-treewidth models representing the joint distribution P (X , E ).
+2 In this paper, we only consider the case of pairwise dependencies, that is, features f that depend on at most
+two variables from X (but may depend on arbitrary many variables from E ). Our approach can be in principle
+extended to CRFs with higher order dependencies, but Chow-Liu algorithm for structure learning will have to
+be replaced with an algorithm that learns low-treewidth junction trees, such as [8].
+
+2
+
+belief propagation [10, 11] or sampling [12] are used for parameter learning and at test time. Ap-
+proximate inference is NP-hard [5], so approximate inference algorithms have very few result quality
+guarantees. Greater expressive power of the models is thus obtained at the expense of worse quality
+of estimated parameters and inference. Here, we show an alternative way to increase expressive
+power of tree-like structured CRFs without sacriﬁcing optimal weights learning and exact inference
+at test time. In practice, our approach is much better suited for relational than for propositional
+settings, because of much higher parameters dimensionality in the propositional case. However, we
+ﬁrst present in detail the propositional case theory to better convey the key high-level ideas.
+
+3 Evidence-speciﬁc structure for CRFs
+
+Observe that, given a particular evidence value E, the set of edges T in the CRF formulation (1)
+actually can be viewed as a supergraph of the conditional model over X . An edge (r, s) ∈ T
+(cid:88)
+(cid:88)
+wijk fijk (Xi , Xj , E) ≡ (cid:88)
+(cid:88)
+if for E = E the edge features are identically zero,
+can be “disabled” in the following sense:
+frsk (Xr , Xs , E) ≡ 0, regardless of the values of Xr and Xs , then
+wijk fijk (Xi , Xj , E),
+(i,j )∈T \(r,s)
+(i,j )∈T
+k
+k
+and so for evidence value E, the model (1) with edges T is equivalent to (1) with (r − s) removed
+from T . The following notion of effective CRF structure, captures the extra sparsity:
+Deﬁnition 2 Given the CRF model (1) and evidence value E = E, the effective conditional model
+structure T (E = E) is the set of edges corresponding to features that are not identically zero:
+T (E = E) = {(i, j ) | (i, j ) ∈ T , ∃k , xi , xj s.t. fijk (xi , xj , E) (cid:54)= 0} .
+If T (E ) has low treewidth for all values of E , inference and parameter learning using the effective
+structure are tractable, even if a priori structure T has high treewidth. Unfortunately, in practice the
+treewidth of T (E ) is usually not much smaller than the treewidth of T . Low-treewidth effective struc-
+tures are rarely used, because treewidth is a global property of the graph (even computing treewidth
+is NP-complete [13]), while feature design is a local process. In fact, it is the ability to learn optimal
+weights for a set of mutually correlated features without ﬁrst understanding the inter-feature depen-
+dencies that is the key advantage of CRFs over other PGM formulations. Achieving low treewidth
+for the effective structures requires elaborate feature design, making model construction very dif-
+ﬁcult. Instead, in this work, we separate construction of low-treewidth effective structures from
+feature design and weight learning, to combine the advantages of exact inference and discriminative
+(cid:110)(cid:88)
+(cid:111)
+weights learning, high expressive power of high-treewidth models, and local feature design.
+(cid:88)
+Observe that the CRF deﬁnition (1) can be written equivalently as
+P (X | E , w) = Z −1 (E , w) exp
+wijk × (I((i, j ) ∈ T ) · fijk (Xi , Xj , E ))
+(4)
+.
+k
+ij
+Even though (1) and (4) are equivalent, in (4) the structure of the model is explicitly encoded as
+multiplicative component of the features. In addition to the feature values f , the effective structure
+of the model is now controlled by the indicator functions I(·). These indicator functions provide us
+with a way to control the treewidth of the effective structures independently of the features.
+Traditionally, it has been assumed that the a priori structure T of a CRF model is ﬁxed. However,
+such an assumption is not necessary. In this work, we assume that the structure is determined by the
+evidence E and some parameters u : T = T (E , u). The resulting model, which we call a CRF with
+(cid:111)
+(cid:110)(cid:88)
+(cid:88)
+evidence-speciﬁc structure (ESS-CRF), deﬁnes a conditional distribution P (X | E , w, u) as follows
+P (X | E ,w,u) = Z −1 (E ,w,u) exp
+wijk (I((i, j ) ∈ T (E , u)) · fijk (Xi , Xj , E ))
+. (5)
+k
+ij
+The dependence of the structure T on E and u can have different forms. We will provide one example
+of an algorithm for constructing evidence-speciﬁc CRF structures shortly.
+ESS-CRFs have an important advantage over the traditional parametrization: in (5) the parameters
+u that determine the model structure are decoupled from the feature weights w. As a result, the
+problem of structure learning (i.e., optimizing u) can be decoupled from feature selection (choosing
+f ) and feature weights learning (optimizing w). Such a decoupling makes it much easier to guarantee
+that the effective structure of the model has low treewidth by relegating all the necessary global
+computation to the structure construction algorithm T = T (E , u). For any ﬁxed choice of a structure
+construction algorithm T (·, ·) and structure parameters u, as long as T (·, ·) is guaranteed to return
+low-treewidth structures, learning optimal feature weights w∗ and inference at test time can be done
+exactly, because Fact 1 directly extends to feature weights w in ESS-CRFs:
+
+3
+
+Algorithm 1: Standard CRF approach
+Deﬁne features fijk (Xi , Xj , E ), implicitly deﬁning the high-treewidth CRF structure T .
+1
+Optimize weights w to maximize conditional LLH (2) of the training data.
+2
+Use approximate inference to compute CLLH objective (2) and gradient (3).
+foreach E in test data do
+Use conditional model (1) to deﬁne the conditional distribution P (X | E, w).
+Use approximate inference to compute the marginals or the most likely assignment to X .
+
+3
+4
+
+2
+
+3
+4
+
+Algorithm 2: CRF with evidence-speciﬁc structures approach
+Deﬁne features fijk (Xi , Xj , E ).
+1
+Choose structure learning alg. T (E , u) that is guaranteed to return low-treewidth structures.
+Deﬁne or learn from data parameters u for the structure construction algorithm T (·, ·).
+Optimize weights w to maximize conditional LLH log P (X | E, u, w) of the training data.
+Use exact inference to compute CLLH objective (2) and gradient (3).
+foreach E in test data do
+Use conditional model (5) to deﬁne the conditional distribution P (X | E, w, u).
+Use exact inference to compute the marginals or the most likely assignment to X .
+= I((i, j ) ∈ T (E , u))(cid:0)fijk (Xi ,Xj ,E)−EP (Xi ,Xj |E,w,u) [fijk (Xi ,Xj ,E)](cid:1) . (6)
+Observation 3 Conditional log-likelihood logP (X | E ,w,u) of ESS-CRFs (5) is concave in w. Also,
+∂ logP(X | E,w,u)
+∂wijk
+To summarize, instead of the standard CRF workﬂow (Alg. 1), we propose ESS-CRFs (Alg. 2).
+The standard approach has approximations (with little, if any, guarantees on the result quality) at
+every stage (lines 1,2,4), while in our ESS-CRF approach only structure selection (line 1) involves
+an approximation. Next, we present a simple but effective algorithm for learning evidence-speciﬁc
+tree structures, based on an existing algorithm for generative models. Many other existing structure
+learning algorithms can be similarly adapted to learn evidence-speciﬁc models of higher treewidth.
+
+4 Conditional Chow-Liu algorithm for tractable evidence-speciﬁc structures
+
+Learning the most likely PGM structure from data is in most cases intractable. Even for Markov
+random ﬁelds (MRFs), which are a special case of CRFs with no evidence, learning the most likely
+structure is NP-hard (c.f. [8]). However, for one very simple class of MRFs, namely tree-structured
+models, an efﬁcient algorithm exists [7] that ﬁnds the most likely structure. In this section, we adapt
+ized product of low-dimensional potentials: P (X ) ≡ Z −1 (cid:81)
+this algorithm (called the Chow-Liu algorithm) to learning evidence-speciﬁc structures for CRFs.
+Pairwise Markov random ﬁelds are graphical models that deﬁne a distribution over X as a normal-
+(i,j )∈T ψ(Xi , Xj ), Notice that pair-
+wise MRFs are a special case of CRFs with fij = log ψij , wij = 1 and E = ∅. Unlike tree CRFs,
+(cid:88)
+I (Xi , Xj ) − (cid:88)
+however, likelihood of tree MRF structures decomposes into contributions of individual edges:
+(7)
+LLH (T ) =
+Xi∈X H (Xi ),
+(i,j )∈T
+where I (·, ·) is the mutual information and H (·) is entropy. Therefore, as shown in [7], the most
+likely structure can be obtained by taking the maximum spanning tree of a fully connected graph,
+where the weight of an edge ij is I (Xi , Xj ). Pairwise marginals have relatively low dimensionality,
+so the marginals and corresponding mutual informations can be estimated from data accurately,
+which makes Chow-Liu algorithm a useful one for learning tree-structured models.
+Given the concrete value E of evidence E , one can write down the conditional version of the tree
+(cid:88)
+IP (·|E) (Xi , Xj ) − (cid:88)
+structure likelihood (7) for that particular value of evidence:
+LLH (T | E) =
+(8)
+Xi∈X HP (·|E) (Xi ).
+(i,j )∈T
+If exact conditional distributions P (Xi , Xj | E ) were available, then the same Chow-Liu algorithm
+would ﬁnd the optimal conditional structure. Unfortunately, estimating conditional distributions
+sionality of E [14]. However, we can still plug in approximate conditionals (cid:98)P (· | E ) learned from
+P (Xi , Xj | E ) with ﬁxed accuracy in general requires the amount of data exponential in the dimen-
+4
+
+// Parameter learning stage. u∗ is found e.g. using L-BFGS with (cid:98)P (·) as in (9)
+Algorithm 3: Conditional Chow-Liu algorithm for learning evidence-speciﬁc tree structures
+ij ← arg max (cid:80)
+log (cid:98)P (Xi , Xj | E, uij )
+foreach Xi , Xj ∈ X do u∗
+(X,E)∈Dtrain
+// Constructing structures at test time
+foreach E ∈ Dtest do
+ij ) ← I (cid:98)P (Xi ,Xj |E,u∗
+foreach Xi , Xj ∈ X do set edge weight rij (E, u∗
+ij ) (Xi , Xj )
+T (E, u∗ ) ← maximum spanning tree(r(E, u∗ ))
+
+3
+4
+
+1
+
+2
+
+Algorithm 4: Relational ESS-CRF algorithm - parameter learning stage
+Learn structure parameters u∗ using conditional Chow-Liu algorithm (Alg. 3)
+w∗ ← arg maxw log (cid:98)P (X | E, R, w, u∗ ) // Find e.g. with L-BFGS using the gradient (12)
+1
+Let P (X | E , R, w, u) be deﬁned as in (11)
+2
+3
+are used in the CRF model, one can train a logistic regression model for (cid:98)P (· | E ) :
+data using any standard density estimation technique3 In particular, with the same features fijk that
+(cid:110)(cid:88)
+(cid:111)
+(cid:98)P (Xi , Xj | E , uij ) = Z −1
+uijk fijk (Xi , Xj , E )
+ij (E , uij ) exp
+(9)
+.
+k
+Essentially, a logistic regression model is a small CRF over only two variables. Exact optimal
+weights u∗ can be found efﬁciently using standard convex optimization techniques.
+The resulting evidence-speciﬁc structure learning algorithm T (E , u) is summarized in Alg 3. Alg 3
+always returns a tree, and the better the quality of the estimators (9), the better the quality of the
+resulting structures. Importantly, Alg. 3 is by no means the only choice for the ESS-CRF approach.
+Other edge scores, e.g. from [4], and edge selection procedures, e.g. [8, 15] for higher treewidth
+junction trees, can be used as components in the same way as Chow-Liu algorithm is used in Alg. 3.
+
+5 Relational CRFs with evidence-speciﬁc sructure
+
+Traditional (also called propositional) PGMs are not well suited for dealing with relational data,
+where every variable is an entity of some type, and entities are related to each other via different types
+of links. Usually, there are relatively few entity types and link types. For example, the webpages on
+the internet are linked via hyperlinks, and social networks link people via friendship relationships.
+Relational data violates the i.i.d. data assumption of traditional PGMs, and huge dimensionalities of
+relational datasets preclude learning meaningful propositional models. Instead, several formulations
+of relational PGMs have been proposed [16] to work with relational data, including relational CRFs.
+The key property of all these formulations is that the model is deﬁned using a few template potentials
+deﬁned on the abstract level of variable types and replicated as necessary for concrete entities.
+More concretely, in relational CRFs every variable Xi is assigned a type mi out of the set M of
+possible types. A binary relation R ∈ R, corresponding to a speciﬁc type of link between two
+k (·, ·, E ) and feature
+variables, speciﬁes the types of its input arguments, and a set of features f R
+k . We will write Xi , Xj ∈ inst(R, X ) if the types of Xi and Xj match the input types
+weights wR
+speciﬁed by the relation R and there is a link of type R between Xi and Xj in the data (for example,
+(cid:26)(cid:88)
+(cid:27)
+a hyperlink between two webpages). The conditional distribution P (X | E ) is then generalized from
+(cid:88)
+(cid:88)
+the propositional CRF (1) by copying the template potentials for every instance of a relation:
+P (X | E , R, w) = Z −1 (E , w) exp
+k (Xi , Xj , E )
+wR
+k f R
+R∈R
+Xi ,Xj ∈inst(R,X )
+Observe that the only meaningful difference of the relational CRF (10) from the propositional formu-
+lation (1) is that the former shares the same parameters between different edges. By accounting for
+(cid:26)(cid:88)
+(cid:27)
+(cid:88)
+(cid:88)
+parameter sharing, it is straightforward to adapt our ESS-CRF formulation to the relational setting.
+We deﬁne the relational ESS-CRF conditional distribution as
+P(X | E ,R,w,u) ∝ exp
+k (Xi , Xj , E )
+I ((i, j ) ∈ T (E ,u))
+(11)
+k f R
+wR
+Xi ,Xj ∈inst(R,X )
+R∈R
+3Notice that the approximation error from (cid:98)P (·) is the only source of approximations in all our approach.
+k
+
+(10)
+
+k
+
+5
+
+Figure 1: Left: test LLH for TEMPERATURE. Middle: TRAFFIC. Right: classiﬁcation errors for WebKB.
+Given the structure learning algorithm T (·, ·) that is guaranteed to return low-treewidth structures,
+one can learn optimal feature weights w∗ and perform inference at test time exactly:
+(cid:88)
+(cid:2)f R
+(cid:0)f R
+k (Xi ,Xj ,E)(cid:3)(cid:1) . (12)
+Observation 4 Relational ESS-CRF log-likelihood is concave with respect to w. Moreover,
+∂ logP (X | E,R,w,u)
+k (Xi ,Xj ,E) − EP (·|E,R,w,u)
+=I(ij ∈ T (E ,u))
+∂wR
+Xi ,Xj ∈inst(R,X )
+k
+Conditional Chow-Liu algorithm (Alg. 3) can be also extended to the relational setting by using
+templated logistic regression weights for estimating edge conditionals. The resulting algorithm is
+shown as Alg. 4. Observe that the test phase of Alg. 4 is exactly the same as for Alg. 3. In the
+relational setting, one only needs to learn O(|R|) parameters, regardless of the dataset size, for both
+structure selection and feature weights, as opposed to O(|X |2 ) parameters for the propositional case.
+Thus, relational ESS-CRFs are typically much less prone to overﬁtting than propositional ones.
+
+6 Experiments
+
+We have tested the ESS-CRF approach on both propositional and relational data. With the large
+number of parameters needed for the propositional case (O(|X |2 )), our approach is only practical for
+cases of abundant data. So our experiments with propositional data serve only to prove the concept,
+verifying that ESS-CRF can successfully learn a model better than a single tree baseline. In contrast
+to the propositional settings, in the relational cases the relatively low parameter space dimensionality
+(O(|R|2 )) almost eliminates the overﬁtting problem. As a result, on relational datasets ESS-CRF is
+a very attractive approach in practice. Our experiments show ESS-CRFs comfortably outperforming
+state of the art high-treewidth discriminative models on several real-life relational datasets.
+
+6.1 Propositional models
+
+We compare ESS-CRFs with ﬁxed tree CRFs, where the tree structure learned by the Chow-Liu
+algorithm using P (X ). We used TEMPERATURE sensor network data [17] (52 discretized vari-
+ables) and San Francisco TRAFFIC data [18] (we selected 32 variables). In both cases, 5 variables
+were used as evidence E and the rest as unknowns X . The results are in Fig. 1. We have found it
+useful to regularize the conditional Chow-Liu (Alg. 3) by only choosing at test time from the edges
+that have been selected often enough during training. In Fig. 1 we plot results for both regularized
+(red) and unregularized (blue). One can see that in the limit of plentiful data ESS-CRF does indeed
+outperform the ﬁxed tree baseline. However, because the space of available models is much larger
+for ESS-CRF, overﬁtting becomes an important issue and regularization is important.
+
+6.2 Relational models
+Face recognition. We evaluate ESS-CRFs on two relational models. The ﬁrst model, called FACES,
+aims to improve face recognition in collections of related images using information about similarity
+between different faces in addition to the standard single-face features. The key idea is that whenever
+two people in different images look similar, they are more likely to be the same person. Our model
+has a variable Xi , denoting the label, for every face blob. Pairwise features f (Xi , Xj , E ), based
+on blob color similarity, indicate how close two faces are in appearance. Single-variable features
+f (Xi , E ) encode information such as the output of an off-the-shelf standalone face classiﬁer or face
+location within the image (see [19] for details). The model is used in a semi-supervised way: at test
+time, a PGM is instantiated jointly over the train and test entities, values of the train entities are ﬁxed
+to the ground truth, and inference ﬁnds the (approximately) most likely labels for the test entities.
+
+6
+
+102103104−35−30−25−20Train set sizeTest LLHTEMPERATUREESS−CRF +     structure reg.Chow−Liu CRFESS−CRF102103−20−18−16−14Train set sizeTest LLHTRAFFICESS−CRFESS−CRF +     structure reg.Chow−Liu CRF00.050.10.150.2Classification errorWebKB − Classification Error  SVMESS−CRFRMNM3NFigure 2: Results for FACES datasets. Top: evolution of classiﬁcation accuracy as inference progresses over
+time. Stars show the moment when ESS-CRF ﬁnishes running. Horizontal dashed line indicates resulting
+accuracy. For FACES 3, sum-product and max-product gave the same accuracy. Bottom: time to convergence.
+
+We compare ESS-CRFs with a dense relational PGM encoded by a Markov logic network
+(MLN, [20]) using the same features. We used a state of the art MLN implementations in the
+Alchemy package [21] with MC-SAT sampling algorithm for discriminative parameter learning,
+and belief propagation [22] for inference. For the MLN, we had to threshold the pairwise features
+indicating the likelihood of label agreement and set those under the threshold to 0 to prevent (a)
+oversmoothing and (b) very long inference times. Also, to prevent oversmoothing by the MLN, we
+have found it useful to scale down the pairwise feature weights learned during training, thus weak-
+ening the smoothing effect of any single edge in the model4 . We denote models with so adjusted
+weights as MLN+. No thresholding or weights adjustment was done for ESS-CRFs.
+Figure 2 shows the results on three separate datasets: FACES 1 with 1720 images, 4 unique people
+and 100 training images in every fold, FACES 2 with 245 images, 9 unique people and 50 training
+images, and FACES 3 with 352 images, 24 unique people and 70 training images. We tried both sum-
+product and max-product BP for inference, denoted as sum and max correspondingly in Fig. 2. For
+ESS-CRF the choice made no difference. One can see that (a) ESS-CRF model provides superior
+(FACES 2 and 3) or equal (FACES 1) accuracy to the dense MLN model, even with extra heuristic
+weights tweaking for the MLN, (b) ESS-CRF is more than an order of magnitude faster. One can
+see that for the FACES model, ESS-CRF is clearly superior to the high-treewidth alternative.
+Hypertext data. For WebKB data (see [23] for details), the task is to label webpages from four
+computer science departments as course, faculty, student, project, or other, given
+their text and link structure. We compare ESS-CRFs to high-treewidth relational Markov networks
+(RMNs, [23]), max-margin Markov networks (M3Ns, [24]) and a standalone SVM classiﬁer. All
+the relational PGMs use the same single-variable features encoding the webpage text, and pairwise
+features encoding the link structure. The baseline SVM classiﬁer only uses single-variable features.
+RMNs and ESS-CRFs are trained to maximize the conditional likelihood of the labels, while M3Ns
+maximize the margin in likelihood between the correct assignment and all of the incorrect ones,
+explicitly targeting the classiﬁcation. The results are in Fig. 1. Observe that ESS-CRF matches the
+accuracy of high-treewidth RMNs, again showing that the smaller expressive power of tree models
+can be fully compensated by exact parameter learning and inference. ESS-CRF is much faster than
+the RMN, taking only 50 sec. to train and 0.3 sec. to test on a single core of a 2.7GHz Opteron
+CPU. RMN and M3N models take about 1500 sec. each to train on a 700MHz Pentium III. Even
+accounting for the CPU speed difference, the speedup is signiﬁcant. ESS-CRF does not achieve the
+accuracy of M3Ns, which use a different objective more directly related to the classiﬁcation problem
+as opposed to density estimation. Still, the RMN results indicate that it may be possible to match the
+M3N accuracy with much faster tractable ESS models by replacing the CRF conditional likelihood
+objective with the max-margin objective, which is an important direction of future work.
+
+4Because the number of pairwise relations in the model grows quadratically with the number of variables,
+the “per-variable force of smoothing” grows with the dataset size, hence the need to adjust.
+
+7
+
+05001000150020000.50.60.70.80.91Time, secondsAccuracyFACES 1 − ACCURACY  MLN maxMLN sumMLN+ maxESS−CRFMLN+ sum0501000.650.70.750.80.850.9Time, secondsAccuracyFACES 2 − ACCURACY  ESS−CRFMLN maxMLN sumMLN+ sumMLN+ max0204060800.10.20.30.40.50.6Time, secondsAccuracyFACES 3 − ACCURACY  ESS−CRFMLN+MLN050010001500200025003000Time, secondsFACES 1 − TIME TO CONVERGENCEInferenceParameter learningESS−CRFMLN maxMLN sumMLN+ sumMLN+ max050100150200250300Time, secondsFACES 2 − TIME TO CONVERGENCEESS−CRFMLN+ sumMLN maxMLN sumMLN+ maxInferenceParameter learning0102030405060Time, secondsFACES 3 − TIME TO CONVERGENCEESS−CRFMLN+ maxMLN+ sumMLN maxMLN sumParameter learningInference7 Related work and conclusions
+
+Related work. Two cornerstones of our ESS-CRF approach, namely using models that become
+more sparse when evidence is instantiated, and using multiple tractable models to avoid restrictions
+on the expressive power inherent to low-treewidth models, have been discussed in the existing lit-
+erature. First, context-speciﬁc independence (CSI, [25]) has been long used both for speeding up
+inference [25] and regularizing the model parameters [26]. However, so far CSI has been treated
+as a local property of the model, which made reasoning about the resulting treewidth of evidence-
+speciﬁc models impossible. Thus, the full potential of exact inference for models with CSI remained
+unused. Our work is a step towards fully exploiting that potential. Multiple tractable models, such
+as trees, are widely used as components of mixtures (e.g. [27]), including mixtures of all possible
+trees [28], to approximate distributions with rich inherent structure. Unlike the mixture models, our
+approach of selecting a single structure for any given evidence value has the advantage of allowing
+for efﬁcient exact decoding of the most probable assignment to the unknowns X using the Viterbi
+algorithm [29]. Both for the mixture models and our approach, joint optimization of the structure
+and weights (u and w in our notation) is infeasible due to many local optima of the objective. Our
+one-shot structure learning algorithm, as we empirically demonstrated, works well in practice. It is
+also much faster then expectation maximization [30] - the standard way to train mixture models.
+Learning the CRF structure in general is NP-hard, which follows from the hardness results for the
+generative models (c.f. [8]). Moreover, CRF structure learning is further complicated by the fact
+the CRF structure likelihood does not decompose into scores of local graph components, as do
+scores for some generative models [3]. Existing work on CRF structure learning thus provides only
+local guarantees. In practice, the hardness of CRF structure learning leads to high popularity of
+heuristics: chain and skip-chain [32] structures are often used, as well as grid-like structures. All
+the approaches that do learn structure from data can be broadly divided into three categories. First,
+the CRF structure can be deﬁned via the sparsity pattern of the feature weights, so one can use L1
+regularization penalty to achieve sparsity during weight learning [2]. The second type of approaches
+greedily adds the features to the CRF model so as to maximize the immediate improvement in the
+(approximate) model likelihood (e.g. [31]). Finally, one can try to approximate the CRF structure
+score as a combination of local scores [15, 4] and use an algorithm for learning generative structures
+(where the score actually decomposes). ESS-CRF also falls in this category of approaches. Although
+there are some negative theoretical results about learnability of even the simplest CRF structures
+using local scores [4], such approaches often work well in practice [15].
+Learning the weights is straightforward for tractable CRFs, because the log-likelihood is concave [1]
+and the gradient (3) can be used with mature convex optimization techniques. So far, exact weights
+learning was mostly used for special hand-crafted structures, such as chains [1, 32], but in this work
+we use arbitrary trees. For dense structures, computing the gradient (3) exactly is intractable as
+even approximate inference in general models is NP-hard [5]. As a result, approximate inference
+techniques, such as belief propagation [10, 11] or Gibbs sampling [12] are employed, without guar-
+antees on the quality of the result. Alternatively, an approximation of the objective (e.g. [6]) is used,
+also yielding suboptimal weights. Our experiments showed that exact weight learning for tractable
+models gives an advantage in approximation quality and efﬁciency over dense structures.
+Conclusions and future work. To summarize, we have shown that in both propositional and rela-
+tional settings, tractable CRFs with evidence-speciﬁc structures, a class of models with expressive
+power greater than any single tree-structured model, can be constructed by relying only on the glob-
+ally optimal results of efﬁcient algorithms (logistic regression, Chow-Liu algorithm, exact inference
+in tree-structured models, L-BFGS for convex differentiable functions). Whereas traditional CRF
+workﬂow (Alg. 1) involves approximation without any quality guaranteed on multiple stages of the
+process, our approach, ESS-CRF (Alg. 2), has just one source of approximation, namely conditional
+structure scores. We have demonstrated on real-life relational datasets that our approach matches
+or exceeds the accuracy of state of the art dense discriminative models, and at the same time pro-
+vide more than a factor of magnitude speedup. Important future work directions are generalizing
+ESS-CRF to larger treewidths and max-margin weights learning for better classiﬁcation.
+Acknowledgements. This work is supported by NSF Career IIS-0644225 and ARO MURI
+W911NF0710287 and W911NF0810242. We thank Ben Taskar for sharing the WebKB data.
+FACES model and data were developed jointly with Denver Dash and Matthai Philipose.
+
+8
+
+References
+[1] J. D. Lafferty, A. McCallum, and F. C. N. Pereira. Conditional random ﬁelds: Probabilistic models for
+segmenting and labeling sequence data. In ICML, 2001.
+[2] M. Schmidt, K. Murphy, G. Fung, and R. Rosales. Structure learning in random ﬁelds for heart motion
+abnormality detection. In CVPR, 2008.
+[3] D. Koller and N. Friedman. Probabilistic Graphical Models: Principles and Techniques. 2009.
+[4] J. K. Bradley and C. Guestrin. Learning tree conditional random ﬁelds. In ICML, to appear, 2010.
+[5] D. Roth. On the hardness of approximate reasoning. Artiﬁcial Intelligence, 82(1-2), 1996.
+[6] C. Sutton and A. McCallum. Piecewise pseudolikelihood for efﬁcient CRF training. In ICML, 2007.
+[7] C. Chow and C. Liu. Approximating discrete probability distributions with dependence trees. IEEE Trans.
+on Inf. Theory, 14(3), 1968.
+[8] D. Karger and N. Srebro. Learning Markov networks: Maximum bounded tree-width graphs. In SODA’01.
+[9] D. C. Liu and J. Nocedal. On the limited memory BFGS method for large scale optimization. Mathemat-
+ical Programming, 45(3), 1989.
+[10] J. Pearl. Probabilistic reasoning in intelligent systems: networks of plausible inference. 1988.
+[11] J. S. Yedidia, W. T. Freeman, and Y. Weiss. Generalized belief propagation. In NIPS, 2000.
+[12] S. Geman and D. Geman. Stochastic relaxation, Gibbs distributions, and the Bayesian restoration of
+images. Pattern Analysis and Machine Intelligence, IEEE Transactions on, PAMI-6(6), 1984.
+[13] S. Arnborg, D. G. Corneil, and A. Proskurowski. Complexity of ﬁnding embeddings in a k-tree. SIAM
+Journal on Algebraic and Discrete Methods, 8(2), 1987.
+[14] W. H ¨ardle, M. M ¨uller, S. Sperlich, and A. Werwatz. Nonparametric and Semiparametric Models. 2004.
+[15] D. Shahaf, A. Chechetka, and C. Guestrin. Learning thin junction trees via graph cuts. In AISTATS, 2009.
+[16] L. Getoor and B. Taskar. Introduction to Statistical Relational Learning. The MIT Press, 2007.
+[17] A. Deshpande, C. Guestrin, S. Madden, J. Hellerstein, and W. Hong. Model-driven data acquisition in
+sensor networks. In VLDB, 2004.
+[18] A. Krause and C. Guestrin. Near-optimal nonmyopic value of information in graphical models. In UAI’05.
+[19] A. Chechetka, D. Dash, and M. Philipose. Relational learning for collective classiﬁcation of entities in
+images. In AAAI Workshop on Statistical Relational AI, 2010.
+[20] M. Richardson and P. Domingos. Markov logic networks. Machine Learning, 62(1-2), 2006.
+[21] S. Kok, M. Sumner, M. Richardson, P. Singla, H. Poon, D. Lowd, and P. Domingos. The alchemy system
+for statistical relational AI. Technical report, University of Washington, Seattle, WA., 2009.
+[22] J. Gonzalez, Y. Low, and C. Guestrin. Residual splash for optimally parallelizing belief propagation. In
+AISTATS, 2009.
+[23] B. Taskar, P. Abbeel, and D. Koller. Discriminative probabilistic models for relational data. In UAI, 2002.
+[24] B. Taskar, C. Guestrin, and D. Koller. Max-margin markov networks. In NIPS, 2003.
+[25] C. Boutilier, N. Friedman, M. Goldszmidt, and D. Koller. Context-speciﬁc independence in Bayesian
+networks. In UAI, 1996.
+[26] M. desJardins, P. Rathod, and L. Getoor. Bayesian network learning with abstraction hierarchies and
+context-speciﬁc independence. In ECML, 2005.
+[27] B. Thiesson, C. Meek, D. Chickering, and D. Heckerman. Learning mixtures of DAG models. In UAI’97.
+[28] M. Meil ˘a and M. I. Jordan. Learning with mixtures of trees. JMLR, 1, 2001.
+[29] A. J. Viterbi. Error bounds for convolutional codes and an asymptotically optimum decoding algorithm.
+IEEE Transactions on Information Theory, IT-13, 1967.
+[30] S. L. Lauritzen. The EM algorithm for graphical association models with missing data. Computational
+Statistics & Data Analysis, 19(2), 1995.
+[31] A. Torralba, K. P. Murphy, and W. T. Freeman. Contextual models for object detection using boosted
+random ﬁelds. In NIPS, 2004.
+[32] C. Sutton and A. McCallum. Collective segmentation and labeling of distant entities in information
+extraction. In ICML Workshop on Statistical Relational Learning and Its Connections, 2004.
+
+9
+
+

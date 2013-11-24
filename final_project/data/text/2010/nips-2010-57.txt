@@ -1,0 +1,949 @@
+Implicit Diﬀerentiation by Perturbation
+
+Justin Domke
+Rochester Institute of Technology
+justin.domke@rit.edu
+
+Abstract
+
+This paper proposes a simple and eﬃcient ﬁnite diﬀerence method for im-
+plicit diﬀerentiation of marginal inference results in discrete graphical mod-
+els. Given an arbitrary loss function, deﬁned on marginals, we show that
+the derivatives of this loss with respect to model parameters can be obtained
+by running the inference procedure twice, on slightly perturbed model pa-
+rameters. This method can be used with approximate inference, with a
+loss function over approximate marginals. Convenient choices of loss func-
+tions make it practical to ﬁt graphical models with hidden variables, high
+treewidth and/or model misspeciﬁcation.
+
+1 Introduction
+
+As graphical models are applied to more complex problems, it is increasingly necessary to
+learn parameters from data. Though the likelihood and conditional likelihood are the most
+widespread training ob jectives, these are sometimes undesirable and/or infeasible in real
+applications.
+
+With low treewidth, if the data is truly distributed according to the chosen graphical model
+with some parameters, any consistent loss function will recover those true parameters in the
+high-data limit, and so one might select a loss function according to statistical convergence
+rates [1]. In practice, the model is usually misspeciﬁed to some degree, meaning no "true"
+parameters exist. In this case, diﬀerent loss functions lead to diﬀerent asymptotic parameter
+estimates. Hence, it is useful to consider the priorities of the user when learning. For low-
+treewidth graphs, several loss functions have been proposed that prioritize diﬀerent types
+of accuracy (section 2.2). For parameters θ , these loss functions are given as a function
+L(µ(θ)) of marginals µ(θ ). One can directly calculate ∂L
+∂µ . The parameter gradient dL
+dθ can
+be eﬃciently computed by loss-speciﬁc message-passing schemes[2, 3].
+
+The likelihood may also be infeasible to optimize, due to the computational intractability
+of computing the log-partition function or its derivatives in high treewidth graphs. On the
+other hand, if an approximate inference algorithm will be used at test time, it is logical to
+design the loss function to compensate for defects in inference. The surrogate likelihood
+(the likelihood with an approximate partition function) can give superior results to the true
+likelihood, when approximate inference is used at test time[4].
+
+The goal of this paper is to eﬃciently ﬁt parameters to optimize an arbitrary function of
+predicted marginals, in a high-treewidth setting. If µ(θ) is the function mapping parameters
+to (approximate) marginals, and there is some loss function L(µ) deﬁned on those marginals,
+we desire to recover dL
+dθ . This enables the use of the marginal-based loss functions mentioned
+previously, but deﬁned on approximate marginals.
+There are two ma jor existing approaches for calculating dL
+dθ . First, after performing infer-
+ence, this gradient can be obtained by solving a large, sparse linear system[5]. The ma jor
+disadvantage of this approach is that standard linear solvers can perform poorly on large
+
+1
+
+True (y)
+
+Noisy (x)
+
+Surrogate
+likelihood
+
+Clique
+likelihood
+
+Univariate
+likelihood
+
+Smooth
+class. error
+
+Figure 1: Example images from the Berkeley dataset, along with marginals for a conditional
+random ﬁeld ﬁt with various loss functions.
+
+graphs, meaning that calculating this gradient can be more expensive than performing infer-
+ence (Section 4). A second option is the Back Belief Propagation (BBP) algorithm[6]. This
+is based on application of reverse-mode automatic diﬀerentiation (RAD) to message passing.
+Crucially, this can be done without storing all intermediate messages, avoiding the enormous
+memory requirements of a naive application of RAD. This is eﬃcient, with running-time in
+practice similar to inference. However, it is tied to a speciﬁc entropy approximation (Bethe)
+and algorithm (Loopy Belief Propagation). Extension to similar message-passing algorithms
+appears possible, but extension to more complex inference algorithms [7, 8, 9] is unclear.
+
+Here, we observe that the loss gradient can be calculated by far more straightforward means.
+Our basic result is extremely simple: dL
+r (µ(θ + r ∂L
+dθ ≈ 1
+∂µ ) − µ(θ )(cid:1), with equality in the limit
+r → 0. This result follows from, ﬁrst, the well-known trick of approximating Jacobian-
+vector products by ﬁnite diﬀerences and, second, the special property that for marginal
+inference, the Jacobian matrix dµ
+dθT is symmetric. This result applies when marginal inference
+takes place over the local polytope with an entropy that is concave and obeys a minor
+technical condition. It can also be used with non-concave entropies, with some assumptions
+on how inference recovers diﬀerent local optima.
+It is easy to use this to compute the
+gradient of essentially any diﬀerentiable loss function deﬁned on marginals. Eﬀectively, all
+one needs to do is re-run the inference procedure on a set of parameters slightly "perturbed"
+in the direction ∂L
+∂µ . Conditional training and tied or nonlinear parameters can also be
+accommodated.
+
+One clear advantage of this approach is simplicity and ease of implementation. Aside from
+this, like the matrix inversion approach, it is independent of the algorithm used to perform
+independence, and applicable to a variety of diﬀerent inference approximations. Like BBP,
+the method is eﬃcient in that it makes only two calls to inference.
+
+2 Background
+
+2.1 Marginal Inference
+
+This section brieﬂy reviews the aspects of graphical models and marginal inference that are
+required for the rest of the paper. Let x denote a vector of discrete random variables. We
+use the exponential family representation
+
+p(x; θ ) = exp(cid:0)θ · f (x) − A(θ)(cid:1),
+where f (x) is the features of the observation x, and A = log Px exp θ · f (x) assures normal-
+ization. For graphical models, f is typically a vector of indicator functions for each possible
+conﬁguration of each factor and variable. With a slight abuse of set notation to represent
+
+(1)
+
+2
+
+a vector, this can be written as f (x) = {I [xα ]} ∪ {I [xi ]}. It is convenient to refer to the
+components of vectors like those in Eq. 1 using function notation. Write θ(xα ) to refer to
+the component of θ corresponding to the indicator function I [xα ], and similarly for θ(xi ).
+This gives an alternative representation for p, namely
+
+p(x; θ) = exp(cid:0)Xα
+θ(xα ) + Xi
+θ(xi ) − A(θ )(cid:1).
+Marginal inference means recovering the expected value of f or, equivalently, the marginal
+probability that each factor or variable have a particular value.
+
+(2)
+
+µ(θ ) = Xx
+Though marginals could, in principle, be computed by the brute-force sum in Eq. 3, it is
+useful to consider the paired variational representation [10, Chapter 3]
+
+p(x; θ )f (x)
+
+(3)
+
+A(θ ) = max
+µ∈M
+
+θ · µ + H (µ)
+
+(4)
+
+dA
+dθ
+
+µ(θ) =
+
+= arg max
+µ∈M
+
+θ · µ + H (µ),
+in which A and µ can both be recovered from solving the same optimization problem. Here,
+M = {µ(θ )|θ ∈ ℜn} is the marginal polytope– those marginals µ resulting from some
+parameter vector θ . Similarly, H (µ) is the entropy of p(x; θ ′ ), where θ ′ is the vector of
+parameters that produces the marginals µ.
+As M is a convex set, and H a concave function, Eq. 5 is equivalent to a convex optimization
+problem. Nevertheless it is diﬃcult to characterize M or compute H (µ) in high-treewidth
+graphs. A variety of approximate inference methods can be seen as solving a modiﬁcation
+of Eqs. 4 and 5, with the marginal polytope and entropy replaced with tractable approxi-
+mations. Notice that these are also paired; the approximate µ is the exact gradient of the
+approximate A.
+The commonest relaxation of M is the local polytope
+L = {µ ≥ 0 | µ(xi ) = Xx
+µ(xα ), Xxi
+α\i
+This underlies loopy belief propagation, as well as tree-reweighted belief propagation. Since
+a valid set of marginals must obey these constraints, L ⊇ M. Note that since the equality
+constraints are linear, there exists a matrix B and vector d such that
+
+µ(xi ) = 1}.
+
+(5)
+
+(6)
+
+L = {µ ≥ 0|Bµ = d}.
+A variety of entropy approximations exist. The Bethe approximation implicit in loopy belief
+propagation [11] is non-concave in general, which results in sometimes failing to achieve
+the global optimum. Concave entropy functions include the tree-reweighted entropy [12],
+convexiﬁed Bethe entropies [13], and the class of entropies obeying Heskes’ conditions [14].
+
+(7)
+
+2.2 Loss Functions
+
+Given some data, { ˆx}, we will pick the parameters θ to minimize the empirical risk
+Xˆx
+Likelihood. The (negative) likelihood is the classic loss function for training graphical
+models. Exploiting the fact that dA/dθ = µ(θ), the gradient is available in closed-form.
+
+L(ˆx; θ).
+
+(8)
+
+3
+
+L(ˆx; θ) = − log p(ˆx; θ)
+= −θ · f (ˆx) + A(θ ).
+
+(9)
+
+dL
+dθ
+
+= −f (ˆx) + µ(θ ).
+
+(10)
+
+Surrogate Likelihood. Neither A nor µ is tractable with high treewidth. However, if
+written in variational form (Eqs. 4 and 5), they can be approximated using approximate in-
+ference. The surrogate likelihood [4] is simply the likelihood as in Eq. 9 with an approximate
+A. It has the gradient as in Eq. 10, but with approximate marginals µ.
+
+Unlike the losses below, the surrogate likelihood is convex when based on a concave inference
+method. See Ganapathi et al.[15] for a variant of this for inference with local optima.
+
+Univariate Likelihood. If the application will only make use of univariate marginals at
+test time, one might ﬁt parameters speciﬁcally to make these univariate marginals accurate.
+Kakade et al.[3] proposed the loss
+L(ˆx; θ) = − Xi
+This can be computed in treelike graphs, after running belief propagation to compute
+marginals. A message-passing scheme can eﬃciently compute the gradient.
+
+log µ( ˆxi ; θ).
+
+(11)
+
+Univariate Classiﬁcation Error. Some applications only use the maximum probability
+marginals. Gross at al.[2] considered the loss
+L(ˆx; θ) = Xi
+S (cid:0) max
+µ(xi ; θ) − µ( ˆxi ; θ)(cid:1),
+xi 6= ˆxi
+where S is the step function. This loss measures the number of incorrect components of
+ˆx if each is predicted to be the “max marginal”. However, since this is non-diﬀerentiable,
+it is suggested to approximate this by replacing S with a sigmoid function S (t) = (1 +
+exp(−λt))−1 , where λ controls the approximation quality. Our experiments use λ = 50.
+As with the univariate likelihood, this loss can be computed if exact marginals are available.
+Computing the gradient requires another message passing scheme.
+
+(12)
+
+Clique loss functions. One can easily deﬁne clique versions of the previous two loss
+functions, where the summations are over α, rather than i. These measure the accuracy of
+clique-wise marginals, rather than univariate marginals.
+
+2.3 Implicit Diﬀerentiation
+
+As noted in Eq. 7, the equality constraints in the local polytope are linear, and hence when
+the positivity constraint can be disregarded, approximate marginal inference algorithms can
+be seen as solving the optimization µ(θ) = arg maxµ,Bµ=d θ · µ + H (µ). Domke showed[5],
+in our notation, that
+
+= (cid:0)D−1B T (BD−1B T )−1BD−1 − D−1 (cid:1)
+where D = ∂ 2H
+∂µ∂µT is the (diagonal) Hessian of the entropy approximation.
+
+,
+
+dL
+dθ
+
+dL
+dµ
+
+(13)
+
+Unfortunately, this requires solving a sparse linear system for each training example and
+iteration. As we will see below, with large or poorly conditioned problems, the computational
+expense of this can far exceed that of inference. Note that BD−1B T is, in general, indeﬁnite,
+restricting what solvers can be used. Another limitation is that D can be singular if any
+counting numbers (Eq. 16) are zero.
+
+2.4 Conditional training and nonlinear parameters.
+
+For simplicity, all the above discussion was conﬁned to fully parametrized models. Nonlinear
+and tied parameters are easily dealt with by considering θ(φ) to be a function of the “true”
+
+4
+
+Algorithm 1 Calculating loss derivatives (two-sided).
+1. Do inference. µ∗ ← arg max
+θ · µ + H (µ)
+µ∈M
+∂L
+2. At µ∗ , calculate the partial derivative
+∂µ
+
+.
+
+3. Calculate a perturbation size r.
+
+4. Do inference on perturbed parameters.
+∂L
+µ+ ← arg max
+(θ + r
+∂µ
+µ∈M
+
+µ− ← arg max
+(θ − r
+µ∈M
+
+∂L
+∂µ
+
+) · µ + H (µ)
+
+5. Recover full derivative.
+
+) · µ + H (µ)
+1
+dL
+dθ ←
+2r
+
+(µ+ − µ− )
+
+parameters φ. Once dL/dθ is known dL/dφ can be recovered by a simple application of
+the chain rule, namely
+
+dθT
+dL
+dL
+dθ
+dφ
+dφ
+Conditional training is similar: deﬁne a distribution over a random variable y, parametrized
+by θ(φ; x), the derivative on a particular pair (x, y) is given again by Eq. 14. Examples of
+both of these are in the experiments.
+
+(14)
+
+=
+
+.
+
+3 Implicit Diﬀerentiation by Perturbation
+
+This section shows that when µ(θ ) = arg maxµ∈L θ · µ + H (µ), the loss gradient can be
+computed by Alg. 1 for a concave entropy approximation of the form
+
+µ(xi ) log µ(xi ),
+
+ci Xxi
+H (µ) = − Xα
+µ(xα ) log µ(xα ) − Xi
+cα Xxα
+when the counting numbers c obey (as is true of most proposed entropies)
+cα > 0, ci + Xα,i∈α
+For intuition, the following Lemma uses notation (µ, θ , H ) suggesting the application to
+marginal inference. However, note that the result is true for any functions satisfying the
+stated conditions.
+
+cα > 0.
+
+(16)
+
+(15)
+
+Lemma. If µ(θ) is implicitly deﬁned by
+
+µ · θ + H (µ)
+µ(θ ) = arg max
+µ
+Bµ − d = 0,
+where H (µ) is strictly convex and twice diﬀerentiable, then
+
+s.t
+
+(17)
+
+(18)
+
+dµ
+dθT exists and is symmetric.
+
+Proof. First, form a Lagrangian enforcing the constraints on the ob jective function.
+
+L = µ · θ + H (µ) + λT (Bµ − d)
+The solution is µ and λ such that dL/dµ = 0 and dL/dλ = 0.
+
+(cid:20) θ + ∂H (µ)/∂µ + B T λ
+Bµ − d
+
+0 (cid:21)
+(cid:21) = (cid:20) 0
+
+5
+
+(19)
+
+(20)
+
+Recall the general implicit function theorem. If f (θ ) is implicitly deﬁned by the constraint
+that h(θ , f ) = 0, then
+
+df
+∂ f T (cid:17)−1 ∂h
+dθT = −(cid:16) ∂h
+∂ θT .
+Using Eq. 20 as our deﬁnition of h, and diﬀerentiating with respect to both µ and λ, we
+have
+
+(21)
+
+0 (cid:21)−1 (cid:20) I
+(cid:20) dµ/dθT
+0 (cid:21) .
+dλ/dθT (cid:21) = − (cid:20) ∂ 2H/∂µ∂µT B
+B T
+We see that −dµ/dθT is the upper left block of the matrix being inverted. The result
+follows, since the inverse of a symmetric matrix is symmetric.
+
+(22)
+
+The following is the main result driving this paper. Again, this uses notation suggesting
+the application to implicit diﬀerentiation and marginal inference, but holds true for any
+functions satisfying the stated conditions.
+
+Theorem. Let µ(θ) be deﬁned as in the previous Lemma, and let L(θ) be deﬁned by L(θ) =
+M (cid:0)µ(θ )(cid:1) for some diﬀerentiable function M (µ). Then the derivative of L with respect to θ
+is given by
+dL
+∂M
+1
+r (cid:16)µ(θ + r
+) − µ(θ )(cid:17).
+(23)
+= lim
+∂µ
+dθ
+r→0
+Proof. First note that, by the vector chain rule,
+
+dL
+dθ
+
+=
+
+dµT
+dθ
+
+∂M
+∂µ
+
+.
+
+(24)
+
+Next, take some vector v. By basic calculus, the derivative of µ(θ) in the direction of v is
+
+1
+dµ
+r (cid:0)µ(θ + rv) − µ(θ)(cid:1).
+dθT v = lim
+r→0
+The result follows from substituting ∂M /∂µ for v, and using the previous lemma to establish
+that dµ/dθT = dµT /dθ .
+
+(25)
+
+Alg. 1 follows from applying this theorem to marginal inference. However, notice that this
+does not enforce the constraint that µ ≥ 0. The following gives mild technical conditions
+under which µ will be strictly positive, and so the above theorem applies.
+Theorem. If H (µ) = Pα cαH (µc ) + Pi ciH (µi ), and µ∗ is a (possibly local) maximum
+of θ · µ + H (µ), under the local polytope L, then
+cα > 0, ci + Xα,i∈α
+This is an extension of a previous result [11, Theorem 9] for the Bethe entropy. However,
+extremely minor changes to the existing proof give this stronger result.
+
+cα > 0 −→ µ∗ > 0.
+
+(26)
+
+Most proposed entropies satisfy these conditions, including the Bethe entropy (cα = 1, ci +
+Pα,i∈α cα = 1), the TRW entropy (cα = ρ(α), ci + Pα,i∈α cα = 1, where ρ(α) > 0 is the
+probability that α appears in a randomly chosen tree) and any entropy satisfying the slightly
+strengthened versions on Heskes’ conditions [14, 16, Section 2].
+
+What about non-concave entropies? The only place concavity was used above was in es-
+tablishing that Eq. 20 has a unique solution. With a non-concave entropy this condition is
+still valid, not not unique, since there can be local optima. BBP essentially calculates this
+
+6
+
+Bethe entropy
+
+ 
+
+8
+
+32
+
+128
+
+grid size
+
+TRW entropy
+
+)
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+n
+u
+r
+
+)
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+n
+u
+r
+
+103
+
+102
+
+101
+
+100
+
+10−1
+
+10−2
+
+103
+
+102
+
+101
+
+100
+
+10−1
+
+10−2
+
+ 
+
+)
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+n
+u
+r
+
+512
+
+ 
+
+)
+s
+(
+ 
+e
+m
+i
+t
+ 
+g
+n
+i
+n
+n
+u
+r
+
+ 
+
+8
+
+32
+
+grid size
+
+128
+
+512
+
+103
+
+102
+
+101
+
+100
+
+10−1
+
+10−2
+
+103
+
+102
+
+101
+
+100
+
+10−1
+
+10−2
+
+ 
+
+ 
+
+Bethe entropy
+
+0.5
+
+1
+interaction strength
+
+2
+
+TRW entropy
+
+0.5
+
+1
+interaction strength
+
+2
+
+ 
+
+ 
+
+pert−BP
+symmlq
+BBP
+direct
+BP
+
+pert−TRWS
+symmlq
+direct
+TRWS
+
+Figure 2: Times to compute dL/dθ by perturbation, Back Belief Propagation (BBP), sparse
+matrix factorization (direct) and the iterative symmetric-LQ method (symmlq). Inference
+with BP and TRWS are shown for reference. As these results use two-sided diﬀerences,
+perturbation always takes twice the running time of the base inference algorithm. BBP takes
+time similar BP. Results use a pairwise grid with xi ∈ {1, 2, ..., 5}, with univariate terms
+θ(xi ) taken uniformly from [−1, +1] and interaction strengths θ(xi , xj ) from [−a, +a] for
+varying a. Top Left: Bethe entropy for varying grid sizes, with a = 1. Matrix factorization
+is eﬃcient on small problems, but scales poorly. Top Right: Bethe entropy with a grid
+size of 32 and varying interaction strengths a. High interactions strengths lead to poor
+conditioning, slowing iterative methods. Bottom Left: Varying grid sizes with the TRW
+entropy. Bottom Right: TRW entropy with a grid size of 32 and varying interactions.
+
+derivative by “tracking” the local optima. If perturbed beliefs are calculated from constant
+initial messages with a small step, one obtains the same result. Thus, BBP and perturbation
+give the same gradient for the Bethe approximation. (This was also veriﬁed experimentally.)
+
+It remains to select the perturbation size r. Though the gradient is exact in the limit
+r → 0, numerical error eventually dominates. Following Andrei[17], the experiments here
+use r = √ǫ(1 + |θ |∞ )/| ∂L
+∂µ |∞ , where ǫ is machine epsilon.
+4 Experiments
+
+For inference, we used either loopy belief propagation, or tree-reweighted belief propagation.
+As these experiments take place on grids, we are able to make use of the convergent TRWS
+algorithm [18, Alg. 5], which we found to converge signiﬁcantly faster than standard TRW.
+BP/TRWS were iterated until predicted beliefs changed less than 10−5 between iterations.
+BBP used a slightly looser convergence threshold of 10−4 , which was similarly accurate.
+
+Base code was implemented in Python, with C++ extensions for inference algorithms for
+eﬃciency. Sparse systems were solved directly using an interface to Matlab, which calls
+LAPACK. We selected the Symmetric LQ method as an iterative solver. Both solvers were
+the fastest among several tested on these problems. (Recall, the system is indeﬁnite.) BBP
+results were computed by interfacing to the authors’ implementation included in the libDAI
+toolkit[19]. We found the PAR mode, based on parallel updates [6, Eqs. 14-25] to be much
+slower than the more sophisticated SEQ_FIX mode, based on sequential updates [6, extended
+
+7
+
+Table 1: Binary denoising results, comparing the surrogate likelihood against three loss
+functions ﬁt by implicit diﬀerentiation. All loss functions are per-pixel, based on tree-
+reweighted belief propagation with edge inclusion probabilities of .5. The “Best Published”
+results are the lowest previously reported pixelwise test errors using essentially loopy-belief
+propagation based surrogate likelihood. (For all losses, lower is better.)
+Berkeley Segmentation Data
+Bimodal Gaussian
+Class.
+Univariate
+Clique
+Surrogate
+Class.
+Class.
+Error
+Error
+likelihood
+likelihood
+likelihood
+Error
+Train Test
+Train Test
+Train Test
+Train Test
+Train Test
+Train Test
+
+Test Loss
+
+Training Loss
+Surrogate likelihood
+Clique likelihood
+Univariate likelihood
+Smooth Class. Error
+Best Published [20]
+
+.0498 .0540
+
+.0286 .0239
+
+.251 .252
+
+1.328 1.330
+
+.417 .416
+
+.141 .140
+
+.0488 .0535
+
+.0278 .0236
+
+.275 .277
+
+1.176 1.178
+
+.316 .315
+
+.127 .126
+
+.0493 .0541
+
+.0278 .0235
+
+.301 .303
+
+1.207 1.210
+
+.305 .305
+
+.128 .127
+
+.0460 .0527
+
+.0273 .0241
+
+.281 .283
+
+1.179 1.181
+
+.311 .310
+
+.127 .126
+
+.0548
+
+.0251
+
+version, Fig. 5]. Hence, all results here use the latter. Other modes exceeded the available
+12 GB memory. All experiments use a single core of a 2.26 GHz machine.
+
+Our ﬁrst experiment makes use of synthetically generated grid models. This allows system-
+atic variance of graph size and parameter strength. With the TRW entropy, we use uniform
+edge appearance probabilities of ρ = .49, to avoid singularity in D. Our results (Fig. 2) can
+be summarized as follows. Matrix inversion (Eq. 13) with a direct solver is very eﬃcient on
+small problems, but scales poorly. The iterative solver is expensive, and extremely sensitive
+to conditioning. With the Bethe approximation, perturbation performs similarly to BBP.
+TRWS converges faster than BP on poorly conditioned problems.
+
+The second experiment considers a popular dataset for learning in high-treewidth graphical
+models[21]. This consists of four base images, each corrupted with 50 random noise patterns
+(either Gaussian or bimodal). Following the original work, 10 corrupted versions of the
+ﬁrst base image are used for training, and the remaining 190 for testing. This dataset
+has been used repeatedly [22, 23], though direct comparison is sometimes complicated by
+varying model types and training/test set divisions. This experiment uses a grid model over
+neighboring pairs (i, j )
+θ(yi , yj ) + Xi
+p(y|x) = exp(cid:0)Xi,j
+θ(yi ; xi ) − A(θ (x))(cid:1),
+where θ (x) is a function of the input, with θ(yi , yj ) = a(yi , yj ) fully parametrized (inde-
+pendent of x) and θ(yi ; xi ) = b(yi )xi + c(yi ) an aﬃne function of xi . Enforcing translation
+invariance gives a total of eight free parameters: four for a(yi , yj ), and two for b(yi ), and
+c(yi )1 . Once dL
+dθ is known, we can, following Eq. 14, recover derivatives with respect to tied
+parameters2.
+
+(27)
+
+Because the previous dataset is quite limited (only four base 64x64 images), all methods
+perform relatively well. Hence, we created a larger and more challenging dataset, consisting
+of 200 200x300 images from the Berkeley segmentation dataset, split half for training and
+testing. These are binarized by setting yi = 1 if a pixel is above the image mean, and yi = 0
+otherwise. The noisy values xi are created by setting xi = yi (1 − t1.25
+) + (1 − yi )t1.25
+, for ti
+i
+i
+uniform on [0, 1].
+
+Table 1 shows results for all three datasets. All the results below use batch L-BFGS for
+learning, and uniform edge appearance probabilities of ρ = .5. The surrogate likelihood
+performs well, in fact beating the best reported results on the bimodal and Gaussian data.
+However, the univariate and clique loss functions provide better univariate accuracy. Fig.
+1 shows example results. The surrogate likelihood (which is convex), was used to initialize
+the univariate and clique likelihood, while the univariate likelihood was used to initialize
+the smooth classiﬁcation error.
+
+1There are two redundancies, as adding a constant to a(yi , yj ) or c(yi ) has no eﬀect on p.
+dL
+dL
+dL
+dθ(yi=y ) xi , and dL
+dL
+dL
+2Speciﬁcally,
+da(y ,y ′ ) = P(i,j )
+db(y ) = Pi
+dc(y ) = Pi
+dθ(yi=y ,yj =y ′ ) ,
+dθ(yi=y ) .
+
+8
+
+References
+
+[1] Percy Liang and Michael Jordan. An asymptotic analysis of generative, discriminative, and
+pseudolikelihood estimators. In ICML, 2008.
+
+[2] Samuel Gross, Olga Russakovsky, Chuong Do, and Seraﬁm Batzoglou. Training conditional
+random ﬁelds for maximum labelwise accuracy. In NIPS. 2006.
+
+[3] Sham Kakade, Yee Whye Teh, and Sam Roweis. An alternate ob jective function for Markovian
+ﬁelds. In ICML, 2002.
+
+[4] Martin Wainwright. Estimating the "wrong" graphical model: Beneﬁts in the computation-
+limited setting. Journal of Machine Learning Research, 7:1829–1859, 2006.
+
+[5] Justin Domke. Learning convex inference of marginals. In UAI, 2008.
+
+[6] Frederik Eaton and Zoubin Ghahramani. Choosing a variable to clamp. In AISTATS, 2009.
+
+[7] Max Welling and Yee Whye Teh. Belief optimization for binary networks: A stable alternative
+to loopy belief propagation. In UAI, 2001.
+
+[8] Tom Heskes, Kees Albers, and Bert Kappen. Approximate inference and constrained opti-
+mization. In UAI, 2003.
+
+[9] Alan Yuille. CCCP algorithms to minimize the Bethe and Kikuchi free energies: Convergent
+alternatives to belief propagation. Neural Computation, 14:2002, 2002.
+
+[10] Martin Wainwright and Michael Jordan. Graphical models, exponential families, and varia-
+tional inference. Found. Trends Mach. Learn., 1(1-2):1–305, 2008.
+
+[11] Jonathan Yedidia, William Freeman, and Yair Weiss. Constructing free energy approximations
+and generalized belief propagation algorithms.
+IEEE Transactions on Information Theory,
+51:2282–2312, 2005.
+
+[12] Martin Wainwright, Tommi Jaakkola, and Alan Willsky. A new class of upper bounds on the
+log partition function. IEEE Transactions on Information Theory, 51(7):2313–2335, 2005.
+
+[13] Ofer Meshi, Ariel Jaimovich, Amir Globerson, and Nir Friedman. Convexifying the bethe free
+energy. In UAI, 2009.
+
+[14] Tom Heskes. Convexity arguments for eﬃcient minimization of the bethe and kikuchi free
+energies. J. Artif. Intel l. Res. (JAIR), 26:153–190, 2006.
+
+[15] Varun Ganapathi, David Vickrey, John Duchi, and Daphne Koller. Constrained approximate
+maximum entropy learning of markov random ﬁelds. In UAI, 2008.
+
+[16] Tamir Hazan and Amnon Shashua. Convergent message-passing algorithms for inference over
+general graphs with convex free energies. In UAI, pages 264–273, 2008.
+
+[17] Neculai Andrei. Accelerated conjugate gradient algorithm with ﬁnite diﬀerence hessian/vector
+product approximation for unconstrained optimization. J. Comput. Appl. Math., 230(2):570–
+582, 2009.
+
+[18] Talya Meltzer, Amir Globerson, and Yair Weiss. Convergent message passing algorithms - a
+unifying view, 2009.
+
+[19] Joris M. Mooij et al. libDAI 0.2.4: A free/open source C++ library for Discrete Approximate
+Inference. http://www.libdai.org/, 2010.
+
+[20] Sanjiv Kumar, Jonas August, and Martial Hebert. Exploiting inference for approximate pa-
+rameter learning in discriminative ﬁelds: An empirical study. In EMMCVPR, 2005.
+
+[21] Sanjiv Kumar and Martial Hebert. Discriminative random ﬁelds. International Journal of
+Computer Vision, 68(2):179–201, 2006.
+
+[22] S. V. N. Vishwanathan, Nicol Schraudolph, Mark Schmidt, and Kevin Murphy. Accelerated
+training of conditional random ﬁelds with stochastic gradient methods. In ICML, 2006.
+
+[23] Patrick Pletscher, Cheng Soon Ong, and Joachim Buhmann. Spanning tree approximations
+for conditional random ﬁelds. In AISTATS, 2009.
+
+9
+
+

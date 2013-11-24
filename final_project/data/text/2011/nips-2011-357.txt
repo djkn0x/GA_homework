@@ -1,0 +1,506 @@
+Dynamical segmentation of single trials
+from population neural data
+
+Biljana Petreska
+Gatsby Computational Neuroscience Unit
+University College London
+biljana@gatsby.ucl.ac.uk
+
+Byron M. Yu
+ECE and BME
+Carnegie Mellon University
+byronyu@cmu.edu
+
+John P. Cunningham
+Dept of Engineering
+University of Cambridge
+jpc74@cam.ac.uk
+
+Gopal Santhanam, Stephen I. Ryu† , Krishna V. Shenoy‡
+Electrical Engineering
+‡Bioengineering, Neurobiology and Neurosciences Program
+Stanford University
+†Dept of Neurosurgery, Palo Alto Medical Foundation
+{gopals,seoulman,shenoy}@stanford.edu
+
+Maneesh Sahani
+Gatsby Computational Neuroscience Unit
+University College London
+maneesh@gatsby.ucl.ac.uk
+
+Abstract
+
+Simultaneous recordings of many neurons embedded within a recurrently-
+connected cortical network may provide concurrent views into the dynamical pro-
+cesses of that network, and thus its computational function. In principle, these
+dynamics might be identiﬁed by purely unsupervised, statistical means. Here,
+we show that a Hidden Switching Linear Dynamical Systems (HSLDS) model—
+in which multiple linear dynamical laws approximate a nonlinear and poten-
+tially non-stationary dynamical process—is able to distinguish different dynami-
+cal regimes within single-trial motor cortical activity associated with the prepara-
+tion and initiation of hand movements. The regimes are identiﬁed without refer-
+ence to behavioural or experimental epochs, but nonetheless transitions between
+them correlate strongly with external events whose timing may vary from trial to
+trial. The HSLDS model also performs better than recent comparable models in
+predicting the ﬁring rate of an isolated neuron based on the ﬁring rates of others,
+suggesting that it captures more of the “shared variance” of the data. Thus, the
+method is able to trace the dynamical processes underlying the coordinated evo-
+lution of network activity in a way that appears to reﬂect its computational role.
+
+1
+
+Introduction
+
+We are now able to record from hundreds—and very likely soon from thousands—of neurons in
+vivo. By studying the activity of these neurons in concert we may hope to gain insight not only into
+the computations performed by speciﬁc neurons, but also into the computations performed by the
+population as a whole. The dynamics of such collective computations can be seen in the coordinated
+activity of all of the neurons within the local network; although each individual such neuron may
+reﬂect this coordinated component only noisily. Thus, we hope to identify the computationally-
+relevant network dynamics by purely statistical, unsupervised means—capturing the shared evolu-
+
+1
+
+tion through latent-variable state-space models [1, 2, 3, 4, 5, 6, 7, 8]. The situation is similar to
+that of a camera operating at the extreme of its light sensitivity. A single pixel conveys very little
+information about an object in the scene, both due to thermal and shot noise and due to the ambigu-
+ity of the single-channel signal. However, by looking at all of the noisy pixels simultaneously and
+exploiting knowledge about the structure of natural scenes, the task of extracting the object becomes
+feasible. In a similar way, noisy data from many neurons participating in a local network computa-
+tion needs to be combined with the learned structure of that computation—embodied by a suitable
+statistical model—to reveal the progression of the computation.
+Neural spiking activity is usually analysed by averaging across multiple experimental trials, to ob-
+tain a smooth estimate of the underlying ﬁring rates [2, 3, 4, 5]. However, even under carefully
+controlled experimental conditions, the animal’s behavior may vary from trial-to-trial. Reaction
+time in motor or decision-making tasks for example, reﬂects internal processes that can last for
+measurably different periods of time. In these cases traditional methods are challenging to apply,
+as there is no obvious way of aligning the data from different trials. It is thus essential to develop
+methods for the analysis of neural data that can account for the timecourse of a neural computation
+during a single trial. Single-trial methods are also attractive for analysing speciﬁc trials in which
+the subject exhibits erroneous behavior. In the case of a surprisingly long movement preparation
+time or a wrong decision, it becomes possible to identify the sources of error at the neural level.
+Furthermore, single-trial methods allow the use of more complex experimental paradigms where the
+external stimuli can arise at variable times (e.g. variable time delays).
+Here, we study a method for the unsupervised identiﬁcation of the evolution of the network com-
+putational state on single trials. Our approach is based on a Hidden Switching Linear Dynamical
+System (HSLDS) model, in which the coordinated network inﬂuence on the population is captured
+by a low-dimensional latent variable which evolves at each time step according to one of a set of
+available linear dynamical laws. Similar models have a long history in tracking, speech and, indeed,
+neural decoding applications [9, 10, 11] where they are variously known as Switching Linear Dy-
+namical System models, Jump Markov models or processes, switching Kalman Filters or Switching
+Linear Gaussian State Space models [12]. We add the preﬁx “Hidden” to stress that in our applica-
+tion neither the switching process nor the latent dynamical variable are ever directly observed, and so
+learning of the parameters of the model is entirely unsupervised—and again, learning in such mod-
+els has a long history [13]. The details of the HSLDS model, inference and learning are reviewed
+in Section 2. In our models, the transitions between linear dynamical laws may serve two purposes.
+First, they may provide a piecewise-linear approximation to a more accurate non-linear dynamical
+model [14]. Second, they may reﬂect genuine changes in the dynamics of the local network, perhaps
+due to changes in the goals of the underlying computation under the control of signals external to
+the local area. This second role leads to a computational segmentation of individual trials, as we
+will see below.
+We compare the performance of the HSLDS model to Gaussian Processes Factor Analysis (GPFA),
+a method introduced by [8] which analyses multi-neuron data on a single-trial basis with similar mo-
+tivation to our own. Instead of explicitly modeling the network computation as a dynamical process,
+GPFA assumes that the computation evolves smoothly in time. In this sense, GPFA is less restrictive
+and would perform better if the HSLDS provided a bad model of the real network dynamics. How-
+ever GPFA assumes that the latent dimensions evolve independently, making GPFA more restrictive
+than HSLDS in which the latent dimensions can be coupled. Coupling the latent dynamics intro-
+duces complex interactions between the latent dimensions, which allows a richer set of behaviors.
+To validate our HSLDS model against GPFA and a single LDS we will use the cross-prediction
+measure introduced with GPFA [8] in which the ﬁring rate of each neuron is predicted using only
+the ﬁring rates of the rest of the neurons; thus the metric measures how well each model captures the
+shared components of the data. GPFA and cross-prediction are reviewed brieﬂy in Section 3, which
+also introduces the dataset used; and the cross-prediction performance of the models is compared in
+Section 4. Having validated the HSLDS approach, we go on to study the dynamical segmentation
+identiﬁed by the model in the rest of Section 4, leading to the conclusions of Section 5.
+
+2
+
+2 Hidden Switching Linear Dynamical Systems
+
+Our goal is to extract the structure of computational dynamics in a cortical network from the recorded
+ﬁring rates of a subset of neurons in that network. We use a Hidden Switching Linear Dynamical
+Systems (HSLDS) model to capture the component of those ﬁring rates which is shared by multiple
+cells, thus exploiting the intuition that network computations should be reﬂected in coordinated
+activity across a local population. This will yield a latent low-dimensional subspace of dynamical
+states embedded within the space of noisy measured ﬁring rates, along with a model of the dynamics
+within that latent space. The dynamics of the HSLDS model combines a number of linear dynamical
+systems (LDS), each of which capture linear Markovian dynamics using a ﬁrst-order linear auto-
+regressive (AR) rule [9, 15]. By combining multiple such rules, the HSLDS model can provide a
+piecewise linear approximation to nonlinear dynamics, and also capture changes in the dynamics of
+the local network driven by external inﬂuences that presumably reﬂect task demands. In the model
+implemented here, transitions between LDS rules themselves form a Markov chain.
+Let x:,t ∈ IRp×1 be the low-dimensional computational state that we wish to estimate. This latent
+computational state reﬂects the network-level computation performed at timepoint t that gives rise
+to the observed spiking activity y:,t ∈ IRq×1 . Note that the dimensionality of the computational state
+p is lower than the dimensionality of the recorded neural data q which corresponds to the number of
+recorded neurons. The evolution of the computational state x:,t is given by
+
+x:,t |x:,t−1 , st ∼ N (Ast x:,t−1 , Kst )
+(1)
+where N (µ, Σ) denotes a Gaussian distribution with mean µ and covariance Σ. The linear dynamical
+matrices Ast ∈ IRp×p and innovations covariance matrices Kst ∈ IRp×p are parameters of the
+model and need to be learned. These matrices are indexed by a switch variable st ∈ {1, ..., S } such
+that different Ast and Kst need to be learned for each of the S possible linear dynamical systems.
+If the dependencies on st are removed, Eq. 1 deﬁnes a single LDS.
+The switch variable st speciﬁes which linear dynamical law guides the evolution of the latent state
+x:,t at timepoint t and as such provides a piecewise approximation to the nonlinear dynamics with
+which x:,t may evolve. The variable st itself is drawn from a Markov transition matrix M learned
+from the data:
+
+st ∼ Discrete(M:,st−1 )
+As mentioned above, the observed neural activity y:,t ∈ IRq×1 is generated by the latent dynamics
+and denotes the spike counts (Gaussianised as described below) of q simultaneously recorded neu-
+rons at timepoints t ∈ {1, ..., T }. The observations y:,t are related to the latent computational states
+x:,t through a linear-Gaussian relationship:
+y:,t |x:,t ∼ N (C x:,t + d, R).
+where the observation matrix C ∈ IRq×p , offset d ∈ IRq×1 , and covariance matrix R ∈ IRq×q are
+model parameters that need to be learned. We force R to be diagonal and to keep track only of the
+independent noise variances. This means that the ﬁring rates of different neurons are independent
+conditioned on the latent dynamics, compelling the shared variance to live only in the latent space.
+Note that different neurons can have different independent noise variances. We use a Gaussian
+relationship instead of a point-process likelihood model for computational tractability. Finally, the
+observation dynamics do not depend on which linear dynamical system is used (i.e., are independent
+of st ). A graphical model of the particular HSLDS instance we have used is shown in Figure 2.
+Inference and learning in the model are performed by approximate Expectation Maximisation (EM).
+Inference (or the E-step) requires ﬁnding appropriate expected sufﬁcient statistics under the distri-
+butions of the computational latent state and switch variable at each point in time given the observed
+neural data p(x1:T , s1:T |y1:T ). Inference in the HSLDS is computationally intractable because of the
+following exponential complexity. At the initial timepoint, s0 can take one of S discrete values. At
+the next timepoint, each of the S possible latent states can again evolve according to S different lin-
+ear dynamical laws, such that at timepoint t we need to keep track of S t possible solutions. To avoid
+
+3
+
+Figure 1: Graphical model of the HSLDS. The ﬁrst layer corresponds to the discrete switch variable
+that dictates which of the S available linear dynamical systems (LDSs) will guide the latent dynamics
+shown in the second layer. The latent dynamics evolves as a linear dynamical system at timepoint t
+and presumably captures relevant aspects of the computation performed at the level of the recorded
+neural network. The relationship between the latent dynamics and neural data (third layer) is again
+linear-Gaussian, such that each computational state is associated to a speciﬁc denoised ﬁring pattern.
+The dimensionality of the latent dynamics x is lower than that of the observations y (equivalent to
+the number of recorded neurons), meaning that x extracts relevant features reﬂected in the shared
+variance of y . Note that there are no connections between xt−1 and st , nor st and y .
+
+this exponential scaling, we use an approximate inference algorithm based on Assumed Density Fil-
+tering [16, 17, 18] and Assumed Density Smoothing [19]. The algorithm comprises a single forward
+pass that estimates the ﬁltered posterior distribution p(xt , st |y1:t ) and a single backward pass that
+estimates the smoothed posterior distribution p(xt , st |y1:T ). The key idea is to approximate these
+posterior distributions by a simple tractable form such as a single Gaussian. The approximated dis-
+tribution is then propagated through time conditioned on the new observation. The smoothing step
+requires an additional simplifying assumption where p(xt+1 |st , st+1 , y1:T ) ≈ p(xt+1 |st+1 , y1:T ) as
+proposed in [19]. It is also possible to use a mixture of a ﬁxed number of Gaussians as the approx-
+imating distribution, at the cost of greater computational time. We found that this approach yielded
+similar results in pilot runs, and thus retained the single-Gaussian approximation.
+Learning the model parameters (or the M-step) can be performed using the standard procedure of
+maximizing the expected joint log-likelihood:
+N(cid:88)
+n=1
+
+(cid:104)log p(xn
+1:T )(cid:105)pold (xn |yn )
+1:T , yn
+
+with respect to the parameters Ast , Kst , M , C , d and R, where the superscript n indexes data from
+each of N different trials. In practice, the estimated individual variance of particularly low-ﬁring
+neurons was very low and likely to be incorrectly estimated. Therefore we assumed a Wishart prior
+on the observation covariance matrix R, which resulted in an update rule that adds a ﬁxed parameter
+ψ ∈ IR to all of the values at the diagonal. In the analyses below ψ was ﬁxed to the value that
+gave the best cross-prediction results (see Section 3.2). Finally, the most likely state of the switch
+p(s1:T |y1:T ) was estimated using the standard Viterbi algorithm [20],
+variable s∗
+1:T = arg maxs1:T
+which ensures that the most likely switch variable path is in fact possible in terms of the transitions
+allowed by M .
+
+3 Model Comparison and Experimental Data
+
+3.1 Gaussian Process Factor Analysis
+
+Below, we compare the performance of the HSLDS model to Gaussian Process Factor Analysis
+(GPFA), another method for estimating the functional computation of a set of neurons. GPFA is an
+extension of Factor Analysis that leverages time-label information, introduced in [8]. In this model,
+the latent dynamics evolve as a Gaussian Process (GP), with a smooth correlation structure between
+the latent states at different points in time. This combination of FA and the GP prior work together
+to identify smooth low-dimensional latent trajectories.
+
+4
+
+Formally, each dimension of the low-dimensional latent states x:,t is indexed by i ∈ {1, ..., p} and
+deﬁnes a separate GP:
+
+xi,: ∼ N (0, Ki )
+where xi,: ∈ IR1×T is the trajectory in time of the ith latent dimension and Ki ∈ IRT ×T is the
+ith GP smoothing covariance matrix. Ki is set to the commonly-used squared exponential (SE)
+covariance function as deﬁned in [8].
+Whereas HSLDS explicitly models the dynamics of the network computation, GPFA only assumes
+that the evolution of the computational state is smooth. Thus GPFA is a less restrictive model than
+HSLDS, but being model-free makes it also less informative of the dynamical rules that underlie the
+computation. A major advantage of GPFA over HSLDS is that the solution is approximation-free
+and faster to run.
+
+3.2 Cross-prediction performance measure
+
+To compare model goodness-of-ﬁt we adopt the cross-prediction metric of [8]. All of these models
+attempt to capture the shared variance in the data, and so performance may be measured by how well
+the activity of one neuron can be predicted using the activity of the rest of the neurons. It is important
+to measure the cross-prediction error on trials that have not been used for learning the parameters
+of the model. We arrange the observed neural data in a matrix Y = [y:,1 , ..., y:,T ] ∈ IRq×T where
+each row yj,: represents the activity of neuron j in time. The model cross-prediction for this neuron
+j is ˆyj,: = E [yj,: |Y−j,: ] where Y−j,: ∈ IR(q−1)×T represents all but the j th row of Y . We ﬁrst
+estimate the trajectories in the latent space using all but the j th neuron P (x1:p,: |Y−j,: ) in a set of
+testing trials. We then project this estimate back to the high-dimensional space to obtain the model
+cross-prediction ˆyj,: using ˆyj,t = Cj,: · E [x(:, t)|Y−j,: ] + dj . The error is computed as the sum-
+of-squared errors between the model cross-prediction and the observed Gaussianised spike counts
+across all neurons and timepoints; and we plot the difference between this error (per time bin) and
+the average temporal variance of the corresponding neuron in the corresponding trial (denoted as
+Var-MSE).
+Note that the performance of difference models can be evaluated as a function of the dimension-
+ality of the latent state. The HSLDS model has two futher free parameters which inﬂuence cross-
+prediction peformance: the number of available LDSs S and the concentration of the Wishart prior
+ψ .
+
+3.3 Data
+
+We applied the model to data recorded in the premotor and motor cortices of a rhesus macaque while
+it performed a delayed center-out reach task. A trial began with the animal touching and looking at
+an illuminated point at the center of a vertically oriented screen. A target was then illuminated at a
+distance of 10cm and in one of seven directions (0, 45, 90, 135, 180, 225, 315) away from this central
+starting point. The target remained visible while the animal prepared but withheld a movement to
+touch it. After a random delay of between 200 and 700ms, the illumination of the starting point was
+extinguished, which was the animal’s cue (the “go cue”) to reach to the target to obtain a reward.
+Neural activity was recorded from 105 single and multi-units, using a 96-electrode array (Blackrock,
+Salt Lake City, UT). All active units were included in the analysis without selection based on tuning.
+The spike-counts were binned at a relatively ﬁne time-scale of 10ms (non-overlapping bins). As in
+[8], the observations were taken to be the square-roots of these spike counts, a transformation that
+helps to Gaussianise and stabilise the variance of count data [21].
+
+4 Results
+
+We ﬁrst compare the cross-prediction-derived goodness-of-ﬁt of the HSLDS model to that of the
+single LDS and GPFA models in section 4.1. We ﬁnd that HSLDS provides a better model of the
+shared component of the recorded data than do the two other methods. We then study the dynamical
+segmentation found by the HSLDS model, ﬁrst by looking at a typical example (section 4.2) and
+then by correlating dynamical switches to behavioural events (section 4.3). We show that the latent
+
+5
+
+Figure 2:
+Performance of the HSLDS
+(green solid line), LDS (blue dashed) and
+GPFA (red dash-dotted) models. Analy-
+ses are based on one movement type with
+the target in the 45◦ direction. Cross-
+prediction error was computed using 4-
+fold cross-validation. HSLDS with dif-
+ferent values of S also outperformed the
+LDS case (which is equivalent to S = 1).
+Performance was more sensitive to the
+strength ψ of the Wishart prior, and the best
+performing model is shown.
+
+trajectories and dynamical transitions estimated by the model predict reaction time, a behavioral
+covariate that varies from trial-to-trial. Finally we argue that these behavioral correlates are difﬁcult
+to obtain using a standard neural analysis method.
+
+4.1 Cross-prediction
+
+To validate the HSLDS model we compared it to the GPFA model described in section 3.1 and a
+single LDS model. Since all of these models attempt to capture the shared variance of the data
+across neurons and multiple trials, we used cross-prediction to measure their performance. Cross-
+prediction looks at how well the spiking activity of one neuron is predicted just by looking at the
+spiking activity of all of the other neurons (described in detail in Section 3.2). We found that both the
+single LDS and HSLDS models that allow for coupled latent dynamics do better than GPFA, shown
+in Figure 2, which could be attributed to the fact that GPFA constrains the different dimensions
+of the latent computational state to evolve independently. The HSLDS model also outperforms a
+single LDS yielding the lowest prediction error for all of the latent dimensions we have looked at,
+arguing that a nonlinear model of the latent dynamics is better than a linear model. Note that the
+minimum prediction error asymptotes after 10 latent dimensions. It is tempting to suggest that for
+this particular task the effective dimensionality of the spiking activity is much lower than that of
+the 105 recorded neurons, thereby justifying the use of a low-dimensional manifold to describe the
+underlying computation. This could be interpreted as evidence that neurons may carry redundant
+information and that the (nonlinear) computational function of the network is better reﬂected at the
+level of the population of neurons, rather than in single neurons.
+
+4.2 Data segmentation
+
+By deﬁnition, the HSLDS model partitions the latent dynamics underlying the observed data into
+time-labeled segments that may evolve linearly. The segments found by HSLDS correspond to
+periods of time in which the latent dynamics seem to evolve according to different linear dynamical
+laws, suggesting that the observed ﬁring pattern of the network has changed as a whole. Thus, by
+construction, the HSLDS model can subdivide the network activity into different ﬁring regimes for
+each trial speciﬁcally.
+For the purpose of visualization, we have applied an additional orthonormalization post-processing
+step (as in [8]) that helps us order the latent dimensions according to the amount of covariance ex-
+plained. The orthonormalization consists of ﬁnding the singular-value decomposition of C , allowing
+C x:,t ), where UC ∈ IRq×p is a matrix with orthonormal
+us to write the product C x:,t as UC (DC V (cid:48)
+columns. We will refer to ˜x:,t = DC V (cid:48)
+C x:,t as the orthonormalised latent state at time t. The ﬁrst
+dimension of the orthonormalised latent state in time ˜x1,: corresponds then to the latent trajectory
+which explains the most covariance. Since the columns of UC are orthonormal, the relationship
+between the orthonormalised latent trajectories and observed data can be interpreted in an intuitive
+way, similarly to Principal Components Analysis (PCA). The results presented here were obtained
+by setting the number of switching LDSs S , latent space dimensionality p and Wishart prior ψ to
+values that yielded a reasonably low cross-prediction error.
+Figure 3 shows a typical example of the HSLDS model applied to data in one movement direction,
+where the different trials are fanned out vertically for illustration purposes. The ﬁrst orthonormalized
+
+6
+
+45678910111213141566.26.46.66.877.2x 10−3Latent state dimensionality pVar-MSEHSLDS, S=7LDSGPFAFigure 3: HSLDS applied to neural data from the 45◦ direction movement (S = 7, p = 7, ψ = 0.05).
+The ﬁrst dimension of the orthonormalised latent trajectory is shown. The colors denote the different
+linear dynamical systems used by the model. Each line is a different trial, aligned to the target onset
+(left) and go cue (right), and sorted by reaction time. Switches reliably follow the target onset and
+precede the movement onset, with a time lag that is correlated with reaction time.
+
+latent dimension indicates a transient in the recorded population activity shortly after target onset
+(which is marked by the red dots) and a sustained change of activity after the go cue (marked by
+the green dots). The colours of the lines indicate the most likely setting of the switching variable
+at each time. It is evident that the learned solution segments each trial into a broadly reproducible
+sequence of dynamical epochs. Some transitions appear to reliably follow or precede external events
+(even though these events were not used to train the segmentation) and may reﬂect actual changes
+in dynamics due to external inﬂuences. Others seem to follow each other in quick succession, and
+may instead reﬂect linear approximations to non-linear dynamical processes—evident particularly
+during transiently rapid changes in the latent state. Unfortunately, the current model does not allow
+us to distinguish quantitatively between these two types of transition.
+Note that the delays (time from target onset to go cue) used in the experiment varied from 200 to
+700ms, such that the model systematically detected a change in the neural ﬁring rates shortly after
+the go cue appeared on each individual trial. The model succeeds at detecting these changes in a
+purely unsupervised fashion as it was not given any time information about the external experimental
+inputs.
+
+4.3 Behavioral correlates during single trials
+
+It is not surprising that the ﬁring rates of the recorded neurons change during different behavioral
+periods. For example, neural activity is often observed to be higher during movement execution
+than during movement preparation. However, the HSLDS method reliably detects the behaviourally-
+correlated changes in the pattern of neural activity across many neurons on single trials.
+In order to ensure that HSLDS captures trial-speciﬁc information we have looked at whether the
+time post-go-cue at which the model estimates a ﬁrst switch in the neural dynamics could predict
+the subsequent onset of movement and thus the trial reaction time (RT). We found that the ﬁltered
+model (which does not incorporate spiking data from future times into its estimate of the switching
+variable) could explain 52% of the reaction time variance on average, across the 7 reach directions
+(Figure 4).
+Could a more conventional approach do better? We attempted to use a combination of the “pop-
+ulation vector” (PV) method and the “rise-to-threshold” hypothesis. The PV sums the preferred
+directions of a population of neurons, weighted by the respective spike counts in order to decode the
+represented direction of movement [22]. The rise-to-threshold hypothesis asserts that neural ﬁring
+rates rise during a preparatory period and movement is initiated when the population rate crosses a
+threshold [23]. The neural data used for this analysis were smoothed with a Gaussian window and
+sampled at 1 ms. We ﬁrst estimated the preferred direction ˆpq of the neuron indexed by q as the
+
+7
+
+Figure 4: Correlation (R2 = 0.52) between
+the reaction time and ﬁrst ﬁltered HSLDS
+switch following the go cue, on a trial-by-
+trial basis and averaged across directions.
+Symbols correspond to movements in differ-
+ent directions. Note that in two catch trials
+the model did not switch following the go
+cue, so we considered the last switch before
+the cue.
+
+unit vector in the direction of (cid:126)pq = (cid:80)7
+i (cid:126)vd where d indexes the instructed movement direction
+d=1 rd
+(cid:126)vd and rd
+q is the mean ﬁring rate of neuron q during all movements in direction d. The preferred
+direction of a given neuron often differed between plan and movement activity, so we used data from
+t = || (cid:80)Q
+q as this gave us better results when trying to
+movement onset until the movement end to estimate rd
+estimate a threshold in the rising movement-related activity. We then estimated the instanteneous
+q=1 yq ,t (cid:126)pq ||, where yq ,t is the smoothed spike
+amplitude of the network PV at time t as sd
+count of neuron q at time t, Q is the number of neurons and || (cid:126)w|| denotes the norm of the vector (cid:126)w .
+Finally, we searched for a threshold length (one per direction), such that the time at which the PV
+exceeded this length on each trial was best correlated with RT.
+Note that this approach uses considerable supervision that was denied to the HSLDS model. First,
+the movement epoch of each trial was identiﬁed to deﬁne the PV. Second, the thresholds were
+selected so as to maximize the RT correlation—a direct form of supervision. Finally, this selection
+was based on the same data as were used to evaluate the correlation score, thus leading to potential
+overﬁtting in the explained variance. The HSLDS model was also trained on the same trials, which
+could lead to some overﬁtting in terms of likelihood, but should not introduce overﬁtting in the
+correlation between switch times and RT, which is not directly optimised.
+Despite these considerable advantages, the PV approach did not predict RT as well as did the
+HSLDS, yielding an average variance explained across conditions of 48%.
+
+5 Conclusion
+
+It appears that the Hidden Switching Linear Dynamical System (HSLDS) model is able to appropri-
+ately extract relevant aspects of the computation reﬂected in a network of ﬁring neurons. HSLDS
+explicitly models the nonlinear dynamics of the computation as a piecewise linear process that cap-
+tures the shared variance in the neural data across neurons and multiple trials.
+One limitation of HSLDS is the approximate EM algorithm used for inference and learning of the
+model parameters. We have traded off computational tractability with accuracy, such that the model
+may settle into a solution that is simpler than the optimum. A second limitation of HSLDS is the
+slow training time of EM, enforcing an ofﬂine learning of the model parameters.
+Despite these simplications, HSLDS can be used to dynamically segment the neural activity at the
+level of the whole population of neurons into periods of different ﬁring regimes. We showed that in a
+delayed-reach task the ﬁring regimes found correlate well with the experimental behavioral periods.
+The computational trajectories found by HSLDS are trial-speciﬁc and with a dimensionality that
+is more suitable for visualization than the high-dimensional spiking activity. Overall, HSLDS are
+attractive models for uncovering behavioral correlates in neural data on a single-trial basis.
+Acknowledgments. This work was supported by DARPA REPAIR (N66001-10-C-2010),
+the Swiss
+National Science Foundation Fellowship PBELP3-130908, the Gatsby Charitable Foundation, UK EPSRC
+EP/H019472/1 and NIH-NINDS-CRCNS-R01, NDSEG and NSF Graduate Fellowships, Christopher and Dana
+Reeve Foundation. We are very grateful to Jacob Macke, Lars Buesing and Alexander Lerchner for discussion.
+
+8
+
+References
+[1] A. C. Smith and E. N. Brown. Estimating a state-space model from point process observations. Neural
+Computation, 15(5):965–991, 2003.
+[2] M. Stopfer, V. Jayaraman, and G. Laurent. Intensity versus identity coding in an olfactory system. Neuron,
+39:991–1004, 2003.
+[3] S. L. Brown, J. Joseph, and M. Stopfer. Encoding a temporally structured stimulus with a temporally
+structured neural representation. Nature Neuroscience, 8(11):1568–1576, 2005.
+[4] R. Levi, R. Varona, Y. I. Arshavsky, M. I. Rabinovich, and A. I. Selverston. The role of sensory network
+dynamics in generating a motor program. Journal of Neuroscience, 25(42):9807–9815, 2005.
+[5] O. Mazor and G. Laurent. Transient dynamics versus ﬁxed points in odor representations by locust
+antennal lobe projection neurons. Neuron, 48:661–673, 2005.
+[6] B. M. Broome, V. Jayaraman, and G. Laurent. Encoding and decoding of overlapping odor sequences.
+Neuron, 51:467–482, 2006.
+[7] M. M. Churchland, B. M. Yu, M. Sahani, and K. V. Shenoy. Techniques for extracting single-trial activity
+patterns from large-scale neural recordings. Current Opinion in Neurobiology, 17(5):609–618, 2007.
+[8] B. M. Yu, J. P. Cunningham, G. Santhanam, S. I. Ryu, K. V. Shenoy, and M. Sahani. Gaussian-process
+factor analysis for low-dimensional single-trial analysis of neural population activity. J Neurophysiol,
+102:614–635, 2009.
+[9] Y. Bar-Shalom and Xiao-Rong Li. Estimation and Tracking: Principles, Techniques and Software. Artech
+House, Norwood, MA, 1998.
+[10] B. Mesot and D. Barber. Switching linear dynamical systems for noise robust speech recognition. IEEE
+Transactions of Audio, Speech and Language Processing, 15(6):1850–1858, 2007.
+[11] W. Wu, M.J. Black, D. Mumford, Y. Gao, E. Bienenstock, and J. P. Donoghue. Modeling and decoding
+motor cortical activity using a switching kalman ﬁlter. IEEE Transactions on Biomedical Engineering,
+51(6):933–942, 2004.
+[12] D. Barber. Bayesian Reasoning and Machine Learning. Cambridge University Press. In Press, 2011.
+[13] K. P. Murphy. Switching kalman ﬁlters. Technical Report 98-10, Compaq Cambridge Research Lab,
+1998.
+[14] B. M. Yu, A. Afshar, G. Santhanam, S. I. Ryu, K. V. Shenoy, and M. Sahani. Extracting dynamical
+structure embedded in neural activity. In Y. Weiss, B. Sch ¨olkopf, and J. Platt, editors, Advances in Neural
+Information Processing Systems 18, pages 1545–1552. Cambridge, MA: MIT Press, 2006.
+[15] M. West and J. Harrison. Bayesian Forecasting and Dynamic Models. Springer, 1999.
+[16] D. L. Alspach and H. W. Sorenson. Nonlinear bayesian estimation using gaussian sum approximations.
+IEEE Transactions on Automatic Control, 17(4):439–448, 1972.
+[17] X. Boyen and D. Koller. Tractable inference for complex stochastic processes. In Proceedings of the 14th
+Conference on Uncertainty in Artiﬁcial Intelligence - UAI, volume 17, pages 33–42. Morgan Kaufmann,
+1998.
+[18] T. Minka. A Family of Algorithms for Approximate Bayesian Inference. PhD Thesis, MIT Media Lab,
+2001.
+[19] D. Barber. Expectation correction for smoothed inference in switching linear dynamical systems. Journal
+of Machine Learning Research, 7:2515–2540, 2006.
+[20] A. J. Viterbi. Error bounds for convolutional codes and an asymptotically optimum decoding algorithm.
+IEEE Transactions on Information Theory, IT-13:260–267, 1967.
+[21] N. A. Thacker and P. A. Bromiley. The effects of a square root transform on a poisson distributed quantity.
+Technical Report 2001-010, University of Manchester, 2001.
+[22] A. P. Georgopoulos, A. B. Schwartz, and R. E. Ketiner. Neuronal population coding of movement direc-
+tion. Science, 233:1416–1419, 1986.
+[23] W. Erlhagen and G. Schoner. Dynamic ﬁeld theory of movement preparation. Psychol Rev, 109:545–572,
+2002.
+
+9
+
+

@@ -1,0 +1,684 @@
+Large Scale Hidden Semi-Markov SVMs
+
+Gunnar R ¨atsch∗
+Friedrich Miescher Laboratoy, Max Planck Society
+Spemannstr. 39, 72070 T ¨ubingen, Germany
+Gunnar.Raetsch@tuebingen.mpg.de
+
+S ¨oren Sonnenburg
+Fraunhofer FIRST.IDA
+Kekul ´estr. 7, 12489 Berlin, Germany
+sonne@first.fhg.de
+
+Abstract
+
+We describe Hidden Semi-Markov Support Vector Machines (SHM SVMs), an
+extension of HM SVMs to semi-Markov chains. This allows us to predict seg-
+mentations of sequences based on segment-based features measuring properties
+such as the length of the segment. We propose a novel technique to partition the
+problem into sub-problems. The independently obtained partial solutions can then
+be recombined in an efﬁcient way, which allows us to solve label sequence learn-
+ing problems with several thousands of labeled sequences. We have tested our
+algorithm for predicting gene structures, an important problem in computational
+biology. Results on a well-known model organism illustrate the great potential of
+SHM SVMs in computational biology.
+
+Introduction
+1
+Hidden Markov SVMs are a recently-proposed method for predicting a label sequence given the
+input sequence [3, 17, 18, 1, 2]. They combine the beneﬁts of the power and ﬂexibility of kernel
+methods with the idea of Hidden Markov Models (HMM) [11] to predict label sequences. In this
+work we introduce a generalization of Hidden Markov SVMs, called Hidden Semi-Markov SVMs
+(HSM SVMs). In HM SVMs and HMMs there is a state transition for every input symbol. In semi-
+Markov processes it is allowed to persist in a state for a number of time steps before transitioning
+into a new state. During this segment of time the system’s behavior is allowed to be non-Markovian.
+This adds ﬂexibility for instance to model segment lengths or to use non-linear content sensors that
+may depend on the start and end of the segment.
+One of the largest problems with HM SVMs and also SHM SVMs is their high computational
+complexity. Solving the resulting optimization problems may become computationally infeasible
+already for a few hundred examples. In the second part of the paper we consider the case of using
+content sensors (for whole segments) and signal detectors (at segment boundaries) in SHM SVMs.
+We motivate a simple, but very effective strategy of partitioning the problem into independent sub-
+problems and discuss how one can reunion the different parts. We propose to solve a relatively
+small optimization problem that can be solved rather efﬁciently. This strategy allows us to tackle
+signiﬁcantly larger label sequence problems (with several thousands of sequences).
+To illustrate the strength of our approach we have applied our algorithm to an important problem
+in computational biology: the prediction of the segmentation of a pre-mRNA sequence into exons
+and introns. On problems derived from sequences of the model organism Caenorhabditis elegans
+we can show that the SHM SVM approach consistently outperforms HMM based approaches by a
+large margin (see also [13]).
+The paper is organized as follows: In Section 2 we introduce the necessary notation, HM SVMs and
+the extension to semi-Markov models. In Section 3 we propose and discuss a technique that allows
+us to train SHM SVMs on signiﬁcantly more training examples. Finally, in Section 4 we outline
+the gene structure prediction problem, discuss additional techniques to apply SHM SVMs to this
+problem and show surprisingly large improvements compared to state-of-the-art methods.
+∗Corresponding author, http://www.fml.mpg.de/raetsch
+
+2 Hidden Markov SVMs
+In label sequence learning one learns a function that assigns to a sequence of objects x = χ1χ2 . . . χl
+a sequence of labels y = υ1υ2 . . . υl (χi ∈ X, υi ∈ Υ, i = 1, . . . , l). While objects can be of rather
+arbitrary kind (e.g. vectors, letters, etc), the set of labels Υ has to be ﬁnite.1 A common approach is to
+determine a discriminant function F : X × Y → R that assigns a score to every input x ∈ X := X ∗
+and every label sequence y ∈ Y := Υ∗ , where X ∗ denotes the Kleene closure of X . In order to
+obtain a prediction f (x) ∈ Y , the function is maximized with respect to the second argument:
+f (x) = argmax
+F (x, y).
+y∈Y
+2.1 Representation & Optimization Problem
+In Hidden Markov SVMs (HM SVMs) [3], the function F (x, y) := hw , Φ(x, y)i is linearly
+parametrized by a weight vector w , where Φ(x, y) is some mapping into a feature space F . Given
+a set of training examples (xn , yn ), n = 1, . . . , N , the parameters are tuned such that the true
+labeling yn scores higher than all other labelings y ∈ Yn := Y \ yn with a large margin, i.e.
+F (xn , yn ) (cid:29) argmaxy∈Yn F (xn , y). This goal can be achieved by solving the following opti-
+NX
+mization problem (appeared equivalently in [3]):
+min
+ξi + P (w)
+C
+ξ∈RN ,w∈F
+n=1
+for all n = 1, . . . , N and y ∈ Yn ,
+hw , Φ(x, yn )i − hw , Φ(x, y)i ≥ 1 − ξn
+s.t.
+where P is a suitable regularizer (e.g. P (w) = kwk2 ) and the ξ ’s are slack variables to implement
+a soft margin. Note that the linear constraints in (2) are equivalent to the following set of nonlinear
+constraints: F (xn , yn ) − maxy∈Yn F (xn , y) ≥ 1 − ξn for n = 1, . . . , N [3].
+NX
+X
+If P (w) = kwk2 , it can be shown that the solution w∗ of (2) can be written as
+w∗ =
+y∈Y
+n=1
+where αn (y) is the Lagrange multiplier of the constraint involving example n and labeling y (see
+[3] for details). Deﬁning the kernel as k((x, y), (x0 , y 0 )) := hΦ(x, y), Φ(x0 , y 0 )i, we can rewrite
+X
+NX
+F (x, y) as
+y∈Y
+n=1
+
+αn (y)k((xn , y), (x0 , y 0 )).
+
+αn (y)Φ(xn , y),
+
+(1)
+
+(2)
+
+F (x0 , y 0 ) =
+
+2.2 Outline of an Optimization Algorithm
+The number of constraints in (2) can be very large, which may constitute challenges for efﬁciently
+solving problem (2). Fortunately, only a few of the constraints usually are active and working set
+methods can be applied in order to solve the problem for larger number of examples. The idea is to
+start with small sets of negative (i.e. false) labelings Y n for every example. One solves (2) for the
+smaller problem and then identiﬁes labelings y ∈ Yn that maximally violate constraints, i.e.
+y = argmax
+F (xn , y),
+y∈Yn
+where w is the intermediate solution of the restricted problem. The new constraint generated by the
+negative labeling is then added to the optimization problem. The method described above is also
+known as column generation method or cutting-plane algorithm and can be shown to converge to the
+optimal solution w∗ [18]. However, since the computation of F involves many kernel computations
+and also the number of non-zero α’s is often large, solving the problem with more than a few hundred
+labeled sequences often seems computationally too expensive.
+
+(3)
+
+2.3 Viterbi-like Decoding
+Determining the optimal labeling in (1) efﬁciently is crucial during optimization and prediction. If
+F (x, ·) satisﬁes certain conditions, one can use a Viterbi-like algorithm [20] for efﬁcient decoding
+1Note that the number of possible labelings grows exponentially in the length of the sequence.
+
+Φ(x, y) =
+
+l(x)X
+
+of the optimal labeling. This is particularly the case when Φ can be written as a sum over the length
+of the sequence and decomposed as
+Φσ,τ (υi , υi+1 , x, i)
+σ,τ ∈Υ
+i=1
+where l(x) is the length of the sequence x.2 By (φγ )γ∈Γ we denote the concatenation of feature
+vectors, i.e. (φ>
+γ2 , . . .)> . It is essential that Φ is composed of mapping functions that depend
+γ1 , φ>
+*
++
+F (x, y) = X
+l(x)X
+X
+l(x)X
+only on labels at position i and i + 1, x as well as i. We can rewrite F using w = (wσ,τ )σ,τ ∈Υ :
+hwσ,τ , Φσ,τ (υi , υi+1 , x, i)i
+{z
+}
+|
+Φσ,τ (υi , υi+1 , x, i)
+wσ,τ ,
+σ,τ ∈Υ
+σ,τ ∈Υ
+i=1
+i=1
+=:g(υi ,υi+1 ,x,i)
+Thus we have positionally decomposed the function F . The score at position i + 1 only depends on
+x, i and labels at positions i and i + 1 (Markov property).
+( max
+Using this decomposition we can deﬁne
+(V (i − 1, υ 0 ) + g(υ 0 , υ , x, i − 1))
+i > 1
+υ 0∈Υ
+0
+otherwise
+as the maximal score for all labelings with label υ at position i. Via dynamic programming one can
+compute maxυ∈Υ V (l(x), υ), which can be proven to solve (1) for the considered case. Moreover,
+using backtracking one can recover the optimal label sequence.3
+The above decoding algorithm requires to evaluate g at most |Υ|2 l(x) times. Since computing g
+involves computing potentially large sums of kernel functions, the decoding step can be computa-
+tionally quite demanding–depending on the kernels and the number of examples.
+
+V (i, υ) :=
+
+. (4)
+
+=
+
+2.4 Extension to Hidden Semi-Markov SVMs
+Semi-Markov models extend hidden Markov models by allowing each state to persist for a non-
+unit number δi of symbols. Only after that the system will transition to a new state, which only
+depends on x and the current state. During the interval (i, i + δi ) the behavior of the system may
+be non-Markovian [14]. Semi-Markov models are fairly common in certain applications of statistics
+[6, 7] and are also used in reinforcement learning [16]. Moreover, [15, 9] previously proposed an
+extension of HMMs, called Generalized HMMs (GHMMs) that is very similar to the ideas above.
+Also, [14] proposed a semi-Markov extension to Conditional Random Fields.
+In this work we extend Hidden Markov-SVMs to Hidden Semi-Markov SVMs by considering se-
+quences of segments instead of simple label sequences. We need to extend the deﬁnition of the
+labeling with s segments: y = (υ1 , π1 ), (υ2 , π2 ), . . . , (υs , πs ), where πj is the start position of the
+segment and υj its label.4 We assume π1 = 1 and let πj = πj−1 + δj . To simplify the notation we
+
+s(y)X
+deﬁne πs+1 := l(x) + 1, s := s(y) to be the number of segments in y and υs+1 := ∅. We can now
+generalize the mapping Φ to:
+Φσ,τ (υj , υj+1 , x, πj , πj+1 )
+j=1
+2We deﬁne υl+1 := ∅ to keep the notation simple.
+3Note that one can extend the outlined decoding algorithm to produce not only the best path, but the K best
+(
+paths. The 2nd best path may be required to compute the structure in (3). The idea is to duplicate tables K times
+as follows:
+
+(V (i − 1, υ
+i > 1
+otherwise
+0
+where max(k) is the function computing the k th largest number and is −∞ if there are fewer numbers.
+V (i, υ , k) now is the k-best score of labelings with label υ at position i.
+4For simplicity, we associate the label of a segment with the signal at the boundary to the next segment. A
+generalization is straightforward.
+
+max(k)
+υ0 ∈Υ,k0=1,...,K
+
+, υ , x, i − 1))
+
+Φ(x, y) =
+
+V (i, υ , k) :=
+
+, k
+
+) + g(υ
+
+σ,τ ∈Υ
+
+.
+
+0
+
+0
+
+0
+
+With this deﬁnition we can extract features from segments: As πj and πj+1 are given one can for
+instance compute the length of the segment or other features that depend on the start and the end of
+s(y)X
+X
+the segment. Decomposing F results in:
+hwσ,τ , Φσ,τ (υj , υj+1 , x, πj , πj+1 )i
+{z
+}
+|
+F (x, y) =
+σ,τ ∈Υ
+j=1
+(
+=:g(υj ,υj+1 ,x,πj ,πj+1 )
+Analogously we can extend the formula for the Viterbi-like decoding algorithm [14]:
+(V (i − d, υ 0 ) + g(υ 0 , υ , x, i − d, i))
+max
+i > 1
+υ 0∈Υ,d=1,...,min(i−1,S )
+0
+otherwise
+where S is the maximal segment length and maxυ∈Υ V (l(x), υ) is the score of the best segment
+labeling. The function g needs to be evaluated at most |Υ|2 l(x)S times. The optimal label sequence
+can be obtained as before by backtracking. Also the above method can be easily extended to produce
+the K best labelings (cf. Footnote 3).
+
+V (i, υ) :=
+
+(5)
+
+(6)
+
+.
+
+%content
+
+Φ(x, y) =
+
+3 An Algorithm for Large Scale Learning
+3.1 Preliminaries
+In this section we consider a speciﬁc case that is relevant for the application that we have in mind.
+The idea is that the feature map should contain information about segments such as the length or the
+content as well as segment boundaries, which may exhibit certain detectable signals. For simplicity
+we assume that it is sufﬁcient to consider the string χπj ..πj+1 := χπj χπj +1 . . . χπj+1−2 χπj+1−1
+for extracting content information about segment j . Also, for considering signals we assume it
+to be sufﬁcient to consider a window ±ω around the end of the segment, i.e. we only consider
+χπj+1±ω := χπj+1−ω . . . χπj+1+ω . To keep the notation simple we do not consider signals at the
+
+s(y)X
+
+
+start of the segment. Moreover, we assume for simplicity that xπ±ω is appropriately deﬁned for
+every π = 1, . . . , l(x). We may therefore deﬁne the following feature map:
+
+s(y)X
+[[υj = σ ]][[υj+1 = τ ]]Φc (χπj ..πj+1 )
+j=1
+[[υj+1 = τ ]]Φs (χπj+1±ω )
+τ ∈Υ
+j=1
+X
+) +X
+X
+k((x, y), (x0 , y 0 )) = X
+where [[true]] = 1 and 0 otherwise. Then the kernel between two examples using this feature map
+can be written as:
+ks (χπj+1±ω , χ0
+kc (χπj ..πj+1 , χ0
+j 0+1±ω )
+j 0 ..π 0
+π 0
+π 0
+j 0+1
+τ ∈Υ
+σ,τ ∈Υ
+j :υj+1=τ
+j :(υj ,υj )=(σ,τ )
+j 0 :υj 0+1=τ
+j 0 :(υ 0
+j 0 ,υ 0
+j 0 )=(σ,τ )
+where kc (·, ·) := hΦ1 (·), Φ1 (·)i and ks (·, ·) := hΦs (·), Φs (·)i. The above formulation has the
+Fσ,τ (χπj ..πj+1 ) +X
+F (x, y) = X
+X
+X
+beneﬁt of keeping the signals and content kernels separated for each label, which we can exploit for
+rewriting F (x, y)
+Fτ (χπj+1±ω ),
+σ,τ ∈Υ
+τ ∈Υ
+X
+NX
+αn (y 0 ) X
+j :υj+1=τ
+j :(υj ,υj+1 )=(σ,τ )
+kc (χ, χn
+j 0 ..π 0
+π 0
+j 0+1
+y 0∈Y
+j 0 ,υ 0
+j 0 :(υ 0
+X
+NX
+αn (y 0 ) X
+n=1
+j 0+1 )=(σ,τ )
+j 0+1±ω ).
+ks (χ, χn
+π 0
+y 0∈Y
+j 0 :υj 0+1=τ
+n=1
+Hence, we have partitioned F (x, y) into |Υ|2 + |Υ| functions characterizing the content and the
+signals.
+
+Fσ,τ (χ) :=
+
+Fτ (χ) =
+
+%signal
+
+where
+
+and
+
+σ,τ ∈Υ
+
+)
+
+3.2 Two-Stage Learning
+By enumerating all non-zero α’s and valid settings of j 0 in Fτ and Fσ,τ , we can deﬁne sets of
+sequences {χτ ,σ
+m }m=1,...,Mσ,τ and {χτ
+m}m=1,...,Mτ where every element is of the form χn
+nation of kernels: Fσ,τ (χ) := PMσ,τ
+m ) and Fτ (χ) := PMτ
+πj ..πj+1
+and χn
+πj+1±ω , respectively. Hence, Fτ and Fσ,τ can be rewritten as a (single-sum) linear combi-
+m kc (χ, χτ ,σ
+mks (χ, χτ
+m ) for
+m=1 ασ,τ
+m=1 ατ
+appropriately chosen α’s. For sequences χτ
+m that do not correspond to true segment boundaries,
+the coefﬁcient ατ
+m is either negative or zero (since wrong segment boundaries can only appear in
+wrong labelings y 6= yn and αn (y) ≤ 0). True segment boundaries in correct label sequences have
+non-negative ατ
+m ’s. Analogously with segments χτ ,σ
+m . Hence, we may interpret these functions as
+SVM classiﬁcation functions recognizing segments and boundaries of all kinds.
+Hidden Semi-Markov SVMs simultaneously optimize all these functions and also determine the
+relative importance of the different signals and sensors. In this work we propose to separate the
+learning of the content sensors and signal detectors from learning how they have to act together
+in order to produce the correct labeling. The idea is to train SVM-based classiﬁers ¯Fσ,τ and ¯Fτ
+using the kernels kc and ks on examples with known labeling. For every segment type and seg-
+ment boundary we generate a set of positive examples from observed segments and boundaries. As
+negative examples we use all boundaries and segments that were not observed in a true labeling.
+This leads to a set of sequences that may potentially also appear in the expansions of Fσ,τ and Fτ .
+However, the expansion coefﬁcients ¯ασ,τ
+m and ¯ατ
+m are expected to be different as the functions are
+estimated independently.
+The advantage of this approach is that solving two-class problems–for which we can reuse existing
+large scale learning methods–is much easier than solving the full HSM SVM problem. However,
+while the functions ¯Fσ,τ and ¯Fτ might recognize the same contents and signals as Fσ,τ and Fτ , the
+functions are obtained independently from each other and might not be scaled correctly to jointly
+produce the correct labeling. We therefore propose to learn transformations tσ,τ and tτ such that
+Fσ,τ (χ) ≈ tσ,τ ( ¯Fσ,τ (χ)) and Fτ (χ) ≈ tτ ( ¯Fτ (χ)). The transformation functions t : R → R
+are one-dimensional mappings and it seems fully sufﬁcient to use for instance piece-wise linear
+functions (PLiFs) pµ,θ (λ) := hϕµ (λ), θi with ﬁxed abscissa boundaries µ and θ-parametrized
+
+s(y)X
+
+ ,
+ordinate values (ϕµ (λ) can be appropriately deﬁned). We may deﬁne the mapping Φ(x, y) for our
+case as
+
+s(y)X
+[[υj = σ ]][[υj+1 = τ ]] ϕµσ,τ ( ¯Fσ,τ (χπj ..πj+1 ))
+j=1
+[[υj+1 = τ ]] ϕµτ ( ¯Fτ (χπj+1±ω ))
+τ ∈Υ
+j=1
+where we simply replaced the feature with PLiF features based on the outcomes of precomputed
+predictions. Note that Φ(x, y) has only (|Υ|2 + |Υ|)P dimensions, where P is the number of
+support points used in the PLiFs.
+If the alphabet Υ is reasonably small then the dimensionality is low enough to solve the optimization
+problem (2) efﬁciently in the primal domain. In the next section we will illustrate how to successfully
+apply a version of the outlined algorithm to a problem where we have several thousands of relatively
+long labeled sequences.
+
+Φ(x, y) =
+
+σ,τ ∈Υ
+
+(7)
+
+4 Application to Gene Structure Prediction
+The problem of gene structure prediction is to segment nucleotide sequences (so-called pre-mRNA
+sequences generated by transcription; cf. Figure 4) into exons and introns. In a complex biochemical
+process called splicing the introns are removed from the pre-mRNA sequence to form the mature
+mRNA sequence that can be translated into protein. The exon-intron and intron-exon boundaries
+are deﬁned by sequence motifs almost always containing the letters GT and AG (cf. Figure 4), re-
+spectively. However, these dimers appear very frequently and one needs sophisticated methods to
+recognize true splice sites [21, 12, 13].
+So far mostly HMM-based methods such as Genscan [5], Snap [8] or ExonHunter [4] have been
+applied to this problem and also to the more difﬁcult problem of gene ﬁnding. In this work we show
+
+that our newly developed method is applicable to this task and achieves very competitive results.
+We call it mSplicer. Figure 2 illustrates the “grammar” that we use for gene structure prediction.
+We only require four different states (start, exon-end, exon-start and end) and two different segment
+labels (exon & intron). Biologically it makes sense to distinguish between ﬁrst, internal, last and
+single exons, as their typical lengths are quite different. Each of these exon types correspond to one
+transition in the model. States two and three recognize the two types of splice sites and the transition
+between these states deﬁnes an intron.
+For our speciﬁc problem we only need signal detectors for segments ending in state two and three.
+In the next subsection we outline how we obtain ¯F2 and ¯F3 . Additionally we need content sensors
+for every possible transition. While the “content” of the different exon segments is essentially the
+same, the length of them can vary quite drastically. We therefore decided to use one content sensor
+¯FI for the intron transition 2 → 3 and the same content sensor ¯FE for all four exon transitions
+s(y)X
+
+1 → 2, 1 → 4, 3 → 2 and 3 → 4. However, in order to capture the different length characteristics,
+we include
+(πj+1 − πj )
+σ,τ ∈Υ
+j=1
+in the feature map (7), which amounts to using PLiFs for the lengths of all transitions. Also, note
+that we can drop those features in (7) and (8) that correspond to transitions that are not allowed (e.g.
+4 → 1; cf. Figure 2).5
+We have obtained data for training, validation and testing from public sequence databases (see [13]
+for details).For the considered genome of C. elegans we have split the data into four different sets:
+Set 1 is used for training the splice site signal detectors and the two content sensors; Set 2 is used
+for model selection of the latter signal detectors and content sensors and for training the HSM SVM;
+Set 3 is used for model selection of the HSM SVM; and Set 4 is used for the ﬁnal evaluation. These
+are large scale datasets, with which current Hidden-Markov-SVMs are unable to deal with: The
+C. elegans training set used for label-sequence learning contains 1,536 sequences with an average
+length of ≈ 2, 300 base pairs and about 9 segments per sequence, and the splice site signal detectors
+where trained on more than a million examples. In principle it is possible to join sets 1 & 2, however,
+then the predictions of ¯Fσ,τ and ¯Fτ on the sequences used for the HSM SVM are skewed in the
+margin area (since the examples are pushed away from the decision boundary on the training set).
+We therefore keep the two sets separated.
+
+[[υj = σ ]][[υj+1 = τ ]]ϕγ σ,τ
+
+(8)
+
+4.1 Learning the Splice Site Signal Detectors
+From the training sequences (Set 1) we extracted sequences of conﬁrmed splice sites (intron start and
+end). For intron start sites we used a window of [−80, +60] around the site. For intron end sites we
+used [−60, +80]. From the training sequences we also extracted non-splice sites, which are within
+Pl−j
+margin using the WD kernel [12]: k(x, x0 ) = Pd
+an exon or intron of the sequence and have AG or GT consensus. We train an SVM [19] with soft-
+i=1 [[(x[i,i+j ] = x0
+[i,i+j ] )]], where l = 140
+j=1 βj
+is the length of the sequence and x[a,b] denotes the sub-string of x from position a to (excluding) b
+√
+k(x,x0 )
+and βj := d − j + 1. We used a normalization of the kernel ˜k(x, x0 ) =
+. This leads
+k(x,x)k(x0 ,x0 )
+to the two discriminative functions ¯F2 and ¯F3 . All model parameters (including the window size)
+have been tuned on the validation set (Set 2). SVM training for C. elegans resulted in 79,000 and
+61,233 support vectors for detecting intron start and end sites, respectively.
+5We also excluded these transitions during the Viterbi-like algorithm.
+
+Figure 1: The major steps in protein syn-
+thesis [10]. A transcript of a gene starts
+with an exon and may then be interrupted
+by an intron, followed by another exon, in-
+tron and so on until it ends in an exon.
+In this work we learn the unknown for-
+mal mapping from the pre-mRNA to the
+mRNA.
+
+Figure 2: An elementary state
+model for unspliced mRNA: The
+start is either directly followed by
+the end or by an arbitrary number
+of donor-acceptor splice site pairs.
+
+4.2 Learning the Exon and Intron Content Sensors
+To obtain the exon content sensor we derived a set of exons from the training set. As negative
+examples we used sub-sequences of intronic sequences sampled such that both sets of strings have
+roughly the same length distribution. We trained SVMs using a variant of the Spectrum kernel [21]
+of degree d = 6, where we count 6-mers appearing at least once in both sequences. We applied
+the same normalization as in Sec. 4.1 and proceeded analogously for the intron content sensor. The
+model parameters have been obtained by tuning them on the validation set.
+Note that the resulting content sensors ¯FI and ¯FE need to be evaluated several times during the
+Viterbi-like algorithm (cf. (6)): One needs to extend segments ending at the same position i to
+several different starting points. By re-using the shorter segment’s outputs this computation can be
+made drastically faster.
+4.3 Combination
+For datasets 2-4 we can precompute all candidate splice sites using the classiﬁers ¯F2 and ¯F3 . We
+decided to use PLiFs with P = 30 support points and chose the boundaries for ¯F2 , ¯F3 , ¯FE , and
+¯FI uniformly between −5 and 5 (typical range of outputs of our SVMs). For the PLiFs concerned
+with length of segments we chose appropriate boundaries in the range 30 − 1000. With all these
+deﬁnitions the feature map as in (7) and (8) is fully deﬁned. The model has nine PLiFs as parameters,
+with a total of 270 parameters.
+1 | + X
+| + X
+P(w) := X
+P −1X
+Finally, we have modiﬁed the regularizer for our particular case, which favors smooth PLiFs:
+P − wσ,τ
+|wσ,τ
+|wτ
+P − wτ
+|wτ ,l
+i − wτ ,l
+i+1 |,
+where w = (cid:0)(wσ,τ )σ,τ ∈Υ ; (wτ )τ ∈Υ ; (wτ ,l )τ ∈Υ
+(cid:1) and we constrain the PLiFs for the signal and
+1
+σ,τ ∈Υ
+τ ∈Υ
+τ ∈Υ
+i=1
+content sensors to be monotonically increasing.6
+Having deﬁned the feature map and the regularizer, we can now apply the HSM SVM algorithm
+outlined in Sections 2.4 and 3. Since the feature space is rather low dimensional (270 dimensions),
+we can solve the optimization problem in the primal domain even with several thousands of examples
+employing a standard optimizer (we used ILOG CPLEX and column generation) within a reasonable
+time.7
+4.4 Results
+To estimate the out-of-sample accuracy, we apply our method to the independent test dataset 4. For
+C. elegans we can compare it to ExonHunter8 on 1177 test sequences. We greatly outperform the
+ExonHunter method: our method obtains almost 1/3 of the test error of ExonHunter (cf. Table 1).
+Simplifying the problem by only considering sequences between the start and stop codons allows us
+to also include SNAP in the comparison on the dataset 4’, a slightly modiﬁed version of dataset 4
+with 1138 sequences.9 The results are shown in Table 1. On dataset 4’ the best competing method
+achieves an error rate of 9.8% which is more than twice the error rate of our method.
+
+5 Conclusion
+We have extended the framework of Hidden Markov SVMs to Hidden Semi-Markov SVMs and
+suggested an very efﬁcient two-stage learning algorithm to train an approximation to Hidden Semi-
+Markov SVMs. Moreover, we have successfully applied our method on large scale gene structure
+6This implements our intuition that large SVM scores should lead to larger scores for a labeling.
+7 It takes less than one hour to solve the HSM SVM problem with about 1,500 sequences on a single CPU.
+Training the content and signal detectors on several hundred thousand examples takes around 5 hours in total.
+8The method was trained by their authors on the same training data.
+9 In this setup additional biological information about the so-called “open reading frame” is used: As there
+was only a version of SNAP available that uses this information, we incorporated this extra knowledge also in
+our model (marked ∗ ) and also used another version of Exonhunter that also exploits that information in order
+to allow a fair comparison.
+
+Method
+Our Method
+ExonHunter
+Our Method∗
+ExonHunter∗
+SNAP∗
+
+C. elegans Dataset 4
+exon nt Sn
+error rate
+exon Sn
+exon Sp
+13.1% 96.7% 96.8%
+98.9%
+89.1%
+98.2%
+88.4%
+36.8%
+C. elegans Dataset 4’
+99.2%
+4.8% 98.9% 99.2%
+99.4%
+96.6%
+97.9%
+9.8%
+99.0%
+17.4%
+95.0%
+93.3%
+
+exon nt Sp
+97.2%
+97.4%
+
+99.9%
+98.1%
+98.9%
+
+Table 1: Shown are the rates of predicting a wrong gene structure, sensitivity (Sn) and speciﬁcity (Sp) on exon
+and nucleotide levels (see e.g. [8]) for our method, ExonHunter and SNAP. The methods exploiting additional
+biological knowledge have an advantage and are marked with ∗ .
+prediction appearing in computational biology, where our method obtains less than a half of the
+error rate of the best competing HMM-based method. Our predictions are available at Wormbase:
+http://www.wormbase.org. Additional data and results are available at the project’s website
+http://www.fml.mpg.de/raetsch/projects/msplicer.
+Acknowledgments We thank K.-R. M ¨uller, B. Sch ¨olkopf, E. Georgii, A. Zien, G. Schweikert and
+G. Zeller for inspiring discussions. The latter three we also thank for proofreading the manuscript.
+Moreover, we thank D. Surendran for naming the piece-wise linear functions PLiF and optimizing
+the Viterbi-implementation.
+References
+[1] Y. Altun, T. Hofmann, and A. Smola. Gaussian process classiﬁcation for segmenting and annotating
+sequences. In Proc. ICML 2004, 2004.
+[2] Y. Altun, D. McAllester, and M. Belkin. Maximum margin semi-supervised learning for structured vari-
+ables. In Proc. NIPS 2005, 2006.
+[3] Y. Altun, I. Tsochantaridis, and T. Hofmann. Hidden Markov support vector machines. In T. Fawcett,
+editor, Proc. 20th Int. Conf. Mach. Learn., pages 3–10, 2003.
+[4] B. Brejova, D.G. Brown, M. Li, and T. Vinar. ExonHunter: a comprehensive approach to gene ﬁnding.
+Bioinformatics, 21(Suppl 1):i57–i65, 2005.
+[5] C. Burge and S. Karlin. Prediction of complete gene structures in human genomic DNA. Journal of
+Molecular Biology, 268:78–94, 1997.
+[6] X. Ge. Segmental Semi-Markov Models and Applications to Sequence Analysis. PhD thesis, University
+of California, Irvine, 2002.
+[7] J. Janssen and N. Limnios. Semi-Markov Models and Applications. Kluwer Academic, 1999.
+[8] I. Korf. Gene ﬁnding in novel genomes. BMC Bioinformatics, 5(59), 2004.
+[9] D. Kulp, D. Haussler, M.G. Reese, and F.H. Eeckman. A generalized hidden markov model for the
+recognition of human genes in DNA. ISMB 1996, pages 134–141, 1996.
+[10] B. Lewin. Genes VII. Oxford University Press, New York, 2000.
+[11] L.R. Rabiner. A tutorial on hidden markov models and selected applications in speech recognition. Pro-
+ceedings of the IEEE, 77(2):257–285, February 1989.
+[12] G. R ¨atsch and S. Sonnenburg. Accurate splice site prediction for Caenorhabditis elegans. In B. Sch ¨olkopf,
+K. Tsuda, and J.-P. Vert, editors, Kernel Methods in Computational Biology. MIT Press, 2004.
+[13] G. R ¨atsch, S. Sonnenburg, J. Srinivasan, H. Witte, K.-R. M ¨uller, R. Sommer, and B. Sch ¨olkopf. Improving
+the C. elegans genome annotation using machine learning. PLoS Computational Biology, 2007. In press.
+[14] S. Sarawagi and W.W. Cohen. Semi-markov conditional random ﬁelds for information extraction.
+In
+Proc. NIPS 2004, 2005.
+[15] G.D. Stormo and D. Haussler. Optimally parsing a sequence into different classes based on multiple types
+of information. In Proc. ISMB 1994, pages 369–375, Menlo Park, CA, 1994. AAAI/MIT Press.
+[16] R. Sutton, D. Precup, and S. Singh. Between mdps and semi-mdps: A framework for temporal abstraction
+in reinforcement learrning. Artiﬁcial Intelligence, 112:181–211, 1999.
+[17] B. Taskar, C. Guestrin, and D. Koller. Max-margin markov networks. In Proc. NIPS 2003, 16, 2004.
+[18] I. Tsochantaridis, T. Hofmann, T. Joachims, and Y. Altun. Large margin methods for structured output
+spaces. Journal for Machine Learning Research, 6, September 2005.
+[19] V.N. Vapnik. The nature of statistical learning theory. Springer Verlag, New York, 1995.
+[20] A. J. Viterbi. Error bounds for convolutional codes and an asymptotically optimal decoding algorithm.
+IEEE Trans. Informat. Theory, IT-13:260–269, Apr 1967.
+[21] X.H. Zhang, K.A. Heller, I. Hefter, C.S. Leslie, and L.A. Chasin. Sequence information for the splicing
+of human pre-mRNA identiﬁed by SVM classiﬁcation. Genome Res, 13(12):2637–50, 2003.
+
+

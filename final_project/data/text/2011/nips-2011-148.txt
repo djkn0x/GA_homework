@@ -1,0 +1,578 @@
+Query-Aware MCMC
+
+Michael Wick
+Department of Computer Science
+University of Massachusetts
+Amherst, MA
+mwick@cs.umass.edu
+
+Andrew McCallum
+Department of Computer Science
+University of Massachusetts
+Amherst, MA
+mccallum@cs.umass.edu
+
+Abstract
+
+Traditional approaches to probabilistic inference such as loopy belief propagation
+and Gibbs sampling typically compute marginals for all the unobserved variables
+in a graphical model. However, in many real-world applications the user’s inter-
+ests are focused on a subset of the variables, speciﬁed by a query. In this case it
+would be wasteful to uniformly sample, say, one million variables when the query
+concerns only ten. In this paper we propose a query-speciﬁc approach to MCMC
+that accounts for the query variables and their generalized mutual information
+with neighboring variables in order to achieve higher computational efﬁciency.
+Surprisingly there has been almost no previous work on query-aware MCMC. We
+demonstrate the success of our approach with positive experimental results on a
+wide range of graphical models.
+
+1
+
+Introduction
+
+Graphical models are useful for representing relationships between large numbers of random vari-
+ables in probabilistic models spanning a wide range of applications, including information extraction
+and data integration. Exact inference in these models is often computationally intractable due to the
+dense dependency structures required in many real world problems, thus there exists a large body
+of work on both variational and sampling approximations to inference that help manage large tree-
+width. More recently, however, inference has become difﬁcult for a different reason: large data. The
+proliferation of interconnected data and the desire to model it has given rise to graphical models with
+millions or even billions of random variables. Unfortunately, there has been little research devoted
+to approximate inference in graphical models that are large in terms of their number of variables.
+Other than acquiring more machines and parallelizing inference [1, 2], there have been few options
+for coping with this problem.
+Fortunately, many inference needs are instigated by queries issued by users interested in particular
+random variables. These real-world queries tend to be grounded (i.e., focused on speciﬁc data cases).
+For example, a funding agency might be interested in the expected impact that funding a particular
+research group has on a certain scientiﬁc topic. In these situations not all variables are of equal
+relevance to the user’s query; some variables become observed given the query, others become
+statistically independent given the query, and the remaining variables are typically marginalized.
+Thus, a user-generated query provides a tremendous amount of information that can be exploited by
+an intelligent inference procedure. Unfortunately, traditional approaches to inference such as loopy
+belief propagation (BP) and Gibbs sampling are query agnostic in the sense that they fail to take
+advantage of this knowledge and treat each variable as equally relevant. Surprisingly, there has been
+little research on query speciﬁc inference and the only existing approaches focus on loopy BP [3, 4].
+In this paper we propose a query-aware approach to Markov chain Monte Carlo (QAM) that exploits
+the dependency structure of the graph and the query to achieve faster convergence to the answer. Our
+method selects variables for sampling in proportion to their inﬂuence on the query variables. We
+
+1
+
+determine this inﬂuence using a computationally tractable generalization of mutual information be-
+tween the query variables and each variable in the graph. Because our query-speciﬁc approach to
+inference is based on MCMC, we can provide arbitrarily close approximations to the query answer
+while also scaling to graphs whose structure and unrolled factor density would ordinarily preclude
+both exact and belief propagation inference methods. This is essential for the method to be de-
+ployable in real-world probabilistic databases where even a seemingly innocuous relational algebra
+query over a simple fully independent structure can produce an inference problem that is #P-hard
+[5]. We demonstrate dramatic improvements over traditional Markov chain Monte Carlo sampling
+methods across a wide array of models of diverse structure.
+
+2 Background
+
+2.1 Graphical Models
+
+Graphical models are a ﬂexible framework for capturing statistical relationships between random
+variables. A factor graph G := hx, ψi is a bipartite graph consisting of n random variables x =
+{xi }n
+1 and m factors ψ = {ψi }m
+1 . Each variable xi has a domain Xi , and we notate the entire
+domain space of the random variables (x) as X with associated σ -algebra Ω. Intuitively, a factor ψi
+is a function that maps a subset of random variable values v i ∈ Xi to a non-negative real-valued
+number, thus capturing the compatibility of an assignment to those variables. The factor graph then
+expresses a probability measure over (X, Ω), the probability of a particular event ω ∈ Ω is given as
+ψi (v i ), Z = X
+X
+mY
+1
+Z
+v∈ω
+v∈X
+i=1
+We will assume that Ω is deﬁned so that marginalization of any subset of the variables is well
+deﬁned; this is important in the sequel.
+
+π(ω) =
+
+π(v).
+
+(1)
+
+2.2 Queries on Graphical Models
+
+Informally, a query on a graphical model is a request for some quantity of interest that the graphical
+model is capable of providing. That is, a query is a function mapping the graphical model to an
+answer set. Inference is required to recover these quantities and produce an answer to the query.
+While in the general case, a query may contain arbitrary functions over the support of a graphical
+model, for this work we consider queries of the marginal form. That is a query Q consists of three
+parts Q = hxq , xl , xe i. Where xq is the set of query variables whose marginal distributions (or
+MAP conﬁguration) are the answer to the query, xe is a set of evidence variables whose values
+are observed, and xl is the set of latent variables over which one typically marginalizes to obtain
+the statistically sound answer. Note that this class of queries is remarkably general and includes
+queries that require expectations over arbitrary functions. We can see this because a function over
+the graphical model (or a subset of the graphical model) is itself a random variable, and can therefore
+Q(xq , xl , xe , π) = π(xq |xe = ve ) = X
+be included in xq .1 More precisely, a query over a graphical model is:
+π(xq , xl |xe = ve )
+vl
+we assume that Ω is well deﬁned with respect to marginalization over arbitrary subsets of variables.
+
+(2)
+
+2.3 Markov Chain Monte Carlo
+
+Markov chain Monte Carlo (MCMC) is an important inference method for graphical models where
+computing the normalization constant Z is intractable. In particular, for many MCMC schemes such
+as Gibbs sampling and more generally Metropolis-Hastings, Z cancels out of the computation for
+generating a single sample. MCMC has been successfully used in a wide variety of applications
+including information extraction [8], data integration [9], and machine vision [10]. For simplicity,
+in this work, we consider Markov chains over discrete state spaces. However, many of the results
+
+1Research in probabilistic databases has demonstrated that a large class of relational algebra queries can be
+represented as graphical models and answered using statistical queries of the this form [6, 7].
+
+2
+
+presented in this paper may be extended to arbitrary state spaces using more general statements with
+measure theoretic deﬁnitions.
+Markov chain Monte Carlo produces a sequence of states {si }∞
+1 in a state space S according to
+a transition kernel K : S × S → R+ , which in the discrete case is a stochastic matrix: for all
+s ∈ S K (s, ·) is a valid probability measure and for all s ∈ S K (·, s) is a measurable function.
+Since we are concerned with MCMC for inference in graphical models, we will from now on let
+S :=X, and use X instead. Under certain conditions the Markov chain is said to be ergodic, then the
+Z
+chain exhibits two types of convergence. The ﬁrst is of practical interest: a law of large numbers
+X
+convergence
+s∈X
+
+f (s)π(s)ds
+
+f (st ) =
+
+lim
+t→∞
+
+(3)
+
+1
+t
+
+where the st are empirical samples from the chain.
+The second type of convergence is to the distribution π . At each time step, the Markov chain is in a
+time-speciﬁc distribution over the state space (encoding the probability of being in a particular state
+at time t). For example, given an initial distribution π0 over the state space, the probability of being
+in a next state s0 is the probability of all paths beginning in starting states s with probabilities π0 (s)
+and transitioning to s0 with probabilities K (s, s0 ). Thus the time-speciﬁc (t = 1) distribution over
+all states is given by π (1) = π0K ; more generally, the distribution at time t is given by π (t) = π0K t .
+Under certain conditions and regardless of the initial distribution, the Markov chain will converge
+to the stationary (invariant) distribution π . A sufﬁcient (but not necessary) condition for this is to
+require that the Markov transition kernel obey detailed balance:
+π(x)K (x, x0 ) = π(x0 )K (x0 , x) ∀x, x0 ∈ X
+
+(4)
+
+Convergence of the chain is established when repeated applications of the transition kernel main-
+tain the invariant distribution π = πK , and convergence is traditionally quantiﬁed using the total
+X
+variation norm:
+x∈X
+
+kπ (t) − πktv := sup
+A∈Ω
+
+|π (t) (A) − π(A)| =
+
+|π (t) (x) − π(x)|
+
+(5)
+
+1
+2
+
+The rate at which a Markov chain converges to the stationary distribution is proportional to the
+spectral gap of the transition kernel, and so there exists a large body of literature proving bounds on
+the second eigenvalues.
+
+2.4 MCMC Inference in Graphical Models
+
+A(s, s0 ) = min
+
+MCMC is used for inference in graphical models by constructing a Markov chain with invariant
+distribution π (given by the graphical model). One particularly successful approach is the Metropolis
+Hastings (MH) algorithm. The idea is to devise a proposal distribution T : X × X → [0, 1] for which
+it is always tractable to sample a next state s0 given a current state s. Then, the proposed state s0 is
+(cid:18)
+(cid:19)
+accepted with probability function A
+
+The resulting transition kernel KMH is given by
+T (s, s0 )
+T (s, s0 ) + P
+T (s, s0 )A(s, s0 )
+K (s, r)(1 − A(s, r))
+r:A(s,r)<1
+Further, observe that in the computation of A, the partition function Z cancels, as do factors out-
+side the Markov blanket of the variables that have changed. As a result, generating samples from
+graphical models with Metropolis-Hastings is usually inexpensive.
+
+if A(s, s0 ) > 1, s 6= s0
+if A(s, s0 ) < 1
+if s = s0
+
+π(s0 )T (s, s0 )
+π(s)T (s0 , s)
+
+KM H (s, s0 ) =
+
+(6)
+
+(7)
+
+1,
+
+3
+
+3 Query Speciﬁc MCMC
+
+Given a query Q = hxq , xl , xe i, and a probability distribution π encoded by a graphical model G
+with factors ψ and random variables x, the problem of query speciﬁc inference is to return the high-
+est ﬁdelity answer to Q given a possible time budget. We can put more precision on this statement
+by deﬁning “highest ﬁdelity” as closest to the truth in total variation distance.
+Our approach for query speciﬁc inference is based on the Metropolis Hastings algorithm described
+in Section 2.4. A simple yet generic case of the Metropolis Hastings proposal distribution T (that
+has been quite successful in practice) employs the following steps:
+1: Beginning in a current state s, select a random variable xi ∈ x from a probability distribution p
+over the indices of the variables (1, 2, · · · , n).
+2: Sample a new value for xi according to some distribution q(Xi ) over that variable’s domain,
+leave all other variables unchanged and return the new state s0 .
+In brief, this strategy arrives at a new state s0 from a current state s by simply updating the value
+of one variable at a time. In traditional MCMC inference, where the marginal distributions of all
+variables are of equal interest, the variables are usually sampled in a deterministic order, or selected
+n induces a uniform distribution over the integers 1, 2, · · · , n.
+uniformly at random; that is, p(i) = 1
+However, given a query Q, it is reasonable to choose a p that more frequently selects the query
+variables for sampling. Clearly, the query variable marginals depend on the remaining latent vari-
+ables, so we must tradeoff sampling between query and non-query variables. A key observation is
+that not all latent variables inﬂuence the query variables equally. A fundamental question raised and
+addressed in this paper is: how do we pick a variable selection distribution p for a query Q to obtain
+the highest ﬁdelity answer under a ﬁnite time budget. We propose to select variables based on their
+inﬂuence on the query variable according to the graphical model.
+We will now formalize a broad deﬁnition of inﬂuence by generalizing mutual information. The
+mutual information I (x, y) = π(x, y) log( π(x,y)
+π(x)π(y) ) between two random variables measures
+the strength of their dependence.
+It is easy to check that this quantity is the KL divergence
+between the joint distribution of the variables and the product of the marginals: I (x, y) =
+K L(π(x, y)||π(x)π(y)). In this sense, mutual information measures dependence as a “distance”
+between the full joint distribution and its independent approximation. Clearly, if x and y are inde-
+pendent then this distance is zero and so is their mutual information. We produce a generalization
+of mutual information which we term the inﬂuence by substituting an arbitrary divergence function
+f in place of the KL divergence.
+Deﬁnition 1 (Inﬂuence). Let x and y be two random variables with marginal distributions
+π(x, y),π(x), π(y). Let f (π1 (·), π2 (·)) 7→ r, r ∈ R+ be a non-negative real-valued divergence
+between probability distributions. The inﬂuence ι(x, y) between x and y is
+
+ι(x, y) := f (π(x, y), π(x)π(y))
+
+(8)
+
+If we let f be the KL divergence then ι becomes the mutual information; however, because MCMC
+convergence is more commonly assessed with total variation norm, we deﬁne an inﬂuence metric
+based on this choice for f . In particular we deﬁne ιtv (x, y) := kπ(x, y) − π(x)π(y)ktv .
+As we will now show, the total variation inﬂuence (between the query variable and the latent vari-
+ables) has the important property that it is exactly the error incurred from ignoring a single latent
+variable when sampling values for xq . For example, suppose we design an approximate query spe-
+ciﬁc sampler that saves computational resources by ignoring a particular random variable xl . Then,
+the variable xl will remain at its burned-in value xl=vl for the duration of query speciﬁc sampling.
+As a result, the chain will converge to the invariant distribution π(·|xl=vl ). If we use this conditional
+distribution to approximate the marginal, then the expected error we incur is exactly the inﬂuence
+score under total variation distance.
+Proposition 1. If p(i) = 1(i 6= l) 1
+n−1 induces an MH kernel that neglects variable xl , then the
+expected total variation error ξtv of the resulting MH sampling procedure under the model is the
+total variation inﬂuence ιtv .
+
+4
+
+Eπ [ξtv ] = X
+Proof: The resulting chain has stationary distribution π(xq |xl = vl ). The expected error is:
+π(xl=vl )kπ(xq |xl=vl ) − π (t) (xq )ktv
+(cid:12)(cid:12)(cid:12)π(xq |xl=vl ) − π (t) (xq )
+(cid:12)(cid:12)(cid:12)
+= X
+X
+vl∈Xl
+1
+(cid:12)(cid:12)(cid:12)π(xq |xl=vl )π(xl=vl ) − π (t) (xq )π(xl=vl )
+(cid:12)(cid:12)(cid:12)
+π(xl=vl )
+X
+X
+2
+vl∈Xl
+vq ∈Xq
+1
+(cid:12)(cid:12)(cid:12)π(xq , xl ) − π (t) (xq )π(xl )
+(cid:12)(cid:12)(cid:12) = ιtv (xq , xl )
+=
+X
+X
+2
+vl∈Xl
+vq ∈Xq
+vl∈Xl
+vq ∈Xq
+
+1
+2
+
+=
+
+This demonstrates that the expected cost of not sampling a variable is exactly that variable’s inﬂu-
+ence on the query variable. We are now justiﬁed in selecting variables proportional to their inﬂuence
+to reduce the error they assert on the query marginal. For example, if a variable’s inﬂuence score is
+zero this also means that there is no cost incurred from neglecting that variable (if a query renders
+variables statistically independent of the query variable then these variables will be correctly ignored
+under the inﬂuence based sampling procedure).
+Note, however, that computing either ιtv or the mutual information is as difﬁcult as inference itself.
+Thus, we deﬁne a computationally efﬁcient variant of inﬂuence that we term the inﬂuence trail score.
+The idea is to approximate the true inﬂuence as a product of factors along an active trail in the graph.
+between xi and xj according only to the mutual factors in their scopes. Let φ(xi ) = P
+Deﬁnition 2 (Inﬂuence Trail Score). Let ρ = (x0 , x1 , · · · , xr ) be an active trail between the query
+variable xq and xi where x0 = xq and xr = xi . Let φ(xi , xj ) be the approximate joint distribution
+φ(xi , xj )
+xj
+r−1Y
+be a marginal distribution. The inﬂuence trail score with respect to an active trail ρ is
+i=1
+
+f (φi (xi , xi+1 ), φi (xi )φi (xi+1 ))
+
+τρ (xq , xi ) :=
+
+(9)
+
+The inﬂuence trail score is efﬁcient to compute because all factors and variables outside the mutual
+scopes of each variable pair are ignored. In the experimental results we evaluate both the inﬂuence
+and the inﬂuence trail and ﬁnd that they perform similarly and outperform competing graph-based
+heuristics for determining p.
+While in general it is difﬁcult to uniformly state that one choice of p converges faster than another
+for all models and queries, we present the following analysis showing that even an approximate
+query aware sampler can exhibit faster ﬁnite time convergence progress than an exact sampler. Let
+K be an exact MCMC kernel that converges to the correct stationary distribution and let L be an
+approximate kernel that exclusively samples the query variable and thus converges to the conditional
+distribution of the query variable. We now assume an ergodic scheme for the two samplers where
+the convergence rates are geometrically bounded from above and below by constants γl and γk :
+kπ0Lt − πK ktv = Θ(γ t
+l )
+(10)
+kπ0K t − πK ktv = Θ(γ t
+k )
+(11)
+Because L only samples the query variable, the dimensionality of L’s state space is much smaller
+than K ’s state space, and we will assume that L converges more quickly to its own invariant distribu-
+tion, that is, γl (cid:28) γk . Extrapolating Proposition 1, we know that the error incurred from neglecting
+to sample the latent variables is the inﬂuence ιtv between the joint distribution of the latent variables
+and the query variable. Observe that L is simultaneously making progress towards two distributions:
+its own invariant distribution and the invariant distribution of K plus an error term. If the error term
+ιtv is sufﬁciently small then we can write the following inequality:
+l + ιtv ≤ γ t
+(12)
+γ t
+k
+We want this inequality to hold for as many time steps as possible. The amount of time that L (the
+query only kernel) is closer to K ’s stationary distribution πk can be determined by solving for t,
+
+5
+
+yielding the ﬁxed point iteration:
+
+t =
+
+log (γ t
+l + ιtv )
+log γk
+The one-step approximation yields a non-trivial, but conservative bound: t ≥ log(γl+ιtv )
+. Thus, for a
+log γk
+sufﬁciently small error, t can be positive. This implies that the strategy of exclusively sampling the
+query variables can achieve faster short-term convergence to the correct invariant distribution even
+though asymptotic convergence is to the incorrect invariant distribution. Indeed, we observe this
+phenomena experimentally in Section 5.
+
+(13)
+
+4 Related Work
+
+Despite the prevalence of probabilistic queries, the machine learning and statistics communities
+have devoted little attention to the problem of query-speciﬁc inference. The only existing papers
+of which we are aware both build on loopy belief propagation [3, 4]; however, for many inference
+problems, MCMC is a preferred alternative to LPB because it is (1) able to obtain arbitrarily close
+approximations to the true marginals and (2) is better able to scale to models with large or real-valued
+variable domains that are necessary for state-of-the-art results in data integration [9], information
+extraction [8], and deep vision tasks with many latent layers [11].
+To the best of our knowledge, this paper is one of the ﬁrst to propose a query-aware sampling
+strategy for MCMC in either the machine learning or statistics community. The decayed MCMC
+algorithm for ﬁltering [12] can be thought of as a special case of our method where the model is a
+linear chain, and the query is for the last variable in the sequence. That paper proves a ﬁnite mixing
+time bounds on inﬁnitely long sequences. In contrast we are interested in arbitrarily shaped graphs
+and in the practical consideration of large ﬁnite models. MCMC has also recently been deployed
+in probabilistic databases [13] where it is possible to incorporate the deterministic constraints of a
+relational algebra query directly into a Metropolis-Hastings proposal distribution to obtain quicker
+answers [14, 15].
+A related idea from statistics is data augmentation (or auxiliary variable) approaches to sampling
+where latent variables are artiﬁcially introduced into the model to improve convergence of the orig-
+inal variables (e.g., Swendsen-Wang [16] and slice sampling [17]). In this setting, we see QAM
+as a way of determining a more sophisticated variable selection strategy that can balance sampling
+efforts between the original and auxiliary variables.
+
+5 Experiments
+
+In this section we demonstrate the effectiveness and broad applicability of query aware MCMC
+(QAM) by demonstrating superior convergence rates to the query marginals across a diverse range
+of graphical models that vary widely in structure. In our experiments, we generate a wide range
+of graphical models and evaluate the convergence of each chain exactly, avoiding noisy empirical
+sampling error by performing exact computations with full transition kernels.
+We evaluate the following query-aware samplers:
+1. Polynomial graph distance 1 (QAM-Poly1): p(xi )∝d(xq , xi )−N , where d is shortest path;
+2. Inﬂuence - Exact mutual information (QAM-MI): p(xi )∝I (xq , xi );
+3. Inﬂuence - total variation distance (QAM-TV): p(xi )∝ιtv (xq , xi );
+4. Inﬂuence trail score - total variation (QAM-TV): p(xi ) set according to Equation 9;
+and two baseline samplers
+7. Traditional Metropolis-Hastings (Uniform): p(xi )∝1;
+8. Query-only Metropolis-Hastings (qo): p(xi ) = 1(xq = xi );
+on six different graphical models with varying parameters generated from a Beta(2,2) distribution
+(this ensures an interesting dynamic range over the event space).
+
+6
+
+1. Independent - each variable is statistically independent
+2. Linear chain - a linear-chain CRF (used in NLP and information extraction)
+3. Hoop - same as linear chain plus additional factor to close the loop
+4. Grid - or Ising model, used in statistical physics and vision
+5. Fully connected PW - each pair of variables has a pairwise factor
+6. Fully connected - every variable is connected through a single factor
+Mirroring many real-world conditional random ﬁeld applications, the non-unary factors (connect-
+ing more than one variable) are generated from the same factor-template and thus share the same
+parameters (each generated from log(Beta(2,2))). Each variable has a corresponding observation
+factor whose parameters are not shared and randomly set according to log(Beta2,2)/2.
+For our experiments we randomly generate ten parameter settings for each of the six model types
+and measure convergence of the six chains to the the single-variable marginal query π(xq ) for each
+variable in each of the sixty realized models. Convergence is measured using the total variation
+norm: kπ(xq ) − π(xq )(t) ktv . In this set of experiments we do not wish to introduce empirical sam-
+pling error so we generate models with nine-variables per graph enabling us to (1) exactly compute
+the answer to the marginal query, (2) fully construct the 2n × 2n transition matrices, and (3) alge-
+braically compute the time t distributions for each chain π (t) = π0K t
+MH given an initial uniform
+distribution π0 (x) = 2−9 .
+We display marginal convergence results in Figure 1. Generally, all the query speciﬁc sampling
+chains converge more quickly than the uniform baseline in the early iterations across every model.
+It is interesting to compare the convergence rates of the various QAM approaches at different time
+stages. The query-only and mutual information chain exhibit the most rapid convergence in the early
+stages of learning, with the query-only chain converging to an incorrect distribution, and the mutual
+information chain slowly converging during the later time stages. While QAM-TV exhibits similar
+convergence patterns to the polynomial chains, QAM-TV slightly outperforms them in the more
+connected models (grid and fully-connected-pw). Finally, notice that the inﬂuence-trail variant of
+total variation inﬂuence converges at a similar rate to the actual total variation inﬂuence, and in some
+cases converges more quickly (e.g., in the grid and the latter stages of the full pairwise model).
+In the next experiment, we demonstrate how the size of the graphical model affects conver-
+gence of the various chains.
+In particular, we plot the convergence of all chains on six dif-
+ferent hoop-structured models containing three, four, six, eight, ten, and twelve variables (Fig-
+ure 2). Again, the results are averaged over ten randomly generated graphs, but this time we plot
+the advantage over the uniform kernel. That is we measure the difference in convergence rates
+kπ − π0K t
+Unifktv − kπ − π0K t
+QAMktv so that points above the line x = 0 mean the QAM is closer to
+the answer than the uniform baseline and points below the line mean the QAM is further from the
+answer. As expected, increasing the number of variables in the graph increases the opportunities for
+query speciﬁc sampling and thus increases QAM’s advantage over traditional MCMC.
+
+6 Conclusion
+
+In this paper we presented a query-aware approach to MCMC, motivated by the need to answer
+queries over large scale graphical models. We found that the query-aware sampling methods outper-
+form the traditional Metropolis Hastings sampler across all models in the early time steps. Further,
+as the number of variables in the models increase, the query aware samplers not only outperform the
+baseline for longer periods of time, but also exhibit more dramatic convergence rate improvements.
+Thus, query speciﬁc sampling is a promising approach for approximately answering queries on real-
+world probabilistic databases (and relational models) that contain billions of variables. Successfully
+deploying QAM in this setting will require algorithms for efﬁciently constructing and sampling the
+variable selection distribution. An exciting area of future work is to combine query speciﬁc sam-
+pling with adaptive MCMC techniques allowing the kernel to evolve in response to the underlying
+distribution. Further, more rapid convergence could be obtained by mixing the kernels in a way
+that combines the strength of each: some kernels converge quickly in the early stages of sampling
+while other converge more quickly in the later stages, thus together they could provide a very pow-
+erful query speciﬁc inference tool. There has been little theoretical work on analyzing marginal
+convergence of MCMC chains and future work can help develop these tools.
+
+7
+
+Figure 1: Convergence to the query marginals of the stationary distribution from an initial uniform
+distribution.
+
+Figure 2: Improvement over uniform p as the number of variables increases. Above the line x = 0
+is an improvement in marginal convergence, and below is worse than the baseline. As number of
+variables increase, the improvements of the query speciﬁc techniques increase.
+
+8
+
+010203040500.000.100.20Independent TimeTotal variation distanceUniformQuery-onlyQAM-Poly1QAM-MIQAM-TVQAM-TV-G010203040500.000.050.100.150.20Linear Chain TimeTotal variation distance010203040500.050.100.150.20Hoop TimeTotal variation distance010203040500.000.050.100.150.20Grid TimeTotal variation distance010203040500.00.10.20.3Fully Connected (PW) TimeTotal variation distance010203040500.000.020.040.06Fully Connected TimeTotal variation distance010203040500.000.050.10 3 VariablesTimeImprovement over uniformUniformQuery-onlyQAM-Poly1QAM-Poly2QAM-MIQAM-TVQAM-TV-G010203040500.000.050.10 4 VariablesTimeImprovement over uniform010203040500.000.050.10 6 VariablesTimeImprovement over uniform010203040500.000.050.10 8 VariablesTimeImprovement over uniform010203040500.000.050.10 10 VariablesTimeImprovement over uniform010203040500.000.050.10 12 VariablesTimeImprovement over uniform7 Acknowledgements
+
+This work was supported in part by the Center for Intelligent Information Retrieval, in part by
+IARPA via DoI/NBC contract #D11PC20152, in part by IARPA and AFRL contract #FA8650-10-
+C-7060 , and in part by UPenn NSF medium IIS-0803847. The U.S. Government is authorized to
+reproduce and distribute reprint for Governmental purposes notwithstanding any copyright annota-
+tion thereon. Any opinions, ﬁndings and conclusions or recommendations expressed in this material
+are the authors’ and do not necessarily reﬂect those of the sponsor. The authors would also like to
+thank Alexandre Passos and Benjamin Marlin for useful discussion.
+
+References
+[1] Yucheng Low, Joseph Gonzalez, Aapo Kyrola, Danny Bickson, Carlos Guestrin, and Joseph M.
+In Conference on
+Hellerstein. Graphlab: A new parallel framework for machine learning.
+Uncertainty in Artiﬁcial Intelligence (UAI), Catalina Island, California, July 2010.
+[2] Sameer Singh, Amarnag Subramanya, Fernando Pereira, and Andrew McCallum. Large-scale
+cross-document coreference using distributed inference and hierarchical models. In Associa-
+tion for Computational Linguistics: Human Language Technologies (ACL HLT), 2011.
+[3] Arthur Choi and Adnan Darwiche. Focusing generalizations of belief propagation on targeted
+queries. In Association for the Advancement of Artiﬁcial Intelligence (AAAI), 2008.
+[4] Anton Chechetka and Carlos Guestrin. Focused belief propagation for query-speciﬁc inference.
+In International Conference on Artiﬁcial Intelligence and Statistics (AI STATS), 2010.
+[5] Nilesh Dalvi and Dan Suciu. The dichotomy of conjunctive queries on probabilistic structures.
+Technical Report 0612102, University of Washington, 2007.
+[6] Prithviraj Sen, Amol Deshpande, and Lise Getoor. Exploiting shared correlations in proba-
+bilistic databases. In Very Large Data Bases (VLDB), 2008.
+[7] Daisy Zhe Wang, Eirlinaios Michelakis, Minos Garofalakis, and Joseph M. Hellerstein.
+BayesStore: Managing large, uncertain data repositories with probabilistic graphical models.
+In Very Large Data Bases (VLDB), 2008.
+[8] Hoifung Poon and Pedro Domingos. Joint inference in information extraction. In Association
+for the Advancement of Artiﬁcial Intelligence, pages 913–918, Vancouver, Canada, 2007.
+[9] Aron Culotta, Michael Wick, Robert Hall, and Andrew McCallum. First-order probabilistic
+models for coreference resolution. In Human Language Technology Conf. of the North Ameri-
+can Chapter of the Assoc. of Computational Linguistics (HLT/NAACL), pages 81–88, 2007.
+[10] Adrian Barbu and Song Chun Zhu. Generalizing Swendsen-Wang to sampling arbitrary pos-
+terior probabilities. IEEE Trans. Pattern Anal. Mach. Intell., 27(8):1239–1253, 2005.
+In International
+[11] Ruslan Salakhutdinov and Geoffrey Hinton. Deep Boltzmann machines.
+Conference on Artiﬁcial Intelligence and Statistics (AI STATS), 2009.
+[12] Bhaskara Marthi, Hanna Pasula, Stuart Russell, and Yuval Peres. Decayed MCMC ﬁltering.
+In Conference on Uncertainty in Artiﬁcial Intelligence (UAI), pages 319–326, 2002.
+[13] Michael Wick, Andrew McCallum, and Gerome Miklau. Scalable probabilistic databases with
+factor graphs and MCMC. In Very Large Data Bases (VLDB), pages 794–804, 2010.
+[14] Michael Wick, Andrew McCallum, and Gerome Miklau. Representing uncertainty in prob-
+abilistic databases with scalable factor graphs. Master’s thesis, University of Massachusetts,
+proposed September 2008 and submitted April 2009.
+[15] Daisy Zhe Wang, Michael J. Franklin, Minos Garofalakis, Joseph M. Hellerstein, and
+Michael L. Wick. Hybrid in-database inference for declarative information extraction. In Pro-
+ceedings of the 2011 international conference on Management of data, SIGMOD ’11, pages
+517–528, New York, NY, USA, 2011. ACM.
+[16] R.H. Swendsen and J.S. Wang. Nonuniversal critical dynamics in MC simulations. Phys. Rev.
+Lett., 58(2):68–88, 1987.
+[17] Radford Neal. Slice sampling. Annals of Statistics, 31:705–767, 2000.
+
+9
+
+

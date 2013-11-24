@@ -1,0 +1,618 @@
+Variance Reduction in Monte-Carlo Tree Search
+
+Joel Veness
+University of Alberta
+veness@cs.ualberta.ca
+
+Marc Lanctot
+University of Alberta
+lanctot@cs.ualberta.ca
+
+Michael Bowling
+University of Alberta
+bowling@cs.ualberta.ca
+
+Abstract
+
+Monte-Carlo Tree Search (MCTS) has proven to be a powerful, generic planning
+technique for decision-making in single-agent and adversarial environments. The
+stochastic nature of the Monte-Carlo simulations introduces errors in the value es-
+timates, both in terms of bias and variance. Whilst reducing bias (typically through
+the addition of domain knowledge) has been studied in the MCTS literature, com-
+paratively little effort has focused on reducing variance. This is somewhat sur-
+prising, since variance reduction techniques are a well-studied area in classical
+statistics. In this paper, we examine the application of some standard techniques
+for variance reduction in MCTS, including common random numbers, antithetic
+variates and control variates. We demonstrate how these techniques can be applied
+to MCTS and explore their efﬁcacy on three different stochastic, single-agent set-
+tings: Pig, Can’t Stop and Dominion.
+
+1
+
+Introduction
+
+Monte-Carlo Tree Search (MCTS) has become a popular approach for decision making in large
+domains. The fundamental idea is to iteratively construct a search tree, whose internal nodes contain
+value estimates, by using Monte-Carlo simulations. These value estimates are used to direct the
+growth of the search tree and to estimate the value under the optimal policy from each internal node.
+This general approach [6] has been successfully adapted to a variety of challenging problem settings,
+including Markov Decision Processes, Partially Observable Markov Decision Processes, Real-Time
+Strategy games, Computer Go and General Game Playing [15, 22, 2, 9, 12, 10].
+Due to its popularity, considerable effort has been made to improve the efﬁciency of Monte-Carlo
+Tree Search. Noteworthy enhancements include the addition of domain knowledge [12, 13], paral-
+lelization [7], Rapid Action Value Estimation (RAVE) [11], automated parameter tuning [8] and roll-
+out policy optimization [21]. Somewhat surprisingly however, the application of classical variance
+reduction techniques to MCTS has remained unexplored. In this paper we survey some common
+variance reduction ideas and show how they can be used to improve the efﬁciency of MCTS.
+For our investigation, we studied three stochastic games: Pig [16], Can’t Stop [19] and Dominion
+[24]. We found that substantial increases in performance can be obtained by using the appropriate
+combination of variance reduction techniques. To the best of our knowledge, our work constitutes
+the ﬁrst investigation of classical variance reduction techniques in the context of MCTS. By showing
+some examples of these techniques working in practice, as well as discussing the issues involved in
+their application, this paper aims to bring this useful set of techniques to the attention of the wider
+MCTS community.
+
+2 Background
+
+We begin with a short overview of Markov Decision Processes and online planning using Monte-
+Carlo Tree Search.
+
+1
+
+2.1 Markov Decision Processes
+
+A Markov Decision Process (MDP) is a popular formalism [4, 23] for modeling sequential decision
+making problems. Although more general setups exist, it will be sufﬁcient to limit our attention to
+the case of ﬁnite MDPs. Formally, a ﬁnite MDP is a triplet (S , A, P0 ), where S is a ﬁnite, non-
+empty set of states, A is a ﬁnite, non-empty set of actions and P0 is the transition probability kernel
+that assigns to each state-action pair (s, a) ∈ S × A a probability measure over S × R that we denote
+by P0 (· | s, a). S and A are known as the state space and action space respectively. Without loss
+of generality, we assume that the state always contains the current time index t ∈ N. The transition
+probability kernel gives rise to the state transition kernel P (s, a, s(cid:48) ) := P0 ({s(cid:48)} × R | s, a), which
+gives the probability of transitioning from state s to state s(cid:48) if action a is taken in s. An agent’s
+behavior can be described by a policy that deﬁnes, for each state s ∈ S , a probability measure over
+A denoted by π(· | s). At each time t, the agent communicates an action At ∼ π(· | St ) to the system
+in state St ∈ S . The system then responds with a state-reward pair (St+1 , Rt+1 ) ∼ P0 (· | St , At ),
+where St+1 ∈ S and Rt+1 ∈ R. We will assume that each reward lies within [rmin , rmax ] ⊂ R and
+time n from a state st , the return from st is deﬁned as Xst := (cid:80)n
+that the system executes for only a ﬁnite number of steps n ∈ N so that t ≤ n. Given a sequence
+of random variables At , St+1 , Rt+1 , . . . , An−1 , Sn , Rn describing the execution of the system up to
+i=t+1 Ri . The return Xst ,at with
+respect to a state-action pair (st , at ) ∈ S × A is deﬁned similarly, with the added constraint that
+At = at . An optimal policy, denoted by π∗ , is a policy that maximizes the expected return E [Xst ]
+for all states st ∈ S . A deterministic optimal policy always exists for this class of MDPs.
+
+2.2 Online Monte-Carlo Planning in MDPs
+
+If the state space is small, an optimal action can be computed ofﬂine for each state using techniques
+such as exhaustive Expectimax Search [18] or Q-Learning [23]. Unfortunately, state spaces too large
+for these approaches are regularly encountered in practice. One way to deal with this is to use online
+planning. This involves repeatedly using search to compute an approximation to the optimal action
+from the current state. This effectively amortizes the planning effort across multiple time steps, and
+implicitly focuses the approximation effort on the relevant parts of the state space.
+A popular way to construct an online planning algorithm is to use a depth-limited version of an ex-
+haustive search technique (such as Expectimax Search) in conjunction with iterative deepening [18].
+Although this approach works well in domains with limited stochasticity, it scales poorly in highly
+stochastic MDPs. This is because of the exhaustive enumeration of all possible successor states at
+chance nodes. This enumeration severely limits the maximum search depth that can be obtained
+given reasonable time constraints. Depth-limited exhaustive search is generally outperformed by
+Monte-Carlo planning techniques in these situations.
+A canonical example of online Monte-Carlo planning is 1-ply rollout-based planning [3]. It com-
+bines a default policy π with a one-ply lookahead search. At each time t < n, given a starting
+state st , for each at ∈ A and with t < i < n, E [Xst ,at | Ai ∼ π(· | Si )] is estimated by gen-
+erating trajectories St+1 , Rt+1 , . . . , An−1 , Sn , Rn of agent-system interaction. From these tra-
+jectories, sample means ¯Xst ,at are computed for all at ∈ A. The agent then selects the action
+At := argmaxat∈A ¯Xst ,a , and observes the system response (St+1 , Rt+1 ). This process is then
+repeated until time n. Under some mild assumptions, this technique is provably superior to exe-
+cuting the default policy [3]. One of the main advantages of rollout based planning compared with
+exhaustive depth-limited search is that a much larger search horizon can be used. The disadvan-
+tage however is that if π is suboptimal, then E [Xst ,a | Ai ∼ π(· | Si )] < E [Xst ,a | Ai ∼ π∗ (· | Si )]
+for at least one state-action pair (st , a) ∈ S × A, which implies that at least some value estimates
+constructed by 1-ply rollout-based planning are biased. This can lead to mistakes which cannot be
+corrected through additional sampling. The bias can be reduced by incorporating more knowledge
+into the default policy, however this can be both difﬁcult and time consuming.
+Monte-Carlo Tree Search algorithms improve on this procedure, by providing a means to construct
+asymptotically consistent estimates of the return under the optimal policy from simulation trajecto-
+ries. The UCT algorithm [15] in particular has been shown to work well in practice. Like rollout-
+based planning, it uses a default policy to generate trajectories of agent-system interaction. However
+now the construction of a search tree is also interleaved within this process, with nodes correspond-
+ing to states and edge corresponding to a state-action pairs. Initially, the search tree consists of a
+
+2
+
+s )/T m
+log(T m
+s,a ,
+
+single node, which represents the current state st at time t. One or more simulations are then per-
+formed. We will use Tm ⊂ S to denote the set of states contained within the search tree after m ∈ N
+simulations. Associated with each state-action pair (s, a) ∈ S × A is an estimate ¯X m
+s,a of the return
+s,a ∈ N representing the number of times this state-action
+under the optimal policy and a count T m
+s,a := 0 and ¯X 0
+pair has been visited after m simulations, with T 0
+s,a := 0.
+Each simulation can be broken down into four phases, selection, expansion, rollout and backup.
+Selection involves traversing a path from the root node to a leaf node in the following manner: for
+:= (cid:80)
+each non-leaf, internal node representing some state s on this path, the UCB [1] criterion is applied
+to select an action until a leaf node corresponding to state sl is reached. If U (Bs ) denotes the uniform
+(cid:113)
+s := {a ∈ A : T m
+distribution over the set of unexplored actions Bm
+s,a = 0}, and T m
+s,a ,
+a∈A T m
+s
+UCB at state s selects
+¯X m
+Am+1
+:= argmax
+s,a + c
+s
+a∈A
+if |Bm
+∼ U (Bm
+s | = ∅, or Am+1
+s ) otherwise. The ratio of exploration to exploitation is controlled
+by the positive constant c ∈ R. In the case of more than one maximizing action, ties are broken
+s
+uniformly at random. Provided sl is non-terminal, the expansion phase is then executed, by selecting
+an action Al ∼ π(· | sl ), observing a successor state Sl+1 = sl+1 , and then adding a node to the
+search tree so that Tm+1 = Tm ∪ {sl+1}. Higher values of c increase the level of exploration,
+which in turn leads to more shallow and symmetric tree growth. The rollout phase is then invoked,
+which for l < i < n, executes actions Ai ∼ π(· | Si ). At this point, a complete agent-system
+(cid:32) n(cid:88)
+(cid:33)
+execution trajectory (at , st+1 , rt+1 , . . . , an−1 , sn , rn ) from st has been realized. The backup phase
+then assigns, for t ≤ k < n,
+← ¯X m
+ri − ¯X m
+← T m
+¯X m+1
+T m+1
++
+,
++ 1,
+sk ,ak
+sk ,ak
+sk ,ak
+sk ,ak
+sk ,ak
+T m
++1
+sk ,ak
+i=t+1
+to each (sk , ak ) ∈ Tm+1 occurring on the realized trajectory. Notice that for all (s, a) ∈ S × A, the
+value estimate ¯X m
+s,a corresponds to the average return of the realized simulation trajectories passing
+through state-action pair (s, a). After the desired number of simulations k has been performed in
+state st , the action with the highest expected return at := argmaxa∈A ¯X k
+st ,a is selected. With an
+appropriate [15] value of c, as m → ∞, the value estimates converge to the expected return under
+the optimal policy. However, due to the stochastic nature of the UCT algorithm, each value estimate
+¯X m
+s,a is subject to error, in terms of both bias and variance, for ﬁnite m. While previous work (see
+Section 1) has focused on improving these estimates by reducing bias, little attention has been given
+to improvements via variance reduction. The next section describes how the accuracy of UCT’s
+value estimates can be improved by adapting classical variance reduction techniques to MCTS.
+
+(1)
+
+1
+
+3 Variance Reduction in MCTS
+
+This section describes how three variance reduction techniques — control variates, common random
+numbers and antithetic variates — can be applied to the UCT algorithm. Each subsection begins with
+a short overview of each variance reduction technique, followed by a description of how UCT can be
+modiﬁed to efﬁciently incorporate it. Whilst we restrict our attention to planning in MDPs using the
+UCT algorithm, the ideas and techniques we present are quite general. For example, similar modiﬁ-
+(cid:80)n
+cations could be made to the Sparse Sampling [14] or AMS [5] algorithms for planning in MDPs, or
+Provided E [X ] exists, ¯X is an unbiased estimator of E [X ] with variance (cid:112)n−1Var[X ].
+to the POMCP algorithm [22] for planning in POMDPs. In what follows, given an independent and
+identically distributed sample (X1 , X2 , . . . Xn ), the sample mean is denoted by ¯X := 1
+i=1 Xi .
+n
+3.1 Control Variates
+An improved estimate of E[X ] can be constructed if we have access to an additional statistic Y
+that is correlated with X , provided that µY := E[Y ] exists and is known. To see this, note that if
+Z := X + c(Y − E[Y ]), then ¯Z is an unbiased estimator of E[X ], for any c ∈ R. Y is called the
+control variate. One can show that Var[Z ] is minimised for c∗ := −Cov[X, Y ]/Var[Y ]. Given a
+n(cid:88)
+sample (X1 , Y1 ), (X2 , Y2 ), . . . , (Xn , Yn ) and setting c = c∗ , the control variate enhanced estimator
+[Xi + c∗ (Yi − µY )]
+1
+¯Xcv :=
+n
+i=1
+
+(2)
+
+3
+
+(cid:18)
+
+(cid:19)
+
+is obtained, with variance
+
+.
+
+Var[X ] − Cov[X, Y ]2
+1
+Var[ ¯Xcv ] =
+Var[Y ]
+n
+Thus the total variance reduction is dependent on the strength of correlation between X and Y . For
+the optimal value of c, the variance reduction obtained by using Z in place of X is 100×Corr[X, Y ]2
+One solution is to use the plug-in estimator Cn := −(cid:100)Cov[X, Y ]/(cid:100)Var(Y ), where (cid:100)Cov[·, ·] and (cid:100)Var(·)
+percent. In practice, both Var[Y ] and Cov[X, Y ] are unknown and need to be estimated from data.
+denote the sample covariance and sample variance respectively. This estimate can be constructed
+ofﬂine using an independent sample or be estimated online. Although replacing c∗ with an online
+estimate of Cn in Equation 2 introduces bias, this modiﬁed estimator is still consistent [17]. Thus
+online estimation is a reasonable choice for large n; we revisit the issue of small n later. Note
+that ¯Xcv can be efﬁciently computed with respect to Cn by maintaining ¯X and ¯Y online, since
+¯Xcv = ¯X + Cn ( ¯Y − µY ).
+Application to UCT. Control variates can be applied recursively, by redeﬁning the return Xs,a for
+every state-action pair (s, a) ∈ S × A to
+Zs,a := Xs,a + cs,a (Ys,a − E[Ys,a ]) ,
+(3)
+provided E [Ys,a ] exists and is known for all (s, a) ∈ S × A, and Ys,a is a function of the random
+variables At , St+1 , Rt+1 , . . . , An−1 , Sn , Rn that describe the complete execution of the system after
+action a is performed in state s. Notice that a separate control variate will be introduced for each
+state-action pair. Furthermore, as E [Zst ,at | Ai ∼ π(· | Si )] = E [Xst ,at | Ai ∼ π(· | Si )], for all
+policies π , for all (st , at ) ∈ S × A and for all t < i < n, the inductive argument [15] used to
+establish the asymptotic consistency of UCT still applies when control variates are introduced in
+this fashion.
+Finding appropriate control variates whose expectations are known in advance can prove difﬁcult.
+This situation is further complicated in UCT where we seek a set of control variates {Ys,a} for all
+(s, a) ∈ S × A. Drawing inspiration from advantage sum estimators [25], we now provide a general
+class of control variates designed for application in UCT. Given a realization of a random simulation
+Yst ,at := (cid:80)n−1
+trajectory St = st , At = at , St+1 = st+1 , At+1 = at+1 , . . . , Sn = sn , consider control
+variates of the form
+I[b(Si+1 )] − P[b(Si+1 ) | Si=si , Ai =ai ],
+(4)
+i=t
+where b : S → {true, false} denotes a boolean function of state and I denotes the binary indicator
+(cid:18)
+(cid:19)
+E[Yst ,at ] = (cid:80)n−1
+function. In this case, the expectation
+E [I [b(Si+1 )] | Si =si , Ai=ai ] − P [b(Si+1 ) | Si =si , Ai=ai ]
+= 0,
+i=t
+for all (st , at ) ∈ S × A. Thus, using control variates of this form simpliﬁes the task to specifying
+a state property that is strongly correlated with the return, such that P[b(Si+1 ) | Si = si , Ai = ai ] is
+known for all (si , ai ) ∈ (S , A), for all t ≤ i < n. This considerably reduces the effort required to
+ﬁnd an appropriate set of control variates for UCT.
+
+3.2 Common Random Numbers
+Consider comparing the expectation of E[Y ] to E[Z ], where both Y := g(X ) and Z := h(X ) are
+functions of a common random variable X . This can be framed as estimating the value of δY ,Z ,
+where δY ,Z := E[g(X )] − E[h(X )]. If the expectations E[g(X )] and E[h(X )] were estimated from
+two independent samples X1 and X2 , the estimator ˆg(X1 )−ˆh(X2 ) would be obtained, with variance
+Var[ˆg(X1 ) − ˆh(X2 )] = Var[ˆg(X1 )] + Var[ˆh(X2 )]. Note that no covariance term appears since
+X1 and X2 are independent samples. The technique of common random numbers suggests setting
+X1 = X2 if Cov[ˆg(X1 ), ˆh(X2 )] is positive. This gives the estimator ˆδY ,Z (X1 ) := ˆg(X1 ) − ˆh(X1 ),
+with variance Var[ˆg(X1 )]+Var[ˆh(X1 )]− 2Cov[ˆg(X1 ), ˆh(X1 )], which is an improvement whenever
+Cov[ˆg(X1 ), ˆh(X1 )] is positive. This technique cannot be applied indiscriminately however, since a
+variance increase will result if the estimates are negatively correlated.
+
+Application to UCT. Rather than directly reducing the variance of the individual return estimates,
+common random numbers can instead be applied to reduce the variance of the estimated differences
+
+4
+
+s,a(cid:48) , for each pair of distinct actions a, a(cid:48) ∈ A in a state s. This has the beneﬁt
+s,a − ¯X m
+(cid:113)
+in return ¯X m
+of reducing the effect of variance in both determining the action at := argmaxa∈A ¯X m
+s,a selected
+by UCT in state st and the actions argmaxa∈A ¯X m
+s,a selected by UCB as the
+log(T m
+s )/T m
+s,a + c
+search tree is constructed.
+As each estimate ¯X m
+s,a is a function of realized simulation trajectories originating from state-action
+pair (s, a), a carefully chosen subset of the stochastic events determining the realized state transitions
+now needs to be shared across future trajectories originating from s so that Cov[ ¯X m
+s,a , ¯X m
+s,a(cid:48) ] is
+positive for all m ∈ N and for all distinct pairs of actions a, a(cid:48) ∈ A. Our approach is to use the same
+chance outcomes to determine the trajectories originating from state-action pairs (s, a) and (s, a(cid:48) ) if
+s,a(cid:48) , for any a, a(cid:48) ∈ A and i, j ∈ N. This can be implemented by using T m
+s,a = T j
+s,a to index into
+T i
+a list of stored stochastic outcomes Es deﬁned for each state s. By only adding a new outcome to
+Es when Ts,a exceeds the number of elements in Es , the list of common chance outcomes can be
+efﬁciently generated online. This idea can be applied recursively, provided that the shared chance
+events from the current state do not conﬂict with those deﬁned at any possible ancestor state.
+
+3.3 Antithetic Variates
+
+Consider estimating E[X ] with ˆh(X, Y) := 1
+ˆh1 (X)+ˆh2 (Y), the average of two unbiased estimates
+2
+ˆh1 (X) and ˆh2 (Y), computed from two identically distributed samples X = (X1 , X2 , . . . , Xn ) and
+Y = (Y1 , Y2 , . . . , Yn ). The variance of ˆh(X, Y) is
+Cov[ˆh1 (X), ˆh2 (Y)].
+4 (Var[ˆh1 (X)] + Var[ˆh2 (Y)]) + 1
+(5)
+1
+2
+The method of antithetic variates exploits this identity, by deliberately introducing a negative cor-
+relation between ˆh1 (X) and ˆh2 (Y). The usual way to do this is to construct X and Y from pairs of
+sample points (Xi , Yi ) such that Cov[h1 (Xi ), h2 (Yi )] < 0 for all i ≤ n. So that ˆh2 (Y) remains an
+unbiased estimate of E[X ], care needs to be taken when making Y depend on X.
+
+Application to UCT. Like the technique of common random numbers, antithetic variates can
+be applied to UCT by modifying the way simulation trajectories are sampled. Whenever a node
+representing (si , ai ) ∈ S × A is visited during the backup phase of UCT, the realized trajectory
+mod 2 ≡ 0. The next
+si+1 , ri+1 , ai+1 , . . . , sn , rn from (si , ai ) is now stored in memory if T m
+si ,ai
+time this node is visited during the selection phase, the previous trajectory is used to predetermine
+one or more antithetic events that will (partially) drive subsequent state transitions for the current
+simulation trajectory. After this, the memory used to store the previous simulation trajectory is
+reclaimed. This technique can be applied to all state-action pairs inside the tree, provided that the
+antithetic events determined by any state-action pair do not overlap with the antithetic events deﬁned
+by any possible ancestor.
+
+4 Empirical Results
+
+This section begins with a description of our test domains, and how our various variance reduction
+ideas can be applied to them. We then investigate the performance of UCT when enhanced with
+various combinations of these techniques.
+
+4.1 Test Domains
+
+Pig is a turn-based jeopardy dice game that can be played with one or more players [20]. Players
+roll two dice each turn and keep a turn total. At each decision point, they have two actions, roll and
+stop. If they decide to stop, they add their turn total to their total score. Normally, dice rolls add to
+is rolled the turn total will be reset
+the players turn total, with the following exceptions: if a single
+is rolled then the players turn will end along with their total score being
+and the turn ended; if a
+reset to 0. These possibilities make the game highly stochastic.
+Can’t Stop is a dice game where the goal is to obtain three complete columns by reaching the
+highest level in each of the 2-12 columns [19]. This done by repeatedly rolling 4 dice and playing
+zero or more pairing combinations. Once a pairing combination is played, a marker is placed on
+the associated column and moved upwards. Only three distinct columns can be used during any
+
+5
+
+given turn. If the dice are rolled and no legal pairing combination can be made, the player loses
+all of the progress made towards completing columns on this turn. After rolling and making a legal
+pairing, a player can chose to lock in their progress by ending their turn. A key component of the
+game involves correctly assessing the risk associated with not being able to make a legal dice pairing
+given the current board conﬁguration.
+Dominion is a popular turn-based, deck-building card game [24]. It involves acquiring cards by
+spending the money cards in your current deck. Bought cards have certain effects that allow you to
+buy more cards, get more money, draw more cards, and earn victory points. The goal is to get as
+many victory points as possible.
+In all cases, we used solitaire variants of the games where the aim is to maximize the number of
+points given a ﬁxed number of turns. All of our domains can be represented as ﬁnite MDPs. The
+game of Pig contains approximately 2.4 × 106 states. Can’t Stop and Dominion are signiﬁcantly
+more challenging, containing in excess of 1024 and 1030 states respectively.
+
+4.2 Application of Variance Reduction Techniques
+
+We now describe the application of each technique to the games of Pig, Can’t Stop and Dominion.
+
+Control Variates. The control variates used for all domains were of the form speciﬁed by Equation
+4 in Section 3.1. In Pig, we used a boolean function that returned true if we had just performed the
+roll action and obtained at least one
+. This control variate has an intuitive interpretation, since we
+would expect the return from a single trajectory to be an underestimate if it contained more rolls
+with a
+than expected. In
+than expected, and an overestimate if it contained less rolls with a
+Can’t Stop, we used similarly inspired boolean function that returned true if we could not make
+a legal pairing from our most recent roll of the 4 dice. In Dominion, we used a boolean function
+that returned whether we had just played an action that let us randomly draw a hand with 8 or more
+money to spend. This is a signiﬁcant occurrence, as 8 money is needed to buy a Province, the highest
+scoring card in the game. Strong play invariably requires purchasing as many Provinces as possible.
+s,a ≥ 50, the online estimate −(cid:100)Cov[Xs,a , Ys,a ]/(cid:100)Var[Ys,a ] was used.
+We used a mixture of online and ofﬂine estimation to determine the values of cs,a to use in Equation
+3. When T m
+If T m
+s,a < 50,
+constants were obtained by computing ofﬂine estimates of −(cid:100)Cov[Xs,a , Ys,a ]/(cid:100)Var[Ys,a ] across a
+the constants 6.0, 6.0 and −0.7 were used for Pig, Can’t Stop and Dominion respectively. These
+representative sample of game situations. This combination gave better performance than either
+scheme in isolation.
+
+Common Random Numbers. To apply the ideas in Section 3.2, we need to specify the future
+chance events to be shared across all of the trajectories originating from each state. Since a player’s
+ﬁnal score in Pig is strongly dependent on their dice rolls, it is natural to consider sharing one or
+more future dice roll outcomes. By exploiting the property in Pig that each roll event is independent
+of the current state, our implementation shares a batch of roll outcomes large enough to drive a
+complete simulation trajectory. So that these chance events don’t conﬂict, we limited the sharing of
+roll events to just the root node. A similar technique was used in Can’t Stop. We found this scheme
+to be superior to sharing a smaller number of future roll outcomes and applying the ideas in Section
+3.2 recursively. In Dominion, stochasticity is caused by drawing cards from the top of a deck that is
+periodically shufﬂed. Here we implemented common random numbers by recursively sharing pre-
+shufﬂed deck conﬁgurations across the actions at each state. The motivation for this kind of sharing
+is that it should reduce the chance of one action appearing better than another simply because of
+“luckier” shufﬂes.
+
+Antithetic Variates. To apply the ideas in Section 3.3, we need to describe how the antithetic
+events are constructed from previous simulation trajectories. In Pig, a negative correlation between
+the returns of pairs of simulation trajectories can be induced by forcing the roll outcomes in the
+second trajectory to oppose those occurring in the ﬁrst trajectory. Exploiting the property that the
+relative worth of each pair of dice outcomes is independent of state, a list of antithetic roll outcomes
+can be constructed by mapping each individual roll outcome in the ﬁrst trajectory to its antithetic
+was paired with the unlucky roll of
+. A similar idea
+partner. For example, a lucky roll of
+is used in Can’t Stop, however the situation is more complicated, since the relative worth of each
+
+6
+
+Figure 1: The estimated variance of the value estimates for the Roll action and estimated differences between
+actions on turn 1 in Pig.
+
+chance event varies from state to state. Our solution was to develop a state-dependent heuristic
+ranking function, which would assign an index between 0 and 1295 to the 64 distinct chance events
+for a given state. Chance events that are favorable in the current state are assigned low indexes, while
+unfavorable events are assigned high index values. When simulating a non-antithetic trajectory, the
+ranking for each chance event is recorded. Later when the antithetic trajectory needs to be simulated,
+the previously recorded rank indexes are used to compute the relevant antithetic event for the current
+state. This approach can be applied in a wide variety of domains where the stochastic outcomes can
+be ordered by how “lucky” they are e.g., suppliers’ price ﬂuctuations, rare catastrophic events, or
+higher than average click-through-rates. For Dominion, a number of antithetic mappings were tried,
+but none provided any substantial reduction in variance. The complexity of how cards can be played
+to draw more cards from one’s deck makes a good or bad shufﬂe intricately dependent on the exact
+composition of cards in one’s deck, of which there are intractably many possibilities with no obvious
+symmetries.
+
+4.3 Experimental Setup
+
+Each variance reduction technique is evaluated in combination with the UCT algorithm, with vary-
+ing levels of search effort. In Pig, the default (rollout) policy plays the roll and stop actions with
+probability 0.8 and 0.2 respectively. In Can’t Stop, the default policy will end the turn if a column
+has just been ﬁnished, otherwise it will choose to re-roll with probability 0.85. In Dominion, the
+default policy incorporates some simple domain knowledge that favors obtaining higher cost cards
+and avoiding redundant actions. The UCB constant c in Equation 1 was set to 100.0 for both Pig
+and Dominion and 5500.0 for Can’t Stop.
+
+4.4 Evaluation
+
+We performed two sets of experiments. The ﬁrst is used to gain a deeper understanding of the role
+of bias and variance in UCT. The next set of results is used to assess the overall performance of UCT
+when augmented with our variance reduction techniques.
+
+Bias versus Variance. When assessing the quality of an estimator using mean squared error
+(MSE), it is well known that the estimation error can be decomposed into two terms, bias and vari-
+ance. Therefore, when assessing the potential impact of variance reduction, it is important to know
+just how much of the estimation error is caused by variance as opposed to bias. Since the game
+of Pig has ≈ 2.4 × 106 states, we can solve it ofﬂine using Expectimax Search. This allows us to
+compute the expected return E[Xs1 | π∗ ] of the optimal action (roll) at the starting state s1 . We use
+this value to compute both the bias-squared and variance component of the MSE for the estimated
+return of the roll action at s1 when using UCT without variance reduction. This is shown in the
+leftmost graph of Figure 1. It seems that the dominating term in the MSE is the bias-squared. This
+is misleading however, since the absolute error is not the only factor in determining which action
+is selected by UCT. More important instead is the difference between the estimated returns for each
+action, since UCT ultimately ends up choosing the action with the largest estimated return. As Pig
+has just two actions, we can also compute the MSE of the estimated difference in return between
+rolling and stopping using UCT without variance reduction. This is shown by the rightmost graph
+
+7
+
+ 0 100 200 300 400 500 600 700 800 900 1000 4 5 6 7 8 9 10 11 12 13 14 15MSE and Bias2log2(Simulations)MSE and Bias2 of Roll Value Estimator vs. Simulations in UCTMSEBias2 0 50 100 150 200 250 300 4 5 6 7 8 9 10 11 12 13 14 15MSE and Bias2log2(Simulations)MSE and Bias2 in Value Difference Estimator vs. Simulations in UCTMSEBias2Figure 2: Performance Results for Pig, Can’t Stop, and Dominion with 95% conﬁdence intervals shown.
+Values on the vertical axis of each graph represent the average score.
+in Figure 1. Here we see that variance is the dominating component (the bias is within ±2) when
+the number of simulations is less than 1024. The role of bias and variance will of course vary from
+domain to domain, but this result suggests that variance reduction may play an important role when
+trying to determine the best action.
+
+Search Performance. Figure 2 shows the results of our variance reduction methods on Pig, Can’t
+Stop and Dominion. Each data point for Pig, Can’t Stop and Dominion is obtained by averaging
+the scores obtained across 50, 000, 10, 000 and 10, 000 games respectively. Such a large number
+of games is needed to obtain statistically signiﬁcant results due to the highly stochastic nature of
+each domain. 95% conﬁdence intervals are shown for each data point. In Pig, the best approach
+consistently outperforms the base version of UCT, even when given twice the number of simulations.
+In Can’t Stop, the best approach gave a performance increase roughly equivalent to using base UCT
+with 50-60% more simulations. The results also show a clear beneﬁt to using variance reduction
+techniques in the challenging game of Dominion. Here the best combination of variance reduction
+techniques leads to an improvement roughly equivalent to using 25-40% more simulations. The use
+of antithetic variates in both Pig and Can’t Stop gave a measurable increase in performance, however
+the technique was less effective than either control variates or common random numbers. Control
+variates was particularly helpful across all domains, and even more effective when combined with
+common random numbers.
+
+5 Discussion
+
+Although our UCT modiﬁcations are designed to be lightweight, some additional overhead is un-
+avoidable. Common random numbers and antithetic variates increase the space complexity of UCT
+by a multiplicative constant. Control variates typically increase the time complexity of each value
+backup by a constant. These factors need to be taken into consideration when evaluating the ben-
+eﬁts of variance reduction for a particular domain. Note that surprising results are possible; for
+example, if generating the underlying chance events is expensive, using common random numbers
+or antithetic variates can even reduce the computational cost of each simulation. Ultimately, the
+effectiveness of variance reduction in MCTS is both domain and implementation speciﬁc. That said,
+we would expect our techniques to be useful in many situations, especially in noisy domains or if
+each simulation is computationally expensive. In our experiments, the overhead of every technique
+was dominated by the cost of simulating to the end of the game.
+
+6 Conclusion
+
+This paper describes how control variates, common random numbers and antithetic variates can
+be used to improve the performance of Monte-Carlo Tree Search by reducing variance. Our main
+contribution is to describe how the UCT algorithm can be modiﬁed to efﬁciently incorporate these
+techniques in practice. In particular, we provide a general approach that signiﬁcantly reduces the
+effort needed recursively apply control variates. Using these methods, we demonstrated substantial
+performance improvements on the highly stochastic games of Pig, Can’t Stop and Dominion. Our
+work should be of particular interest to those using Monte-Carlo planning in highly stochastic or
+resource limited settings.
+
+8
+
+ 40 45 50 55 601632641282565121,024SimulationsPig MCTS Performance ResultsBaseAVCRNCVCVCRN 600 800 1,000 1,200 1,400 1,600 1,800 2,000 2,2001632641282565121,024SimulationsCant Stop MCTS Performance ResultsBaseAVCRNCVCVCRN 10 20 30 40 501282565121,0242,048SimulationsDominion MCTS Performance ResultsBaseCRNCVCVCRNReferences
+
+[1] Peter Auer. Using conﬁdence bounds for exploitation-exploration trade-offs. JMLR, 3:397–
+422, 2002.
+[2] Radha-Krishna Balla and Alan Fern. UCT for Tactical Assault Planning in Real-Time Strategy
+Games. In IJCAI, pages 40–45, 2009.
+[3] Dimitri P. Bertsekas and David A. Castanon. Rollout algorithms for stochastic scheduling
+problems. Journal of Heuristics, 5(1):89–108, 1999.
+[4] Dimitri P. Bertsekas and John N. Tsitsiklis. Neuro-Dynamic Programming. Athena Scientiﬁc,
+1st edition, 1996.
+[5] Hyeong S. Chang, Michael C. Fu, Jiaqiao Hu, and Steven I. Marcus. An Adaptive Sampling
+Algorithm for Solving Markov Decision Processes. Operations Research, 53(1):126–139, Jan-
+uary 2005.
+[6] Guillaume Chaslot, Sander Bakkes, Istvan Szita, and Pieter Spronck. Monte-Carlo Tree
+In Fourth Artiﬁcial Intelligence and Interactive
+Search: A New Framework for Game AI.
+Digital Entertainment Conference (AIIDE 2008), 2008.
+[7] Guillaume M. Chaslot, Mark H. Winands, and H. Jaap Herik. Parallel Monte-Carlo Tree
+Search. In Proceedings of the 6th International Conference on Computers and Games, pages
+60–71, Berlin, Heidelberg, 2008. Springer-Verlag.
+[8] Guillaume M.J-B. Chaslot, Mark H.M. Winands, Istvan Szita, and H. Jaap van den Herik.
+Cross-entropy for Monte-Carlo Tree Search. ICGA, 31(3):145–156, 2008.
+[9] R ´emi Coulom. Efﬁcient selectivity and backup operators in Monte-Carlo tree search. In Pro-
+ceedings Computers and Games 2006. Springer-Verlag, 2006.
+[10] Hilmar Finnsson and Yngvi Bjornsson. Simulation-based Approach to General Game Play-
+ing. In Twenty-Third AAAI Conference on Artiﬁcial Intelligence (AAAI 2008), pages 259–264,
+2008.
+[11] S. Gelly and D. Silver. Combining online and ofﬂine learning in UCT. In Proceedings of the
+17th International Conference on Machine Learning, pages 273–280, 2007.
+[12] Sylvain Gelly and Yizao Wang. Exploration exploitation in Go: UCT for Monte-Carlo Go. In
+NIPS Workshop on On-line trading of Exploration and Exploitation, 2006.
+[13] Sylvain Gelly, Yizao Wang, R ´emi Munos, and Olivier Teytaud. Modiﬁcation of UCT with
+patterns in Monte-Carlo Go. Technical Report 6062, INRIA, France, November 2006.
+[14] Michael J. Kearns, Yishay Mansour, and Andrew Y. Ng. A sparse sampling algorithm for
+near-optimal planning in large Markov Decision Processes. In IJCAI, pages 1324–1331, 1999.
+[15] Levente Kocsis and Csaba Szepesv ´ari. Bandit based Monte-Carlo planning. In ECML, pages
+282–293, 2006.
+[16] Todd W. Neller and Clifton G.M. Presser. Practical play of the dice game pig. Undergraduate
+Mathematics and Its Applications, 26(4):443–458, 2010.
+[17] Barry L. Nelson. Control variate remedies. Operations Research, 38(6):pp. 974–992, 1990.
+[18] Stuart Russell and Peter Norvig. Artiﬁcial Intelligence: A Modern Approach. Prentice-Hall,
+Englewood Cliffs, NJ, 2nd edition edition, 2003.
+[19] Sid Sackson. Can’t Stop. Ravensburger, 1980.
+[20] John Scarne. Scarne on dice. Harrisburg, PA: Military Service Publishing Co, 1945.
+In ICML, page 119,
+[21] David Silver and Gerald Tesauro. Monte-Carlo simulation balancing.
+2009.
+[22] David Silver and Joel Veness. Monte-Carlo Planning in Large POMDPs.
+Neural Information Processing Systems 23, pages 2164–2172, 2010.
+[23] Csaba Szepesv ´ari. Reinforcement learning algorithms for MDPs, 2009.
+[24] Donald X. Vaccarino. Dominion. Rio Grande Games, 2008.
+[25] Martha White and Michael Bowling. Learning a value analysis tool for agent evaluation.
+In Proceedings of the Twenty-First International Joint Conference on Artiﬁcial Intelligence
+(IJCAI), pages 1976–1981, 2009.
+
+In Advances in
+
+9
+
+

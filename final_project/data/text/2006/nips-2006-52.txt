@@ -1,0 +1,600 @@
+Distributed Inference in Dynamical Systems
+
+Stanislav Funiak Carlos Guestrin
+Carnegie Mellon University
+
+Mark Paskin
+Google
+
+Rahul Sukthankar
+Intel Research
+
+Abstract
+We present a robust distributed algorithm for approximate probabilistic inference
+in dynamical systems, such as sensor networks and teams of mobile robots. Using
+assumed density ﬁltering, the network nodes maintain a tractable representation
+of the belief state in a distributed fashion. At each time step, the nodes coordinate
+to condition this distribution on the observations made throughout the network,
+and to advance this estimate to the next time step.
+In addition, we identify a
+signiﬁcant challenge for probabilistic inference in dynamical systems: message
+losses or network partitions can cause nodes to have inconsistent beliefs about the
+current state of the system. We address this problem by developing distributed
+algorithms that guarantee that nodes will reach an informative consistent distribu-
+tion when communication is re-established. We present a suite of experimental
+results on real-world sensor data for two real sensor network deployments: one
+with 25 cameras and another with 54 temperature sensors.
+Introduction
+1
+Large-scale networks of sensing devices have become increasingly pervasive, with applications
+ranging from sensor networks and mobile robot teams to emergency response systems. Often, nodes
+in these networks need to perform probabilistic dynamic inference to combine a sequence of local,
+noisy observations into a global, joint estimate of the system state. For example, robots in a team
+may combine local laser range scans, collected over time, to obtain a global map of the environment;
+nodes in a camera network may combine a set of image sequences to recognize moving objects in a
+heavily cluttered scene. A simple approach to probabilistic dynamic inference is to collect the data
+to a central location, where the processing is performed. Yet, collecting all the observations is often
+impractical in large networks, especially if the nodes have a limited supply of energy and commu-
+nicate over a wireless network. Instead, the nodes need to collaborate, to solve the inference task
+in a distributed manner. Such distributed inference techniques are also necessary in online control
+applications, where nodes of the network need estimates of the state in order to make decisions.
+Probabilistic dynamic inference can often be efﬁciently solved when all the processing is per-
+formed centrally. For example, in linear systems with Gaussian noise, the inference tasks can be
+solved in a closed form with a Kalman Filter [3]; for large systems, assumed density ﬁltering can
+often be used to approximate the ﬁltered estimate with a tractable distribution (c.f., [2]). Unfortu-
+nately, distributed dynamic inference is substantially more challenging. Since the observations are
+distributed across the network, nodes must coordinate to incorporate each others’ observations and
+propagate their estimates from one time step to the next. Online operation requires the algorithm
+to degrade gracefully when nodes run out of processing time before the observations propagate
+throughout the network. Furthermore, the algorithm needs to robustly address node failures and
+interference that may partition the communication network into several disconnected components.
+We present an efﬁcient distributed algorithm for dynamic inference that works on a large family
+of processes modeled by dynamic Bayesian networks.
+In our algorithm, each node maintains a
+(possibly approximate) marginal distribution over a subset of state variables, conditioned on the
+measurements made by the nodes in the network. At each time step, the nodes condition on the
+observations, using a modiﬁcation of the robust (static) distributed inference algorithm [7], and
+then advance their estimates to the next time step locally. The algorithm guarantees that, with
+sufﬁcient communication at each time step, the nodes obtain the same solution as the corresponding
+centralized algorithm [2]. Before convergence, the algorithm introduces principled approximations
+in the form of independence assertions in the node estimates and in the transition model.
+
+In the presence of unreliable communication or high latency, the nodes may not be able to condi-
+tion their estimates on all the observations in the network, e.g., when interference causes a network
+partition, or when high latency prevents messages from reaching every node. Once the estimates are
+advanced to the next time step, it is difﬁcult to condition on the observations made in the past [10].
+Hence, the beliefs at the nodes may be conditioned on different evidence and no longer form a con-
+sistent global probability distribution over the state space. We show that such inconsistencies can
+lead to poor results when nodes attempt to combine their estimates. Nevertheless, it is often possible
+to use the inconsistent estimates to form an informative globally consistent distribution; we refer to
+this task as alignment. We propose an online algorithm, optimized conditional alignment (OCA),
+that obtains the global distribution as a product of conditionals from local estimates and optimizes
+over different orderings to select a global distribution of minimal entropy. We also propose an al-
+ternative, more global optimization approach that minimizes a KL divergence-based criterion and
+provides accurate solutions even when the communication network is highly fragmented.
+We present experimental results on real-world sensor data, covering sensor calibration [7] and
+distributed camera localization [5]. These results demonstrate the convergence properties of the
+algorithm, its robustness to message loss and network partitions, and the effectiveness of our method
+at recovering from inconsistencies.
+Distributed dynamic inference has received some attention in the literature. For example, par-
+ticle ﬁltering (PF) techniques have been applied to these settings: Zhao et al. [11] use (mostly)
+independent PFs to track moving objects, and Rosencrantz et al. [10] run PFs in parallel, sharing
+measurements as appropriate. Pfeffer and Tai [9] use loopy belief propagation to approximate the
+estimation step in a continuous-time Bayesian network. When compared to these techniques, our
+approach addresses several additional challenges: we do not assume point-to-point communication
+between nodes, we provide robustness guarantees to node failures and network partitions, and we
+identify and address the belief inconsistency problem that arises in distributed systems.
+2 The distributed dynamic inference problem
+Following [7], we assume a network model where each node can perform local computations and
+communicate with other nodes over some channel. The nodes of the network may change over
+time: existing nodes can fail, and new nodes may be introduced. We assume a message-level error
+model: messages are either received without error, or they are not received at all. The likelihood of
+successful transmissions (link qualities) are unknown and can change over time, and link qualities
+of several node pairs may be correlated.
+We model the system as a dynamic Bayesian network (DBN). A DBN consists of a set of state
+processes, X = {X1 , . . . , XL} and a set of observed measurement processes Z = {Z1 , . . . , ZK };
+each measurement process Zk corresponds to one of the sensors on one of the nodes. State processes
+× TY
+× TY
+are not associated with unique nodes. A DBN deﬁnes a joint probability model over steps 1 . . . T as
+| {z }
+}
+{z
+|
+{z
+|
+}
+p (Z(t) | X(t) )
+p (X(t) | X(t−1) )
+The initial prior is given by a factorized probability model p (X(1) ) ∝ Q
+p (X(1:T ) , Z(1:T ) ) = p (X(1) )
+Ah ⊆ X is a subset of the state processes. The transition model factors as QL
+t=1
+t=2
+initial prior
+transition model
+measurement model
+h ψ(A(1)
+h ), where each
+| Pa[X (t)
+i=1 p (X (t)
+]),
+as QK
+i
+i
+where Pa[X (t)
+] are the parents of X (t)
+in the previous time step. The measurement model factors
+i
+i
+k ] ⊆ X(t) are the parents of Z (t)
+k | Pa[Z (t)
+k ]), where Pa[Z (t)
+k=1 p (Z (t)
+in the current time step.
+k
+In the distributed dynamic inference problem, each node n is associated with a set of processes
+Qn ⊆ X; these are the processes about which node n wishes to reason. The nodes need to collab-
+orate so that each node can obtain (an approximation to) the posterior distribution over Q(t)
+n given
+| z(1:t) ). We assume that
+all measurements made in the network up to the current time step t: p (Q(t)
+i
+node clocks are synchronized, so that transitions to the next time step are simultaneous.
+3 Filtering in dynamical systems
+The goal of (centralized) ﬁltering is to compute the posterior distribution p (X(t) | z(1:t) ) for
+t = 1, 2, . . . as the observations z(1) , z(2) , . . . arrive. The basic approach is to recursively com-
+pute p (X(t+1) | z(1:t) ) from p (X(t) | z(1:t−1) ) in three steps:
+1. Estimation: p (X(t) | z(1:t) ) ∝ p (X(t) | z(1:t−1) ) × p (z(t) | X(t) );
+3. Roll-up: p (X(t+1) | z(1:t) ) = R p (x(t) , X(t+1) | z(1:t) ) dx(t) .
+2. Prediction: p (X(t) , X(t+1) | z(1:t) ) = p (X(t) | z(1:t) ) × p (X(t+1) | X(t) );
+
+.
+
+,
+
+Exact ﬁltering in DBNs is usually expensive or intractable because the belief state rapidly loses
+all conditional independence structure. An effective approach, proposed by Boyen and Koller [2],
+and separators (cid:8)Si,j
+(cid:9), the projection operation amounts to computing the clique marginals, hence
+hereby denoted “B&K98”, is to periodically project the exact posterior to a distribution that satisﬁes
+independence assertions encoded in a junction tree [3]. Given a junction tree T , with cliques {Ci }
+Q
+the ﬁltered distribution is approximated as
+Q{i,j}∈ET
+| z(1:t−1) )
+˜p (C(t)
+i∈NT
+p (X(t) | z(1:t−1) ) ≈ ˜p (X(t) | z(1:t−1) ) =
+i
+(1)
+i,j | z(1:t−1) )
+˜p (S(t)
+where NT and ET are the nodes and edges of T , respectively. With this representation, the es-
+k | Pa[Z (t)
+timation step is implemented by multiplying each observation likelihood p (z (t)
+k ]) to a
+hQ
+i . hQ{i,j}∈ET
+i
+clique marginal; the clique and separator potentials are then recomputed with message passing,
+so that the posterior distribution is once again written as a ratio of clique and separator marginals:
+˜p (X(t) | z(1:t) ) =
+| z(1:t) )
+i,j | z(1:t) )
+˜p (C(t)
+˜p (S(t)
+. The prediction step is
+i∈NT
+i
+: we multiply ˜p (X(t) | z(1:t) ) with the transition
+performed independently for each clique C(t+1)
+i
+model p (X (t+1) | Pa[X (t+1) ]) for each variable X (t+1) ∈ C(t+1)
+and, using variable elimination,
+i
+| z(1:t) ).
+compute the marginals over the clique at the next time step p (C(t+1)
+i
+4 Approximate distributed ﬁltering
+In principle, the centralized ﬁltering approach described in the previous section could be applied to a
+distributed system, e.g., by communicating the observations made in the network to a central location
+that performs all computations, and distributing the answer to every node in the network. While
+conceptually simple, this approach has substantial drawbacks, including the high communication
+bandwidth, the introduction of a single point of failure to the system, and the fact that nodes do not
+have valid estimates when the network is partitioned. In this section, we present a distributed ﬁltering
+algorithm where each node obtains an approximation to the posterior distribution over subset of the
+state variables. Our estimation step builds on the robust distributed inference algorithm of Paskin et
+al. [7, 8], while the prediction, roll-up, and projection steps are performed locally at each node.
+4.1 Estimation as a robust distributed probabilistic inference
+In the distributed inference approach of Paskin et al. [8], the nodes collaborate so that each node
+n can obtain the posterior distribution over some set of variables Qn given all measurements made
+throughout the network. In our setting, Qn contains the variables in a subset Ln of the cliques
+used in our assumed density representation.
+In their architecture, nodes form a distributed data
+structure along a routing tree in the network, where each node in this tree is associated with a
+cluster of variables Dn that includes Qn , as well as any other variables, needed to preserve the ﬂow
+of information between the nodes, a property equivalent to the running intersection property in
+junction trees [3]. We refer to this tree as the network junction tree, and, for clarity, we refer to the
+junction tree used for the assumed density as the external junction tree.
+Using this architecture, Paskin and Guestrin developed a robust distributed probabilistic infer-
+ence algorithm, RD P I [7], for static inference settings, where nodes compute the posterior distribu-
+tion p (Qn | z) over Qn given all measurements throughout the network z. RD P I provides two crucial
+properties: convergence, if there are no network partitions, these distributed estimates converge to
+the true posteriors; and, smooth degradation even before convergence, the estimates provide a prin-
+cipled approximation to the true posterior (which introduces additional independence assertions).
+In RD P I, each node n maintains the current belief βn of p (Qn | z).
+Initially, node n knows
+only the marginals of the prior distribution {p (Ci ) : i ∈ Ln } for a subset of cliques Ln in the
+external junction tree, and its local observation model p (zn | Pa[Zn ]) for each of its sensors. We
+assume that Pa[Zn ] ⊆ Ci for some i ∈ Ln ;
+thus, βn is represented as a collection of priors over
+cliques of variables, and of observation likelihood functions over these variables. Messages are then
+sent between neighboring nodes, in an analogous fashion to the sum-product algorithm for junction
+trees [3]. However, messages in RD P I are always represented as a collection of priors {πi (Ci )}
+over cliques of variables Ci , and of measurement likelihood functions {λi (Ci )} over these cliques.
+This decomposition into prior and likelihood factors is the key to the robustness properties of the
+algorithm [7]. With sufﬁcient communication, βn converges to p (Qn | z).
+| z(1:t−1) ). The
+i ) is initialized to p (C(t)
+In our setting, at each time step t, each prior πi (C(t)
+i
+| C(t)
+i ) = p (z (t)
+likelihood functions are similarly initialized to λi (C(t)
+i ), if some sensor makes an
+i
+
+observation about these variables, or to 1 otherwise. Through message passing βn converges to
+n | z(1:t) ). An important property of RD P I that will be useful in the remainder of the paper is:
+˜p (Q(t)
+Property 1. Let βn be the result computed by the RD P I algorithm at convergence at node n. Then
+the cliques in βn form a subtree of an external junction tree that covers Qn .
+4.2 Prediction, roll-up and projection
+The previous section shows that the estimation step can be implemented in a distributed manner,
+| z(1:t) ), for i ∈
+using RD P I. At convergence, each node n obtains the calibrated marginals ˜p (C(t)
+i
+Ln .
+In order to advance to the next time step, each node must perform prediction and roll-up,
+| z(1:t) ). Recall from Section 3 that, in order to compute a marginal
+obtaining the marginals ˜p (C(t+1)
+i
+| z(1:t) ), this node needs ˜p (X(t) | z(1:t) ). Due to the conditional independencies encoded in
+˜p (C(t+1)
+i
+˜p (X(t) | z(1:t) ), it is sufﬁcient to obtain a subtree of the external junction tree that covers the parents
+| z(1:t) ) can then
+Pa[C(t+1)
+] of all variables in the clique. The next time step marginal ˜p (C(t+1)
+i
+i
+be computed by multiplying this subtree with the transition model p (X (t+1) | Pa[X (t+1) ]) for each
+X (t+1) ∈ C(t+1)
+(recall that Pa[X (t+1) ] ⊆ X(t) ).
+and eliminating all variables but C(t+1)
+i
+i
+This procedure suggests the following distributed implementation of prediction, roll-up, and
+projection: after completing the estimation step, each node selects a subtree of the (global) exter-
+nal junction tree that covers Pa[C(t+1)
+] and collects the marginals of this tree from other nodes in
+i
+the network. Unfortunately, it is unclear how to allocate the running time between estimation and
+collection of marginals in time-critical applications, when the estimation step may not run to com-
+pletion. Instead, we propose a simple approach that performs both steps at once: run the distributed
+inference algorithm, described in the previous section, to obtain the posterior distribution over the
+parents of each clique maintained at the node. This task can be accomplished by ensuring that these
+] ⊆ Qn , ∀i ∈ Ln .
+parent variables are included in the query variables of node n: Pa[C(t+1)
+i
+When the estimation step cannot be run to convergence within the allotted time, the variables
+Scope[βn ] covered by the distribution βn that node n obtains may not cover the entire parent set
+Pa[C(t+1)
+].
+In this case, multiplying in the standard transition model is equivalent to assum-
+i
+ing an uniform prior for the missing variables, which can lead to very poor solutions in prac-
+tice. When the transition model is learned from data, p (X (t+1) | Pa[X (t+1) ]) is usually com-
+puted from the empirical distribution ˆp (X (t+1) , Pa[X (t+1) ]), e.g., pM LE (X (t+1) | Pa[X (t+1) ]) =
+ˆp (X (t+1) , Pa[X (t+1) ])/ˆp (Pa[X (t+1) ]). Building on these empirical distributions, we can obtain
+an improved solution for the prediction and roll-up steps, when we do not have a distribution
+over the entire parent set Pa[C(t+1)
+]. Speciﬁcally, we obtain a valid approximate transition model
+i
+˜p (X (t+1) | W(t) ), where W(t) = Scope[βn ] ∩ Pa[X (t+1) ], online by simply marginalizing the em-
+pirical distribution ˆp (X (t+1) , Pa[X (t+1) ]) down to ˆp (X (t+1) , W(t) ). This procedure is equivalent
+to introducing an additional independence assertion to the model: at time step t + 1, X (t+1) is
+independent of Pa[X (t+1) ] − W(t) , given W(t) .
+4.3 Summary of the algorithm
+(cid:16)S
+(cid:17) ∪ (cid:16)S
+(cid:17)
+Our distributed approximate ﬁltering algorithm can be summarized as follows:
+• Using the architecture in [8], construct a network junction tree s.t. the query variables Qn
+Pa[C(t+1)
+C(t)
+]
+at each node n cover
+.
+i∈Ln
+i∈Ln
+i
+i
+• For t = 1, 2, . . ., at each node n,
+– run RD P I [7] until the end of step t, obtaining a (possibly approximate) belief βn ;
+– for each X (t+1) ∈ C(t+1)
+, i ∈ Ln , compute an approximate transition model
+i
+˜p (X (t+1) | W(t)
+X = Scope[βn ] ∩ Pa[X (t+1) ];
+X ), where W(t)
+, i ∈ Ln , compute the clique marginal ˜p (C(t+1)
+| z(1:t) ) from
+– for each clique C(t+1)
+i
+i
+βn and from each ˜p (X (t+1) | W(t)
+X ), locally, using variable elimination.
+Using the convergence properties of the RD P I algorithm, we prove that, given sufﬁcient commu-
+nication, our distributed algorithm obtains the same solution as the centralized B&K98 algorithm:
+Theorem 1. For a set of nodes running our distributed ﬁltering algorithm, if at each time step there
+is sufﬁcient communication for the RD P I algorithm to converge, and the network is not partitioned,
+then, for each node n, for each clique i ∈ Ln , the distribution ˜p (C(t)
+| z(1:t−1) ) obtained by node n
+i
+is equal to the distribution obtained by the B&K98 algorithm with assumed density given by T .
+
+(a) BK solution
+(d) min. KL divergence
+(b) alignment rooted at 1 (c) alignment rooted at 4
+Figure 1: Alignment results after partition (shown by vertical line). circles represent 95% conﬁdence intervals
+in the estimate of the camera location. (a) The exact solution, computed by the BK algorithm in the absence of
+partitions. (b) Solution obtained when aligning from node 1. (c) Solution obtained when aligning from node 4.
+(d) Solution obtained by joint optimized alignment.
+
+5 Robust distributed ﬁltering
+In the previous section, we introduced an algorithm for distributed ﬁltering with dynamic Bayesian
+networks that, with sufﬁcient communication, converges to the centralized B&K98 algorithm. In
+some settings, for example when interference causes a network partition, messages may not be prop-
+agated long enough to guarantee convergence before nodes must roll-up to the next time step. Con-
+sider the example, illustrated in Figure 1, in which a network of cameras localizes itself by observing
+a moving object. Each camera i carries a clique marginal over the location of the object M (t) , its
+own camera pose variable C i , and the pose of one of its neighboring cameras: π1 (C 1,2 , M (t) ),
+π2 (C 2,3 , M (t) ), and π3 (C 3,4 , M (t) ). Suppose communication were interrupted due to a network
+partition: observations would not propagate, and the marginals carried by the nodes would no
+longer form a consistent distribution, in the sense that π1 ,π2 ,π3 might not agree on their marginals,
+e.g., π1 (C 2 , M (t) ) 6= π2 (C 2 , M (t) ). The goal of alignment is to obtain a consistent distribution
+˜p (X(t) | z(1:t−1) ) from marginals π1 , π2 , π3 that is close to the true posterior p (X(t) | z(1:t−1) ) (as
+measured, for example, by the root-mean-square error of the estimates). For simplicity of notation,
+we omit time indices t and conditioning on the past evidence z(1:t−1) throughout this section.
+5.1 Optimized conditional alignment
+One way to deﬁne a consistent distribution ˜p is to start from a root node r , e.g., 1, and allow each
+clique marginal to decide the conditional density of Ci given its parent, e.g.,
+˜p1 (C 1:4 , M ) = π1 (C 1,2 , M ) × π2 (C 3 | C 2 , M ) × π3 (C 4 | C 3 , M ).
+This density ˜p1 forms a coherent distribution over C 1:4 , M , and we say that ˜p1 is rooted at node 1.
+Thus, π1 fully deﬁnes the marginal density over C 1,2 , M , π2 deﬁnes the conditional density of C 3
+given C 2 , M , and so on. If node 3 were the root, then node 1 would only contribute π1 (C 1 | C 2 , M ),
+and we would obtain a different approximate distribution.
+˜pr (X) = πr (Cr ) × Y
+In general, given a collection of marginals πi (Ci ) over the cliques of a junction tree T , and a
+root node r ∈ NT , the distribution obtained by conditional alignment from r can be written as
+πi (Ci − Sup(i),i | Sup(i),i ),
+i∈(NT −{r})
+where up(i) denotes the upstream neighbor of i on the (unique) path between r and i.
+The choice of the root r often crucially determines how well the aligned distribution ˜pr approx-
+imates the true prior. Suppose that, in the example in Figure 1, the nodes on the left side of the par-
+tition do not observe the person while the communication is interrupted, and the prior marginals π1 ,
+π2 are uncertain about M . If we were to align the distribution from π2 , multiplying π3 (C 4 | C 3 , M )
+into the marginal π2 (C 2,3 , M ) would result in a distribution that is uncertain in both M and C 4
+(Figure 1(b)), while a better choice of root could provide a much better estimate (Figure 1(c)).
+One possible metric to optimize when choosing the root r for the alignment is the entropy of the
+resulting distribution ˜pr . For example, the entropy of ˜p2 in the previous example can be written as
+H˜p2 (C 1:4 , M ) = Hπ2 (C 2,3 , M ) + Hπ3 (C 4 | C 3 , M ) + Hπ1 (C 1 | C 2 , M ),
+(3)
+where we use the fact that, for Gaussians, the conditional entropy of C 4 given C 3 ,M only depends
+on the conditional distribution ˜p2 (C 4 | C 3 , M ) = π3 (C 4 | C 3 , M ). A na¨ıve algorithm for obtaining
+the best root would exploit this decomposition to compute the entropy of each ˜p2 , and pick the root
+that leads to a lowest total entropy; the running time of this algorithm is O(|NT |2 ). We propose a
+dynamic programming approach that signiﬁcantly reduces the running time. Comparing Equation 3
+
+(2)
+
+1234123412341234with the entropy of the distribution rooted at a neighboring node 3, we see that they share a common
+term Hπ1 (C 1 | C 2 , M ), and H˜p3 (C 1:4 , M ) − H˜p2 (C 1:4 , M ) = Hπ3 (S2,3 ) − Hπ2 (S2,3 ) , 42,3 . If
+42,3 is positive, node 2 is a better root than 3, 42,3 is negative, we have the reverse situation. Thus,
+when comparing neighboring nodes as root candidates, the difference in entropy of the resulting
+distribution is simply the difference in entropy their local distributions assign to their separator. This
+property generalizes to the following dynamic programming algorithm that determines the root r
+(X) in O(|NT |) time:
+with minimal H˜pr
+(cid:26)4i,j
+• For any node i ∈ NT , deﬁne the message from i to its neighbor j as
+if mk→i < 0, ∀k 6= j
+mi→j =
+4i,j + maxk 6=j mk→i
+,
+otherwise
+where 4i,j = Hπj (Si,j ) − Hπi (Si,j ), and k varies over the neighbors of i in T .
+• If maxk mk→i < 0 then i is the optimal root; otherwise, up(i) = argmaxk mk→i .
+Intuitively, the message mi→j represents the loss (entropy) with root node j , compared to the best
+root on i’s side of the tree. Ties between nodes, if any, can be resolved using node IDs.
+5.2 Distributed optimized conditional alignment
+In the absence of an additional procedure, RD P I can be viewed as performing conditional alignment.
+However, the alignment is applied to the local belief at each node, rather than the global distribution,
+and the nodes may not agree on the choice of the root r . Thus, the network is not guaranteed to
+reach a globally consistent, aligned distribution. In this section, we show that RD P I can be extended
+to incorporate the optimized conditional alignment (OCA) algorithm from the previous section.
+By Property 1, at convergence, the priors at each node form a subtree of an external junction tree
+for the assumed density. Conceptually, if we were to apply OCA to this subtree, the node would have
+an aligned distribution, but nodes may not be consistent with each other. Intuitively, this happens
+because the optimization messages mi→j were not propagated between different nodes.
+In RD P I, node n’s belief βn includes a collection of (potentially inconsistent) priors {πi (Ci )}.
+, ψm × Q
+In the standard sum-product inference algorithm, an inference message µm→n from node m to node
+n is computed by marginalizing out some variables from the factor µ+
+m→n
+k 6=n µk→m
+that combines the messages received from node m’s other neighbors with node m’s local belief. The
+inference message in RD P I involves a similar marginalization, which corresponds to pruning some
+m→n [7]. When such pruning occurs, any likelihood information λi (Ci ) associated
+cliques from µ+
+with the pruned clique i is transferred to its neighbor j .
+Our distributed OCA algorithm piggy-backs on this pruning, computing an optimization message
+mi→j , which is stored in clique j . (To compute this message, cliques must also carry their original,
+unaligned priors.) At convergence, the nodes will not only have a subtree of an external tree, but also
+the incoming optimization messages that result from pruning of all other cliques of the external tree.
+In order to determine the globally optimal root, each node (locally) selects a root for its subtree. If
+this root is one of the initial cliques associated with n, then n, and in particular this clique, is the root
+of the conditional alignment. The alignment is propagated throughout the network. If the optimal
+root is determined to be a clique that came from a message received from a neighbor, then the neigh-
+bor (or another node upstream) is the root, and node n aligns itself with respect to the neighbor’s
+message. With an additional tie-breaking rule that ensures that all the nodes make consistent choices
+about their subtrees [4], this procedure is equivalent to running the OCA algorithm centrally:
+Theorem 2. Given sufﬁcient communication and in the absence of network partitions, nodes run-
+ning distributed OCA reach a globally consistent belief based on conditional alignment, selecting
+the root clique that leads to the joint distribution of minimal entropy. In the presence of partitions,
+each partition will reach a consistent belief that minimizes the entropy within this partition.
+
+5.3 Jointly optimized alignment
+While conceptually simple, there are situations where such a rooted alignment will not provide
+a good aligned distribution. For example, if in the example in Figure 1, cameras 2 and 3 carry
+marginals π2 (C 2,3 , M ) and π20 (C 2,3 , M ), respectively, and both observe the person, node 2 will
+have a better estimate of C 2 , while node 3’s estimate of C 3 will be more accurate. If either node
+is chosen as the root, the aligned distribution will have a worse estimate of the pose of one of
+the cameras, because performing rooted alignment from either direction effectively overwrites the
+marginal of the other node. In this example, rather than ﬁxing a root, we want an aligned distribution
+that attempts to simultaneously optimize the distance to both π2 (C 2,3 , M ) and π20 (C 2,3 , M ).
+
+, ΣCi
+
+i∈NT
+
+),
+
+)T Σ−1
+i
+
+(a) 25-camera testbed
+(c) Convergence, temperature
+(b) Convergence, cameras
+Figure 2: (a) Testbed of 25 cameras used for the SLAT experiments. (b) Convergence results for individual
+cameras in one experiment. Horizontal lines indicate the cooresponding centralized solution at the end of the
+experiment. (c) Convergence versus amount of communication for a temperature network of 54 real sensors.
+X
+We propose the following optimization problem that minimizes the sum of reverse KL diver-
+gence from the aligned distribution to the clique marginals πi (Ci ):
+D(q (Ci ) k πi (Ci )),
+˜p (X) = argmin
+i∈NT
+q (X),q |=T
+where q |= T denotes the constraint that ˜p factorizes according to the junction tree T . This method
+i + X
+X
+will often provide very good aligned distributions (e.g., Figure (d)). For Gaussian distributions, this
+optimization problem corresponds to
+− log |ΣCi
+(µi − µCi
+(µi − µCi
+| + hΣ−1
+minµC
+i∈NT
+,ΣC
+i
+i
+i
+∀i ∈ NT ,
+(cid:23) 0,
+ΣCi
+(4)
+subject to
+are the means and covariances of q over the variables Ci , and µi , Σi are the means
+, ΣCi
+where µCi
+and covariances of the marginals πi . The problem in Equation 4 consists of two independent convex
+optimization problems over the means and covariances of q , respectively. The former problem can
+be solved in a distributed manner using distributed linear regression [6], while the latter can be
+solved using a distributed version of an iterative methods, such as conjugate gradient descent [1].
+6 Experimental results
+We evaluated our approach on two applications: a camera localization problem [5] (SLAT), in
+which a set of cameras simultaneously localizes itself by tracking a moving object, and tempera-
+ture monitoring application, analogous to the one presented in [7]. Figure 2(a) shows some of the
+25 ceiling-mounted cameras used to collect the data in our camera experiments. We implemented
+our distributed algorithm in a network simulator that incorporates message loss and used data from
+these real sensors as our observations. Figure 2(b) shows the estimates obtained by three cameras in
+one of our experiments. Note that each camera converges to the estimate obtained by the centralized
+B&K98 algorithm. In Figure 2(c), we evaluate the sensitivity of the algorithm to incomplete com-
+munication. We see that, with a modest number of rounds of communication performed in each time
+step, the algorithm obtains a high quality of the solution and converges to the centralized solution.
+In the second set of experiments, we evaluate the alignment methods, presented in Section 5. In
+Figure 3(a), the network is split into four components; in each component, the nodes communicate
+fully, and we evaluate the solution if the communication were to be restored after a given number of
+time steps. The vertical axis shows the RMS error of estimated camera locations at the end of the ex-
+periment. For the unaligned solution, the nodes may not agree on the estimated pose of a camera, so
+it is not clear which node’s estimate should be used in the RMS computation; the plot shows an “om-
+niscient envelope” of the RMS error, where, given the (unknown) true camera locations, we select
+the best and worst estimates available in the network for each camera’s pose. The results show that,
+in the absence of optimized alignment, inconsistencies can degrade the solution: observations col-
+lected after the communication is restored may not make up for the errors introduced by the partition.
+The third experiment evaluates the performance of the distributed algorithm in highly-
+disconnected scenarios. Here, the sensor network is hierarchically partitioned into smaller discon-
+nected components by selecting a random cut through the largest component. The communication
+is restored shortly before the end of the experiment. Figures 3(b) shows the importance of aligning
+from the correct node: the difference between the optimized root and an arbitrarily chosen root is
+signiﬁcant, particularly when the network becomes more and more fractured. In our experiments,
+large errors often resulted from the nodes having uncertain beliefs, hence justifying the objective
+function. We see that the jointly optimized alignment described in Section 5.3, min. KL, tends
+to provide the best aligned distribution, though often close to the optimized root, which is simpler
+
+05010015020025030000.10.20.30.4time stepRMS errorCamera 7Camera 10Camera 302040600.20.250.30.350.40.45RMS errorepochs per time step35 nodes54 nodes(a) camera localization
+(c) temperature monitoring
+(b) camera localization
+Figure 3: Comparison of the alignment methods. (a) RMS error vs. duration of the partition. For the unaligned
+solution, the plot shows bounds on the error: given the (unknown) camera locations, we select the best and worst
+estimates available in the network for each camera’s pose. In the absence of optimized alignment, inconsisten-
+cies can degrade the quality of the solution. (b, c) RMS error vs. number of partitions. In camera localization
+(b), the difference between the optimized alignment and the alignment from an arbitrarily chosen ﬁxed root is
+signiﬁcant. For the temperature monitoring (c), the differences are less pronounced, but follow the same trend.
+to compute. Finally, 3(c) shows the alignment results on the temperature monitoring application.
+Compared to SLAT, the effects of network partitions on the results for the temperature data are less
+severe. One contributing factor is that every node in a partition is making local temperature obser-
+vations, and the approximate transition model for temperatures in each partition is quite accurate,
+hence all the nodes continue to adjust their estimates meaningfully while the partition is in progress.
+7 Conclusions
+This paper presents a new distributed approach to approximate dynamic ﬁltering based on a dis-
+tributed representation of the assumed density in the network. Distributed ﬁltering is performed by
+ﬁrst conditioning on evidence using a robust distributed inference algorithm [7], and then advancing
+to the next time step locally. With sufﬁcient communication in each time step, our distributed algo-
+rithm converges to the centralized B&K98 solution. In addition, we identify a signiﬁcant challenge
+for probabilistic inference in dynamical systems: nodes can have inconsistent beliefs about the cur-
+rent state of the system, and an ineffective handling of this situation can lead to very poor estimates
+of the global state. We address this problem by developing a distributed algorithm that obtains an
+informative consistent distribution, optimizing over various choices of the root node, and an alterna-
+tive joint optimization approach that minimizes a KL divergence-based criterion. We demonstrate
+the effectiveness of our approach on a suite of experimental results on real-world sensor data.
+Acknowledgments
+This research was supported by grants NSF-NeTS CNS-0625518 and CNS-0428738 NSF ITR. S.
+Funiak was supported by the Intel Research Scholar Program; C. Guestrin was partially supported
+by an Alfred P. Sloan Fellowship.
+References
+[1] D. P. Bertsekas and J. N. Tsitsiklis. Parallel and Distributed Computation: Numerical Methods. Athena
+Scientiﬁc; 1st edition (January 1997), 1997.
+[2] X. Boyen and D. Koller. Tractable inference for complex stochastic processes. In Proc. of UAI, 1998.
+[3] R. Cowell, P. Dawid, S. Lauritzen, and D. Spiegelhalter. Probabilistic Networks and Expert Systems.
+Springer, New York, NY, 1999.
+[4] S. Funiak, C. Guestrin, M. Paskin, and R. Sukthankar. Robust probabilistic ﬁltering in distributed systems.
+Technical Report CMU-CALD-05-111, Carnegie Mellon University, 2005.
+[5] S. Funiak, C. Guestrin, M. Paskin, and R. Sukthankar. Distributed localization of networked cameras. In
+Proc. of Fifth International Conference on Information Processing in Sensor Networks (IPSN-06), 2006.
+[6] C. Guestrin, R. Thibaux, P. Bodik, M. A. Paskin, and S. Madden. Distributed regression: an efﬁcient
+framework for modeling sensor network data. In Proc. of IPSN, 2004.
+[7] M. A. Paskin and C. E. Guestrin. Robust probabilistic inference in distributed systems. In UAI, 2004.
+[8] M. A. Paskin, C. E. Guestrin, and J. McFadden. A robust architecture for inference in sensor networks.
+In Proc. of IPSN, 2005.
+[9] A. Pfeffer and T. Tai. Asynchronous dynamic Bayesian networks. In Proc. UAI 2005, 2005.
+[10] M. Rosencrantz, G. Gordon, and S. Thrun. Decentralized sensor fusion with distributed particle ﬁlters. In
+Proc. of UAI, 2003.
+[11] F. Zhao, J. Liu, J. Liu, L. Guibas, and J. Reich. Collaborative signal and information processing: An
+information directed approach. Proceedings of the IEEE, 91(8):1199–1209, 2003.
+
+05010000.10.20.3RMS errorDuration of the partitionfixed rootoptimized rootunalignedlower boundupper bound024681000.20.40.60.81RMS errorNumber of partitionsfixed rootoptimized rootmin. KLunalignedupper boundlower bound051000.10.20.30.40.5RMS errorNumber of partitionsfixed rootoptimized rootmin. KLunalignedlower boundupper bound

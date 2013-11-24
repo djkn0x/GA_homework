@@ -1,0 +1,576 @@
+Continuous Time Particle Filtering for fMRI
+
+Lawrence Murray
+School of Informatics
+University of Edinburgh
+lawrence.murray@ed.ac.uk
+
+Amos Storkey
+School of Informatics
+University of Edinburgh
+a.storkey@ed.ac.uk
+
+Abstract
+
+We construct a biologically motivated stochastic differential model of the neu-
+ral and hemodynamic activity underlying the observed Blood Oxygen Level De-
+pendent (BOLD) signal in Functional Magnetic Resonance Imaging (fMRI). The
+model poses a difﬁcult parameter estimation problem, both theoretically due to the
+nonlinearity and divergence of the differential system, and computationally due to
+its time and space complexity. We adapt a particle ﬁlter and smoother to the task,
+and discuss some of the practical approaches used to tackle the difﬁculties, includ-
+ing use of sparse matrices and parallelisation. Results demonstrate the tractability
+of the approach in its application to an effective connectivity study.
+
+1 Introduction
+Functional Magnetic Resonance Imaging (fMRI) poses a large-scale, noisy and altogether difﬁcult
+problem for machine learning algorithms. The Blood Oxygen Level Dependent (BOLD) signal,
+from which fMR images are produced, is a measure of hemodynamic activity in the brain – only an
+indirect indicator of the neural processes which are of primary interest in most cases.
+For studies of higher level patterns of activity, such as effective connectivity [1], it becomes neces-
+sary to strip away the hemodynamic activity to reveal the underlying neural interactions. In the ﬁrst
+instance, this is because interactions between regions at the neural level are not necessarily evident at
+the hemodynamic level [2]. In the second, analyses increasingly beneﬁt from the temporal qualities
+of the data, and the hemodynamic response itself is a form of temporal blurring.
+We are interested in the application of machine learning techniques to reveal meaningful patterns
+of neural activity from fMRI. In this paper we construct a model of the processes underlying the
+BOLD signal that is suitable for use in a ﬁltering framework. The model proposed is close to that
+of Dynamic Causal Modelling (DCM) [3]. The main innovation over these deterministic models is
+the incorporation of stochasticity at all levels of the system. This is important; under ﬁxed inputs,
+DCM reduces to a generative model with steady state equilibrium BOLD activity and independent
+noise at each time point. Incorporating stochasticity allows proper statistical characterisation of the
+dependence between brain regions, rather than relying on relating decay rates1 .
+Our work has involved applying a number of ﬁltering techniques to estimate the parameters of
+the model, most notably the Unscented Kalman Filter [4] and various particle ﬁltering techniques.
+This paper presents the application of a simple particle ﬁlter. [5] take a similar ﬁltering approach,
+applying a local linearisation ﬁlter [6] to a model of individual regions. In contrast, the approach
+here is applied to multiple regions and their interactions, not single regions in isolation.
+Other approaches to this type of problem are worth noting. Perhaps the most commonly used tech-
+nique to date is Structural Equation Modelling (SEM) [7; 8] (e.g. [9; 10; 11]). SEM is a multivariate
+1A good analogy is the fundamental difference between modelling time series data yt using an exponentially
+decaying curve with observational noise xt = axt−1 + c, yt = xt + t , and using a much more ﬂexible Kalman
+ﬁlter xt = axt−1 + c + ωt , yt = xt + t (where xt is a latent variable, a a decay constant, c a constant and 
+and ω Gaussian variables).
+
+1
+
+regression technique where each dependent variable may be a linear combination of both indepen-
+dent and other dependent variables. Its major limitation is that it is static, assuming that all observa-
+tions are temporally independent and that interactions are immediate and wholly evident within each
+single observation. Furthermore, it does not distinguish between neural and hemodynamic activity,
+and in essence identiﬁes interactions only at the hemodynamic level.
+The major contributions of this paper are establishing a stochastic model of latent neural and hemo-
+dynamic activity, formulating a ﬁltering and smoothing approach for inference in this model, and
+overcoming the basic practical difﬁculties associated with this. The estimated neural activity relates
+to the domain problem and is temporally consistent with the stimulus. The approach is also able to
+establish connectivity relationships.
+The ability of this model to establish such connectivity relationships on the basis of stochastic tem-
+poral relationships is signiﬁcant. One problem in using structural equation models for effective
+connectivity analysis is the statistical equivalence of different causal models. By presuming a tem-
+poral causal order, temporal models of this form have no such equivalence problems. Any small
+amount of temporal connectivity information available in fMRI data is of signiﬁcant beneﬁt, as it
+can disambiguate between statically equivalent models.
+Section 2 outlines the basis of the hemodynamic model that is used. This is combined with neural,
+input and measurement models in Section 3 to give the full framework. Inference and parameter
+estimation are discussed in Section 4, before experiments and analysis in Sections 5 and 6.
+2 Hemodynamics
+Temporal analysis of fMRI is signiﬁcantly confounded by the fact that it does not measure brain
+activity directly, but instead via hemodynamic activity, which (crudely) temporally smooths the
+activity signal. The quality of temporal analysis therefore depends signiﬁcantly on the quality of
+model used to relate neural and hemodynamic activity.
+This relationship may be described using the now well established Balloon model [12]. This models
+a venous compartment as a balloon using Windkessel dynamics. The state of the compartment is
+represented by its blood volume normalised to the volume at rest, v = V /V0 (blood volume V , rest
+volume V0 ), and deoxyhemoglobin (dHb) content normalised to the content at rest, q = Q/Q0 (dHb
+content Q, rest content Q0 ). The compartment receives inﬂow of fully oxygenated arterial blood
+(cid:183)
+(cid:184)
+fin (t), extracts oxygen from the blood, and expels partially deoxygenated blood fout (t). The full
+dynamics may be represented by the differential system:
+1
+fin (t) E (t)
+− fout (v) q
+dq
+τ0
+E0
+v
+dt
+1
+[fin (t) − fout (v)]
+dv
+=
+dt
+τ0
+E (t) ≈ 1 − (1 − E0 ) 1
+fin (t)
+fout (v) ≈ v
+1
+α
+where τ0 and α are constants, and E0 is the oxygen extraction fraction at rest.
+This base model is driven by the independent input fin (t). It may be further extended to couple in
+neural activity z (t) via an abstract vasodilatory signal s [13]:
+
+(3)
+(4)
+
+(1)
+
+(2)
+
+=
+
+df
+= s
+dt
+− (f − 1)
+= z (t) − s
+ds
+τf
+τs
+dt
+The complete system deﬁned by Equations 1-6, with fin (t) = f , is now driven by the independent
+(cid:105)
+(cid:180)
+(cid:179)
+(cid:104)
+input z (t). From the balloon model, the relative BOLD signal change over the baseline S at any
+time may be predicted using [12]:
+∆S
++ k3 (1 − v)
+1 − q
+k1 (1 − q) + k2
+v
+S
+Figure 1 illustrates the system dynamics. Nominal values for constants are given in Table 1.
+
+= V0
+
+(6)
+
+(5)
+
+.
+
+.
+
+(7)
+
+2
+
+xi (t) =
+
+zi (t)
+neural activity
+fi (t) normalised blood ﬂow into the venous compartment
+si (t)
+vasodilatory signal
+qi (t)
+normalised dHb content of the venous compartment
+vi (t)
+normalised blood volume of the venous compartment
+
+Figure 1: Response of the balloon model to a 1s burst of neural activity at magnitude 1 (time on x
+axis, response on y axis).
+3 Model
+We deﬁne a model of the neural and hemodynamic interactions between M regions of interest. A
+
+region consists of neural tissue and a venous compartment. The state xi (t) of region i at time t is
+given by:
+The complete state at time t is given by x(t) = (x1 (t)T , . . . , xM (t)T )T .
+We construct a model of the interactions between regions in four parts – the input model, the neural
+model, the hemodynamic model and the measurement model.
+3.1
+Input model
+The input model represents the stimulus associated with the experimental task during an fMRI ses-
+sion. In general this is a function u(t) with U dimensions. For a simple block design paradigm a
+one-dimensional box-car function is sufﬁcient.
+3.2 Neural model
+Neural interactions between the regions are given by:
+dz = Az dt + C u dt + c + Σz dW,
+(8)
+where dW is the M -dimensional standard (zero mean, unit variance) Wiener process, A an M × M
+matrix of efﬁcacies between regions, C an M × U matrix of efﬁcacies between inputs and regions,
+c an M -dimensional vector of constant terms and Σz an M × M diagonal diffusion matrix with
+σz1 , . . . , σzM along the diagonal.
+This is similar to the deterministic neural model of DCM expressed as a stochastic differential equa-
+tion, but excludes the bilinear components allowing modulation of connections between seeds. In
+theory these can be added, we simply limit ourselves to a simpler model for this early work. In
+addition, and unlike DCM, nonlinear interactions between regions could also be included to account
+for modulatory activity. Again it seems sensible to keep the simplest linear case at this stage of
+the work, but the potential for nonlinear generalisation is one of the longer term beneﬁts of this
+approach.
+3.3 Hemodynamic model
+Within each region, the variables fi , si , qi , vi and zi interact according to a stochastic extension of
+the balloon model (c.f. Equations 1-6). It is assumed that regions are sufﬁciently separate that their
+
+Constant
+Value
+
+τ0
+0.98
+
+τf
+1/0.65
+
+τs
+1/0.41
+
+α
+0.32
+
+
+0.8
+
+V0 E0
+0.018
+0.4
+
+k1
+7E0
+
+k2
+2
+
+k3
+2E0 − 0.2
+
+Table 1: Nominal values for constants of the balloon model [12; 13].
+
+3
+
+ 0.84 1.04 0 30q 0.9 1.35 0 30v 0.8 1.9 0 30f-0.3 0.7 0 30s-0.2 1 0 30BOLD (%)(cid:35)
+
+d ln qi =
+
+fi
+
+(9)
+
+(10)
+
+d ln fi =
+
+hemodynamic activity is independent given neural activity[14]. Noise in the form of the Wiener
+process is introduced to si and the log space of fi , qi and vi , in the latter three cases to ensure
+positivity:
+(cid:184)
+(cid:183)
+1
+si dt + σfi dW
+fi
+− (f − 1)
+(cid:34)
+zi − s
+dt + σsi dW
+τs
+τf
+1 − (1 − E0 ) 1
+(cid:104)
+(cid:105)
+fi
+E0
+fi − v
+
+1
+qi τ0
+1
+dt + σvi dW.
+vi τ0
+3.4 Measurement model
+(cid:183)
+(cid:181)
+(cid:182)
+(cid:184)
+The relative BOLD signal change at any time for a particular region is given by (c.f. Equation 7):
++ k3 (1 − vi )
+1 − qi
+k1 (1 − qi ) + k2
+∆yi = V0
+vi
+This may be converted to an absolute measurement y∗
+i for comparison with actual observations by
+using the baseline signal bi for each seed and an independent noise source ξ ∼ N (0, 1):
+y∗
+i = bi (1 + ∆yi ) + σyi ξ .
+
+dt + σqi dW
+
+− v
+
+α −1
+1
+i
+
+qi
+
+(11)
+
+(12)
+
+(13)
+
+(14)
+
+dsi =
+
+d ln vi =
+
+1
+α
+i
+
+.
+
+4 Estimation
+The model is completely deﬁned by Equations 8 to 14. This ﬁts nicely into a ﬁltering framework,
+whereby the input, neural and hemodynamic models deﬁne state transitions, and the measurement
+model predicted observations. For i = 1, . . . , M , σzi , σfi , σsi , σqi and σvi deﬁne the system noise
+and σyi the measurement noise. Parameters to estimate are the elements of A, C , c and b.
+For a sequence of time points t1 , . . . , tT , we are given observations y(t1 ), . . . , y(tT ), where
+y(t) = (y1 (t), . . . , yM (t))T . We seek to exploit the data as much as possible by estimating
+P (x(tn ) | y(t1 ), . . . , y(tT )) for n = 1, . . . , T – the distribution over the state at each time point
+given all the data.
+Because of non-Gaussianity and nonlinearity of the transitions and measurements, a two-pass parti-
+cle ﬁlter is proposed to solve the problem. The forward pass is performed using a sequential impor-
+tance resampling technique similar to COND EN SAT ION [15], obtaining P (x(tn ) | y(t1 ), . . . , y(tn ))
+for n = 1, . . . , T . Resampling at each step is handled using a deterministic resampling method [16].
+The transition of particles through the differential system uses a 4th/5th order Runge-Kutta-Fehlberg
+method, the adaptive step size maintaining ﬁxed error bounds.
+The backwards pass is substantially more difﬁcult. Naively, we can simply negate the derivatives of
+the differential system and step backwards to obtain P (x(tn ) | y(tn+1 ), . . . , y(tT )), then fuse these
+with the results of the forwards pass to obtain the desired posterior. Unfortunately, such a backwards
+model is divergent in q and v, so that the accumulated numerical errors of the Runge-Kutta can
+easily cause an explosion to implausible values and a tip-toe adaptive step size to maintain error
+bounds. This can be mitigated by tightening the error bounds, but the task becomes computationally
+prohibitive well before the system is tamed.
+An alternative is a two-pass smoother that reuses particles from the forwards pass [17], reweighting
+them on the backwards pass so that no explicit backwards dynamics are required. This sidesteps the
+divergence issue completely, but is computationally and spatially expensive and requires computa-
+tn | x(tn−1 ) = s(j )
+tn and s(j )
+tn−1 ) for particular particles s(i)
+tion of p(x(tn ) = s(i)
+tn−1 . This imposes some
+limitations, but is nevertheless the method used here.
+The forwards pass provides a weighted sample set {(s(i)
+t )} at each time point t = t1 , . . . , tT
+, π (i)
+t
+for i = 1, . . . , P . Initialising with ψtT = πtT , the backwards step to calculate weights at time tn is
+
+4
+
+as follows [17]2 :
+
+tn+1 | x(tn ) = s(j )
+α(i,j )
+= p(x(tn+1 ) = s(i)
+tn ) for i, j = 1, . . . , P
+tn
+γtn = αtn πtn
+tn (ψtn+1 ﬁ γtn ) where ﬁ is element-wise division,
+δtn = αT
+(cid:80)
+ψtn = πtn ⊗ δtn where ⊗ is element-wise multiplication.
+tn = 1 and the smoothed result {(s(i)
+tn )} for i = 1, . . . , P
+ψ (i)
+tn , ψ (i)
+
+These are then normalised so that
+is stored.
+There are numerous means of propagating particles through the forwards pass that accommodate the
+resampling step and propagation of the Wiener noise through the nonlinearity. These include var-
+ious stochastic Runge-Kutta methods, the Unscented Transformation [4] or a simple Euler scheme
+using ﬁxed time steps and adding an appropriate portion of noise after each step. The requirement to
+tn+1 | x(tn ) = s(j )
+efﬁciently make P 2 density calculations of p(x(tn+1 ) = s(i)
+tn ) during the backwards
+pass is challenging with such approaches, however. To keep things simple, we instead simply prop-
+agate particles noiselessly through the transition function, and add noise from the Wiener process
+only at times t1 , . . . , tT as if the transition were linear. This reasonably approximates the noise of
+the system while keeping the density calculations very simple – transition s(j )
+tn noiselessly to obtain
+the mean value of a Gaussian with covariance equal to that of the system noise, then calculate the
+density of this Gaussian at s(i)
+tn+1 .
+Observe that if system noise is sufﬁciently tight, αtn becomes sparse as negligibly small densities
+round to zero. Implementing αtn as a sparse matrix can provide signiﬁcant time and space savings.
+Propagation of particles through the transition function and density calculations can be performed
+in parallel. This applies during both passes. For the backwards pass, each particle at tn need only
+be transitioned once to produce a Gaussian from which the density of all particles at tn+1 can be
+calculated, ﬁlling in one column of αtn .
+Finally, the parameters A, C , c and b may be estimated by adding them to the state with artiﬁcial
+dynamics (c.f. [18]), applying a broad prior and small system noise to suggest that they are generally
+constant. The same applies to parameters of the balloon model, which may be included to allow
+variation in the hemodynamic response across the brain.
+
+5 Experiments
+We apply the model to data collected during a simple ﬁnger tapping exercise. Using a Siemens
+Vision at 2T with a TR of 4.1s, a healthy 23-year-old right-handed male was scanned on 33 separate
+days over a period of two months. In each session, 80 whole volumes were taken, with the ﬁrst
+two discarded to account for T1 saturation effects. The experimental paradigm consists of alternat-
+ing 6TR blocks of rest and tapping of the right index ﬁnger at 1.5Hz, where tapping frequency is
+provided by a constant audio cue, present during both rest and tapping phases.
+All scans across all sessions were realigned using SPM5 [19] and a two-level random effects analysis
+performed, from which 13 voxels were selected to represent regions of interest. No smoothing or
+normalisation was applied to the data. Of the 13 voxels, four are selected for use in this experiment
+– located in the left posterior parietal cortex, left M1, left S1 and left premotor cortex. The mean
+of all sessions is used as the measurement y(t), which consists of M = 4 elements, one for each
+region.
+We set t1 = 1TR = 4.1s, . . . , tT = 78TR = 319.8s as the sequence of times, corresponding to
+the times at which measurements are taken after realignment. The experimental input function u(t)
+is plotted in Figure 2, taking a value of 0 at rest and 1 during tapping. The error bounds on the
+Runge-Kutta are set to 10−4 . Measurement noise is set to σyi = 2 for i = 1, . . . , M and the prior
+and system noise as in Table 2. With the elements of A, C , c and b included in the state, the state
+size is 48. P = 106 particles are used for the forwards pass, downsampling to 2.5 × 104 particles
+for the more expensive backwards pass.
+
+2We have expressed this in matrix notation rather than the original notation in [17]
+
+5
+
+Figure 2: Experimental input u(t), x axis is
+time t expressed in TRs.
+
+Figure 3: Number of nonzero elements in αtn
+for n = 1, . . . , 77.
+
+Ai,i
+Ai,j
+Ci,1
+zi
+fi , si , qi , vi , ci
+bi
+
+i = 1, . . . , N
+i, j = 1, . . . , N , i 6= j
+i = 1, . . . , N
+i = 1, . . . , N
+i = 1, . . . , N
+i = 1, . . . , N
+
+Prior Noise
+σ
+σ
+10−2
+1/2
+10−2
+1/2
+10−2
+1/2
+10−1
+1/2
+10−2
+1/2
+10−2
+10
+
+µ
+−1
+0
+0
+0
+0
+¯yi
+
+Table 2: Prior and system noise.
+
+The experiment is run on the Eddie cluster of the Edinburgh Compute and Data Facility (ECDF) 3
+over 200 nodes, taking approximately 10 minutes real time. The particle ﬁlter and smoother are
+distributed across nodes and run in parallel using the dysii Dynamic Systems Library 4 .
+After application of the ﬁlter, the predicted neural activity is given in Figure 4 and parameter esti-
+mates in Figures 6 and 7. The predicted output obtained from the model is in Figure 5, where it is
+compared to actual measurements acquired during the experiment to assess model ﬁt.
+6 Discussion
+The model captures the expected underlying form for neural activity, with all regions distinctly
+correlated with the experimental stimulus. Parameter estimates are generally constant throughout
+the length of the experiment and some efﬁcacies are signiﬁcant enough in magnitude to provide
+biological insight. The parameters found typically match those expected for this form of ﬁnger
+tapping task. However, as the focus of this paper is the development of the ﬁltering approach we
+will reserve a real analysis of the results for a future paper, and focus on the issues surrounding the
+ﬁlter and its capabilities and deﬁciencies. A number of points are worth making in this regard.
+Particles stored during the forwards pass do not necessarily support the distributions obtained during
+the backwards pass. This is particularly obvious towards the extreme left of Figure 4, where the
+smoothed results appear to become erratic, essentially due to degeneracy in the backwards pass.
+Furthermore, while the smooth weighting of particles in the forwards pass is informative, that of
+the backwards pass is often not, potentially relying on heavy weighting of outlying particles and
+shedding little light on the actual nature of the distributions involved.
+Figure 3 provides empirical results as to the sparseness of αtn . At worst at least 25% of elements
+are zero, demonstrating the advantages of a sparse matrix implementation in this case.
+The particle ﬁlter is able to establish consistent neural activity and parameter estimates across runs.
+These estimates also come with distributions in the form of weighted sample sets which enable the
+uncertainty of the estimates to be understood. This certainly shows the stochastic model and particle
+ﬁlter to be a promising approach for systematic connectivity analysis.
+
+3 http://www.is.ed.ac.uk/ecdf/
+4 http://www.indii.org/software/dysii/
+
+6
+
+-1 0 1 2061218 01x1082x1083x1084x108 0 77Figure 4: Neural activity predictions z (y axis)
+over time (x axis). Forwards pass results as
+shaded histogram, smoothed results as solid line
+with 2σ error.
+
+Figure 5: Measurement predictions y∗ (y axis)
+over time (x axis). Forwards pass results as
+shaded histogram, smoothed results as solid line
+with 2σ error, circles actual measurements.
+
+Figure 6: Parameter estimates A (y axis) over time (x axis). Forwards pass results as shaded his-
+togram, smoothed results as solid line with 2σ error.
+
+The authors would like to thank David McGonigle for helpful discussions and detailed information
+regarding the data set.
+
+7
+
+ 0 0.14-1 0 1 0 0.14-1 0 1 0 0.14-1 0 1 0 0.14 0 319.8-1 0 1 0 0.06 180 190 200 210 0 0.06 180 190 200 210 0 0.06 180 190 200 210 0 0.06 0 319.8 180 190 200 210-2-1 0 1-2-1 0 1-2-1 0 1-2-1 0 1 0 0.2 0 0.2 0 0.2 0 0.2Figure 7: Parameter estimates of C (y axis) over time (x axis). Forwards pass results as shaded
+histogram, smoothed results as solid line with 2σ error.
+
+References
+[1] Friston, K. and Buchel, C. (2004) Human Brain Function, chap. 49, pp. 999–1018. Elsevier.
+[2] Gitelman, D. R., Penny, W. D., Ashburner, J., and Friston, K. J. (2003) Modeling regional and psy-
+chophysiologic interactions in fMRI: the importance of hemodynamic deconvolution. NeuroImage, 19,
+200–207.
+[3] Friston, K., Harrison, L., and Penny, W. (2003) Dynamic causal modelling. NeuroImage, 19, 1273–1302.
+[4] Julier, S. J. and Uhlmann, J. K. (1997) A new extension of the Kalman ﬁlter to nonlinear systems. The
+Proceedings of AeroSense: The 11th International Symposium on Aerospace/Defense Sensing, Simulation
+and Controls, Multi Sensor Fusion, Tracking and Resource Management .
+[5] Riera, J. J., Watanabe, J., Kazuki, I., Naoki, M., Aubert, E., Ozaki, T., and Kawashim, R. (2004) A
+state-space model of the hemodynamic approach: nonlinear ﬁltering of BOLD signals. NeuroImage, 21,
+547–567.
+[6] Ozaki, T. (1993) A local linearization approach to nonlinear ﬁltering. International Journal on Control,
+57, 75–96.
+[7] Bentler, P. M. and Weeks, D. G. (1980) Linear structural equations with latent variables. Psychometrika,
+45, 289–307.
+[8] McArdle, J. J. and McDonald, R. P. (1984) Some algebraic properties of the reticular action model for
+moment structures. British Journal of Mathematical and Statistical Psychology, 37, 234–251.
+[9] Schlosser, R., Gesierich, T., Kaufmann, B., Vucurevic, G., Hunsche, S., Gawehn, J., and Stoeterb, P.
+(2003) Altered effective connectivity during working memory performance in schizophrenia: a study
+with fMRI and structural equation modeling. NeuroImage, 19, 751–763.
+[10] Au Duong, M., et al. (2005) Modulation of effective connectivity inside the working memory network in
+patients at the earliest stage of multiple sclerosis. NeuroImage, 24, 533–538.
+[11] Storkey, A. J., Simonotto, E., Whalley, H., Lawrie, S., Murray, L., and McGonigle, D. (2007) Learning
+structural equation models for fMRI. Advances in Neural Information Processing Systems, 19.
+[12] Buxton, R. B., Wong, E. C., and Frank, L. R. (1998) Dynamics of blood ﬂow and oxygenation changes
+during brain activation: The balloon model. Magnetic Resonance in Medicine, 39, 855–864.
+[13] Friston, K. J., Mechelli, A., Turner, R., and Price, C. J. (2000) Nonlinear responses in fMRI: The balloon
+model, Volterra kernels, and other hemodynamics. NeuroImage, 12, 466–477.
+[14] Zarahn, E. (2001) Spatial localization and resolution of BOLD fMRI. Current Opinion in Neurobiology,
+11, 209–212.
+[15] Isard, M. and Blake, A. (1998) Condensation – conditional density propagation for visual tracking. Inter-
+national Journal of Computer Vision, 29, 5–28.
+[16] Kitagawa, G. (1996) Monte Carlo ﬁlter and smoother for non-Gaussian nonlinear state space models.
+Journal of Computational and Graphical Statistics, 5, 1–25.
+[17] Isard, M. and Blake, A. (1998) A smoothing ﬁlter for condensation. Proceedings of the 5th European
+Conference on Computer Vision, 1, 767–781.
+[18] Kitagawa, G. (1998) A self-organising state-space model. Journal of the American Statistical Association,
+93, 1203–1215.
+[19] Wellcome Department of Imaging Neuroscience (2006), Statistical parametric mapping. Online at
+www.ﬁl.ion.ucl.ac.uk/spm/.
+
+8
+
+-1 0 1 0 0.2

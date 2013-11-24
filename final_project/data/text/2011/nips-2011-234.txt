@@ -1,0 +1,1175 @@
+A blind deconvolution method for neural spike
+identi ﬁcation
+
+Chaitanya Ekanadham
+Courant Institute
+New York University
+New York, NY 10012
+chaitu@math.nyu.edu
+
+Daniel Tranchina
+Courant Institute
+New York University
+New York, NY 10012
+
+Eero P. Simoncelli
+Courant Institute
+Center for Neural Science
+Howard Hughes Medical Institute
+New York University
+New York, NY 10012
+
+Abstract
+
+We consider the problem of estimating neural spikes from ext racellular voltage
+recordings. Most current methods are based on clustering, w hich requires sub-
+stantial human supervision and systematically mishandles temporally overlapping
+spikes. We formulate the problem as one of statistical inference, in which the
+recorded voltage is a noisy sum of the spike trains of each neuron convolved with
+its associated spike waveform. Joint maximum-a-posteriori (MAP) estimation of
+the waveforms and spikes is then a blind deconvolution problem in which the
+coefﬁcients are sparse. We develop a block-coordinate desc ent procedure to ap-
+proximate the MAP solution, based on our recently developed continuous basis
+pursuit method. We validate our method on simulated data as well as real data
+for which ground truth is available via simultaneous intracellular recordings. In
+both cases, our method substantially reduces the number of m issed spikes and
+false positives when compared to a standard clustering algorithm, primarily by
+recovering overlapping spikes. The method offers a fully au tomated alternative to
+clustering methods that is less susceptible to systematic errors.
+
+1
+
+Introduction
+
+The identi ﬁcation of individual spikes in extracellularly recorded voltage traces is a critical step in
+the analysis of neural data for much of systems neuroscience . One or more electrodes are embed-
+ded in neural tissue, and the voltage(s) are recorded as a function of time, with the intention of
+recovering the spiking activity of one or more nearby cells. Each spike appears with a stereotyped
+waveform, whose shape depends on the cell morphology, the ﬁl
+tering properties of the medium and
+the electrode, and the cell’s position relative to the electrode. The “spike sorting” problem is that
+of identifying distinct cells and their respective spike times. This is a difﬁcult statistical inverse
+problem, since one typically does not know the number of cells, the shapes of their waveforms, or
+the frequency or temporal dynamics of their spike trains (se e [1] for a review).
+
+The observed voltage is well-described as a linear superpos ition of the spike waveforms [1, 2, 3, 4],
+and thus, the problem bears resemblance to the classic sparse decomposition problem in signal pro-
+cessing and machine learning, where the neural waveforms are the “features ” and the spike trains
+are the “coefﬁcients ”, with the additional constraint that
+the features are unknown but convolutional,
+and the coefﬁcients are mostly zero except for a few that are c lose to one. This sparse blind de-
+convolution problem arises in a variety of contexts other than spike sorting, including radar [5],
+seismology [6], and acoustic processing [7, 8].
+
+Most current approaches to spike sorting (with notable exceptions [9, 10]) can be summarized in
+three steps ([1, 2]): (1) identify segments of neural activity (e.g., by thresholding the voltage), (2)
+
+1
+
+determine a low-dimensional feature representation for th ese segments (e.g., PCA), (3) cluster the
+segments in the feature space (e.g., k-means, mixture of Gaussians). Fig. 1 illustrates a simple
+version of this procedure. Segments within the same cluster are interpreted as spikes of a single
+neuron, whose waveform is estimated by the cluster centroid . This method works well in identifying
+temporally isolated spikes whose waveforms are easily dist inguishable from background noise and
+each other. However it generally fails for segments contain ing more than one spike (either from the
+same or different neurons), because these segments do not lie close to the clusters of any individual
+cell [1]. This is illustrated in Figs. 1(b) 1(c), and 1(d). Several state-of-the-art methods improve
+or combine upon one or more of these steps (e.g., [11, 12]), bu t remain susceptible to these errors
+because they still rely on clustering. These errors are syst ematic, and can have important scienti ﬁc
+consequences. For example, an unresolved question in neuroscience is whether the occurrence of
+correlated or synchronous spikes carries specialized info rmation [13, 14]. In order to experimentally
+address this question, one needs to record from multiple neu rons, and to accurately obtain their joint
+spiking activity. A method that systematically fails for synchronous spikes (e.g., by missing them
+altogether, or by incorrectly assigning them to another neu ron) will lead to erroneous conclusions.
+
+Although the limitations of clustering methods have been known within the neuroscience commu-
+nity for some time [1, 2, 15, 16], they remain ubiquitous. Practitioners have developed a wide
+range of manual adjustments to overcome these limitations, from adjusting the electrode position
+to isolate a single neuron, to manually performing the clustering for spike identi ﬁcation. However,
+previous studies have shown that there is great variability in manual sorting results [17], and that
+human choices for cluster parameters are often suboptimal [ 18]. As such, there is a need for a fully
+automated sorting method that avoids these errors. This need is becoming ever more urgent as the
+use of multi-electrode arrays increases ([19]): manual parameter selection for a multi-dimensional
+clustering problem becomes more difﬁcult and time-consumi ng as the number of electrodes grows.
+
+We formulate the spike sorting problem as a Bayesian estimat ion problem by incorporating a prior
+model for the spikes and assuming a linear-Gaussian model for the recording given the spikes [2, 4].
+Although the generative model is simple, inferring the spike times and waveforms is challenging.
+We approximate the most likely spikes and waveform shapes given the recording (i.e. the maximum-
+a-posteriori, or MAP solution), by alternating between solving for the spike times while ﬁxing the
+waveforms and vice versa. Solving for optimal spike times and amplitudes with ﬁxed waveform
+shapes is itself an NP-hard problem, and we employ a novel method called continuous basis pursuit
+[20, 21], combined with iterative reweighting techniques, to approximate its solution. We compare
+our method with clustering on simulated and real data, demonstrating substantial reduction in spike
+identi ﬁcation errors (both misses and false positives), pa rticularly when spikes overlap in the signal.
+
+2 Model of voltage trace
+
+The major deﬁciency of clustering is that each time segment i s modeled as a noisy version of a single
+centered waveform rather than a noisy superposition of multiple, time-shifted waveforms. A simple
+generative model for the observed voltage trace V (t) is summarized as follows:
+
+V (t) =
+
+Kn
+N
+Xi=1
+Xn=1
+{τni }Kn
+i=1 ∼ Poisson Process(λn )
+{ani }Kn
+i=1 ∼ N (1, ǫ2
+n )
+n = 1, ..., N
+
+aniWn (t − τni ) + η(t)
+
+n = 1, ..., N
+
+(1)
+
+(2)
+
+In words, the spikes are a Poisson processes with known rates {λn} and amplitudes independently
+normally distributed about unity. The trace is the sum of convolutions of the spikes with their re-
+spective waveforms W ≡ {Wn (t)}N
+n=1 along with Gaussian noise η(t) (note: other log-concave
+noise distributions can be used). Here, Kn is the (Poisson-distributed) number of spikes of the n’th
+waveform in the signal. Thus, the model accounts for superimposed spikes, variability in spike
+amplitude, as well as background noise. The model can easily be generalized to multielectrode
+recordings by making V (t) and the Wn (t)’s vector-valued, but to simplify notation we assume a
+single electrode. Note also that since the model describes the full voltage trace, it does not require a
+
+2
+
+2
+ 
+C
+P
+
+15
+
+10
+
+5
+
+0
+
+−5
+
+−10
+
+7
+
+2
+
+1
+
+5
+
+4
+
+6
+
+3
+
+ 
+
+(a)
+
+1
+ 
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+2
+ 
+C
+P
+
+20
+
+10
+
+0
+
+−10
+
+−20
+
+20
+
+−20
+
+−10
+
+0
+PC 1
+
+0
+PC 1
+(d)
+(c)
+(b)
+Figure 1: Illustration of clustering on simulated data. (a) Threshold/windowing procedure. Peaks are
+identi ﬁed using a threshold (horizontal lines) and windows are drawn about them (vertical lines) to
+identify segments. (b) Plot of the segments projected onto the ﬁrst two principal components. Color
+indicates the output of k-means clustering (k = 3). (c) The top-left plot shows the true waveforms
+used in this example. The other plots indicate the waveforms whose projections are the black points
+in (b).(d) Another example of simulated data with a single biphasic waveform (not shown). The
+projections of the spikes can have a non-Gaussian distribution in PC space. Two clusters arise
+because the waveform has two peaks around which the segments can be centered.
+
+10
+
+thresholding/windowing preprocessing stage, which can lead to additional artifacts (e.g., Fig 1(d)).
+The priors on the spike trains account for the observed varia bility in spike amplitudes and aver-
+age spike rates with minimal assumptions. We are interested in the maximum-a-posteriori (MAP)
+solution of the waveforms and spike times and amplitudes given the observed voltage trace V (t):
+
+P ({ani }, {τni }, W|V (t))
+
+arg max
+{ani },{τni },W
+= arg max
+{ani },{τni },W
+
+log(P (V (t)|{ani }, {τni }, W)) + log(P ({ani }, {τni }, W))
+
+(3)
+
+In the following sections, we describe a procedure to approx imate this solution.
+
+3
+
+Inference methods
+
+3.1 Objective function
+
+MAP estimation under the model described in Eq. (2) and Eq. (1) boils down to solving:
+
+1
+2
+
+min
+{ani },{τni },W
+
+2,Σ+Xn,i (cid:20) (ani − 1)2
+n ) − log(λn )(cid:21) (4)
+kV (t)−Xn,i
+log(2πǫ2
+aniWn (t−τni )k2
+2ǫ2
+n
+where k~xk2,Σ = kΣ−1/2~xk2 and Σ is the noise covariance. Direct inference of the parameters is a
+highly nonlinear and intractable problem. However, we can make the problem tractable by using a
+linear representation for time-shifted waveforms. The sim plest such representation uses a dictionary
+containing discretely time-shifted copies of the waveforms themselves {Wn (t − i∆)}n,i . We chose
+
+1
+2
+
++
+
+3
+
+to use a more accurate and efﬁcient dictionary to represent c ontinuously time-shifted waveforms in
+the context of sparse optimization, which relies on trigonometrically varying coefﬁcients [21]:
+
+Kn
+Xi=1
+
+N
+Xn=1
+
+aniWn (t − τni ) ≈
+
+T 
+∆ ) 
+ani
+Xn=1 Xi   Cn (t − i∆)
+N
+Vn (t − i∆) !
+ani rn cos( 2τni θn
+Un (t − i∆)
+)
+
+
+δ
+ani rn sin( 2τni θn
+T
+Xn=1 Xi   Cn (t − i∆)
+  xni1
+N
+Vn (t − i∆) !
+xni3 ! = (ΦW~x)(t)
+Un (t − i∆)
+xni2
+The dictionary ΦW contains shifted copies of the functions Cn (t), Un (t), Vn (t) that approximate
+the space of time-shifted waveforms. The functions Cn (t), Un (t), and V (t), as well as the constants
+rn and θn depend on the waveform Wn (t) and are explained in Fig. 2(b). We can then solve the
+following optimization problem:
+
+(5)
+
+=
+
+1
+2
+
+(6)
+
+min
+~x,W
+
+where F (~x, W) =
+
+F (~x, W) such that
+
+xni2 ≥ rn cos(θn )xni1 , ∀n, i
+px2
+ni2 + x2
+ni3 ≤ rnxni1 , ∀n, i
+2,Σ − Xn,i
+kV (t) − (ΦW~x)(t)k2
+(xni1 )(cid:1)
+log (cid:0)(1 − λn∆)δ(xni1 ) + (λn∆)φ1,ǫ2
+n
+where φµ,σ2 (.) is the Gaussian density function.The constraints on ~x in Eq. (6) ensure that each
+triplet (xni1 , xni2 , xni3 ) is consistent with the mapping deﬁned in Eq. 5, with xni1 being the ampli-
+tude and ∆
+atan (xni3 /xni2 ) being the time-shift associated with the waveform Wn (t) (see [21]
+2θn
+for a detailed development of this approach). The constrained region, denoted by C , is convex and
+is illustrated as sections of cones in Fig. 2(c). Note that we have used the Bernoulli discrete-time
+process with a spacing ∆ (matching the interpolation dictionary spacing) to approx imate the Poisson
+process described in Eq. (2). Even with this linear represen tation, the problem is not jointly convex
+in W and ~x, and is not convex in ~x for ﬁxed W. The optimization of Eq. (6) resembles that of [22]
+and other sparse-coding objective functions with the following important differences: (1) the dictio-
+nary is translation-invariant and interpolates continuou s time-shifts, (2) there is a constraint on the
+coefﬁcients ~x due to the interpolation, and (3) there is a nonconvex mixture prior on the coefﬁcients
+to model the spike amplitudes. We propose a block coordinate descent procedure to solve Eq. (6).
+After initializing W randomly, we iterate the following steps:
+
+1. Given W, approximately solve for ~x.
+2. Perform a rescaling xnij ← xnij
+and Wn (t) ← znWn (t) where the zn ’s are chosen to
+zn
+zn i , {znWn (t)}).
+optimize F (h xnij
+3. Given ~x, solve for W, constraining kWn (t)k2 to be less than or equal to its current value.
+The ﬁrst step minimizes successive convex approximations o f F and is the most involved of the
+three. The second is guaranteed to decrease F and amounts to N scalar optimizations. The ﬁnal
+step minimizes the ﬁrst term with respect to the waveforms wh ile keeping the second term constant,
+and amounts to an L2 -constrained least squares problem (ridge regression) tha t can be solved very
+efﬁciently. The following sections provide details of each of the steps.
+
+3.2 Solve spikes given waveforms
+
+In this step we wish to minimize the function F (·, W) while ensuring that the solution lies in the
+convex set C . However, this function is nonconvex and nonsmooth due to the second term in Eq. (6).
+This especially causes problems when the current estimates of W are far from the optimal values,
+since in this case there are many intermediate amplitudes be tween 0 and 1. To get around this, we
+replace each summand in the second term by a relaxation:
+G(xni1 ) = − log (cid:18)(1 − λn∆) Z ∞
+0
+
+e− xni1
+γ P (γ )dγ + (λn∆)φ1,ǫ2
+n
+
+(xni1 )(cid:19)
+
+1
+γ
+
+(7)
+
+4
+
+M
+
+f-∆/2
+
+f0
+
+c
+
+f∆/2
+
+(a)
+
+(b)
+
+(c)
+
+Figure 2: (a) Illustration of the circle approximation in [21]. The manifold M of translates of a
+function f (t) lies on the hypersphere since translation preserves norm (b lack curve). This can be
+locally approximated by a circle (red curve). The approxima tion is exact at 3 equally-spaced points
+(black dots). (b) Visualization in the plane on which the three translates of f (t) lie. The quantities
+r and θ can be derived analytically for a ﬁxed f (t) and spacing ∆. (c) These circle approximations
+can be linked together to form a piecewise-circular approximation of the entire manifold.
+
+which replaces the delta function at 0 with a mixture of exponential distributions. We chose the
+parameter γ to be Gamma-distributed about a ﬁxed small value. We solve th is approximation using
+an iterative reweighting scheme.The weights are initialized to be uniform w(0)
+ni = λn , ∀n, i. Then
+the following updates are iterated computed:
+
+~x(t+1) ← arg min
+~x∈C
+
+1
+2
+
+w(t+1)
+ni ←
+
+G(x(t+1)
+ni1
+x(t+1)
+ni1
+
+)
+
+2 + Xn,i
+kV (t) − (ΦW~x)(t)k2
+
+w(t)
+ni |xni1 |
+
+(8)
+
+(9)
+
+Eq. (8) is a convex optimization that can be solved efﬁcientl y. The weights are updated so that the
+second term in Eq. (8) is exactly the negative log prior probability of the previous solution ~x(t) . If a
+coefﬁcient is 0, its weight is ∞ and the corresponding basis function is discarded. Such reweighting
+procedures have been used to optimize a nonconvex function by a series of convex optimizations
+[23, 24, 25]. Although there is no convergence guarantee, we ﬁnd that it works well in practice.
+
+3.3 Solve rescaling factors
+
+The ﬁrst term of F (~x, {Wn (t)}) does not change by much if one divides the coefﬁcients xnij by
+1 . The second term does change under
+some zn and multiplies the corresponding waveform by zn
+such a rescaling. In order to avoid the solution where the waveforms/coefﬁcients become arbitrarily
+large/small, respectively, we perform a rescaling in a sepa rate step and then optimize the waveform
+shapes subject to a ﬁxed norm constraint (described in the ne xt section). Since the second term
+decomposes into terms that are each only dependent on one zn , we can independently solve the
+following scalar optimizations numerically:
+
+log (cid:18)(1 − ∆λn )
+z (cid:17)(cid:19)
+n (cid:16) xni1
+e− xni1
+z>0 Xi
+zn ← arg max
+zγ + ∆λnφ1,ǫ2
+These are essentially maximum likelihood estimates of the scale factors given ﬁxed coefﬁcients and
+waveform shapes. One then performs the updates:
+
+n = 1, ..., N
+
+1
+γ
+
+(10)
+
+1 If ΦW is linear in W, there is no change. For our choice of ΦW , there is a small change of order O(∆).
+
+5
+
+xnij ←
+
+xnij
+zn
+Wn (t) ← znWn (t)
+
+∀n, i, j
+
+∀n
+
+(11)
+
+(12)
+
+This step is guaranteed not to increase the objective in Eq. (6) since the ﬁrst term is held constant
+(up to a small error term, see footnote) and the second term ca nnot increase.
+
+3.4 Solve waveforms given spikes
+
+Given a set of coefﬁcients ~x, we can optimize waveform shapes by solving:
+
+min
+W:kWi (t)k2≤ki
+
+1
+2
+
+kV (t) − (ΦW~x)(t)k2
+2
+
+(13)
+
+where ki is the current norm of Wi (t). The constraints ensure that only the waveform shapes change
+(ideally, we would like the norm to be held ﬁxed, but we relax t o to an inequality to retain convexity),
+leaving any changes in scale to the previous step. Since (ΦW ~x)(t) is approximately a linear function
+of the waveforms, Eq. (13) is a standard ridge regression pro blem. Efﬁcient algorithms exist for
+solving this problem in its dual form ([26]). This step is guaranteed to decrease the objective in
+Eq. (6) since the second term is held constant and the ﬁrst ter m can only decrease.
+
+4 Results
+
+We applied our method to two data sets. The ﬁrst was simulated according to the generative model
+described in Eq. (2-1). The second is real data from Harris et al. ([18]) consisting of simultaneous
+paired intracellular/extracellular recordings. The intr acellular recording provides ground truth spikes
+for one of the cells in the extracellular recording.
+
+4.1 Simulated data
+
+We obtained three waveforms from retinal recordings made in the Chichilnisky lab at the Salk Insti-
+tute (shown in Fig. 3(a)). Three Poisson spike trains were sampled independently with rate (1− ρ)λ0
+with λ0 = 10Hz. To introduce a correlation of ρ = 1
+3 , we sampled another Poisson spike train with
+rate ρλ0 and added these spikes (with random jitter) to each of the previous three trains. Spike
+amplitudes were drawn from N (1, 0.12 ). The spikes were convolved with the waveforms and Gaus-
+sian white noise was added (with σ six times the smallest waveform amplitude). For clustering , the
+original trace was thresholded to identify segments(the threshold was varied in order to see the error
+tradeoff). PCA was applied and the leading PC’s explaining 95% of the total variance were retained.
+K -means clustering was then applied (with k = 3) in the reduced space.
+To reduce computational cost, we applied our method to disjoint segments of the trace, which were
+split off whenever activity was less than 3σ for more than half the waveform duration (about 4ms).
+The waveforms were initialized randomly and P (γ ) was Gamma-distributed with mean 0.0005 and
+coefﬁcient of variation 0.25 (in Eq. (7)) for all experiments. The waveforms were allowed to change
+in length by adding (removing) padding on the ends on each iteration if the values exceeded (did not
+exceed) 5% of the peak amplitude (similar to [7]). Padding was added in increments of 10% of the
+current waveform length. Convex optimizations were performed using the CVX package ([27]). The
+learned waveforms and spike amplitude distributions are shown in Fig. 3. The amplitude distribu-
+tions are well-matched to the generative distributions (shown in red). To evaluate performance, we
+counted missed spikes (relative to the number of true spikes ) and false positives (relative to the num-
+ber of predicted spikes) for clustering and our method. We va ried the segment- ﬁnding threshold for
+clustering, and the amplitude threshold for our algorithm. The error tradeoff is shown in Fig. 4(a),
+and indicates that our method reduces both types of errors.
+
+To visualize the errors, we chose optimal thresholds for eac h method (yielding the smallest number
+of misses and false positives), and then projected all segments used in clustering onto the ﬁrst two
+principal components. We indicate by dots, open circles, and crosses the hits, misses, and false
+
+6
+
+positives, respectively (with colors indicating the waveform). For the same segments, we illustrate
+the behavior of our method in the same space. Note that unlike clustering, our method is allowed to
+assign more than one spike to each segment. The visualization is shown in Figures 4(b) and 4(c),
+and shows how clustering fails to account for the superimposed spikes, while our method eliminates
+a large portion of these errors. We found that this improveme nt was robust to the amount of noise
+added to the original trace (not shown).
+
+6
+
+4
+
+2
+
+q
+e
+r
+f
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+6
+
+4
+
+2
+
+q
+e
+r
+f
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+6
+
+4
+
+2
+
+q
+e
+r
+f
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+0
+0
+
+0
+0
+
+10
+
+−10
+
+10
+20
+10
+20
+10
+20
+0
+amplitude (σ units)
+amplitude (σ units)
+amplitude (σ units)
+samples
+(a)
+(d)
+(c)
+(b)
+Figure 3: (a) Three waveforms used in simulations. (b),(c),(d) Histograms of the spike amplitudes
+learned by our algorithm of the blue,green, and red waveform s, respectively. The amplitudes were
+converted into units σ by multiplying them by the corresponding waveform amplitudes, then divid-
+ing by the noise standard deviation. The red line indicates the generative density, corresponding to
+a Gaussian with mean 1 and standard deviation 0.1.
+
+0
+0
+
+10
+
+0
+
+−10
+
+)
+s
+t
+i
+n
+u
+ 
+σ
+(
+ 
+e
+d
+u
+t
+i
+l
+p
+m
+a
+
+6
+
+5
+
+4
+
+3
+
+2
+
+1
+
+e
+s
+l
+a
+f
+ 
+s
+e
+k
+i
+p
+s
+ 
+.
+t
+s
+e
+ 
+t
+n
+e
+c
+r
+e
+P
+
+0
+ 
+0
+
+ 
+
+k=3
+CBP
+
+15
+
+10
+
+5
+
+0
+
+−5
+
+−10
+
+2
+ 
+C
+P
+
+15
+
+10
+
+5
+
+0
+
+−5
+
+−10
+
+2
+ 
+C
+P
+
+30
+
+30
+
+20
+
+−30
+
+−20
+
+−10
+
+10
+
+−30
+
+−10
+
+−20
+
+0
+0
+10
+20
+PC 1
+PC 1
+Percent true spikes missed
+(c)
+(b)
+(a)
+Figure 4: (a) Tradeoff of misses and false positives as the segment-identi ﬁcation threshold in clus-
+tering is varied (blue), and the amplitude threshold for our method (red) is varied. Diagonal lines
+indicate surfaces with equal total error. (b),(c) Visualization of spike sorting errors for clustering
+(b) and our method (c). Each point is a threshold-crossing segment in the signal, projected onto the
+ﬁrst two principal components. Dots represent segments who se composite spikes were all correctly
+identi ﬁed, with the color specifying the waveform (see Fig. 3(a)). Open circles and crosses repre-
+sent misses and false positives, respectively. The thresholds were optimized for each method, and
+correspond to the enlarged dots in (a).
+
+10
+
+20
+
+30
+
+4.2 Real data
+
+We used one electrode from the tetrode data in [18] to simplify our analysis. The raw trace was high-
+pass ﬁltered ( 800Hz) to remove slow drift. The noise standard deviation was estimated from regions
+not exceeding three times the overall standard deviation. We then repeated the same analysis as
+for the simulated data. The resulting waveforms and coefﬁci ents histograms are shown in Figure 5.
+Unlike the simulated example, the spike amplitude distributions are bimodal in nature, despite the
+prior amplitude distribution containing only one Gaussian . We ﬁrst focus on the high-amplitude
+groups (2 and 4), both of which are well-separated from their low-amplitude counterparts (1 and
+3), suggesting that an appropriately chosen threshold would provide accurate spike identi ﬁcation for
+the ground-truth cell (4). Figure 6(a) conﬁrms this, showin g that our method provides substantial
+reduction in misses/false positives. Figures 6(b) and 6(c) show that, as before, the majority of this
+reduction is accounted for by recovering spikes overlappin g with those of another cell (group 2).
+The low-amplitude groups (1 and 3) could arise from background cells whose waveforms look like
+scaled-down versions of those of the foreground cells 2 and 4 , thus creating secondary “lumps ” in
+the amplitude distributions. The projections of the events in these groups are labeled in Figures 6(b)
+
+7
+
+and 6(c), showing that it is unclear whether they arise from noise or one or two background cells. It
+is up to the user whether to interpret these badly-isolated g roups as cells.
+
+10
+
+0
+
+−10
+
+)
+s
+t
+i
+n
+u
+σ
+(
+ 
+e
+d
+u
+t
+i
+l
+p
+m
+a
+
+other
+cell
+
+ground
+truth
+cell
+
+other cell
+2
+
+6
+
+4
+
+2
+
+q
+e
+r
+f
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+1
+
+ground truth cell
+4
+
+6
+
+4
+
+2
+
+3
+
+q
+e
+r
+f
+ 
+e
+v
+i
+t
+a
+l
+e
+r
+
+0
+0
+
+0
+0
+
+20
+
+−20
+
+10
+20
+10
+20
+0
+amplitude (σ units)
+amplitude (σ units)
+samples
+(c)
+(b)
+(a)
+Figure 5: (a) Two waveforms learned from CBP. (b),(c) Distributions of the amplitude values for
+the blue and green waveform, respectively. The numbers labe l distinct groups of amplitudes that
+could be treated as spikes of a single cell. Group 4 corresponds to the ground truth cell. Group 2
+corresponds to another foreground cell. Groups 1 and 3 likel y correspond to a mixture of background
+cell activity and noise. The groups are labeled in PC-space in Figures 6(b) and 6(c).
+
+20
+
+15
+
+10
+
+5
+
+e
+s
+l
+a
+f
+ 
+s
+e
+k
+i
+p
+s
+ 
+.
+t
+s
+e
+ 
+t
+n
+e
+c
+r
+e
+P
+
+ 
+
+k=2
+k=3
+k=4
+CBP
+
+15
+
+10
+
+5
+
+0
+
+−5
+
+−10
+
+2
+ 
+C
+P
+
+Missed
+overlapping
+spikes
+
+15
+
+10
+
+5
+
+0
+
+−5
+
+−10
+
+2
+ 
+C
+P
+
+1
+
+3
+
+2
+
+4
+
+2
+
+1
+
+3
+
+4
+
+0
+ 
+0
+
+−15
+−10
+
+0
+
+20
+
+20
+
+10
+10
+5
+15
+10
+PC 1
+PC 1
+Percent true spikes missed
+(c)
+(b)
+(a)
+Figure 6: (a) Error tradeoff as in Fig. 4(a). The blue, green, and red curves are results of k-means
+clustering for different k . (b) Illustration of clustering errors in PC-space, with k = 4 and a threshold
+corresponding to the large red dot in (a). (c) Errors for our m ethod with threshold corresponding
+to the large black dot. The numbers show the approximate loca tion in PC-space of the amplitude
+groups demarcated in Figures 5(b) and 5(c).
+
+20
+
+−15
+−10
+
+0
+
+5 Discussion
+
+We have formulated the spike sorting problem as a maximum-a-posteriori (MAP) estimation prob-
+lem, assuming a linear-Gaussian likelihood of the observed trace given the spikes and a Poisson
+process prior on the spikes. Unlike clustering methods, the model explicitly accounts for over-
+lapping spikes, translation-invariance, and variability in spike amplitudes. Unlike other methods
+that handle overlapped spikes (e.g., [10]), our method jointly learns waveforms and spikes within a
+uni ﬁed framework. We derived an iterative procedure based o n block-coordinate descent to approx-
+imate the MAP solution. We showed empirically on simulated data that our method outperforms the
+standard clustering approach, particularly in the case of s uperimposed spikes. We also showed that
+our method yields an improvement on a real data set with ground truth, despite the fact that there
+are similar waveform shapes with different amplitudes. The majority of improvement in this case is
+also accounted for by identifying superimposed spikes. Our method has only a few parameters that
+are stable across a variety of conditions, thus addressing the need for an automated method for spike
+sorting that is not susceptible to systematic errors.
+
+References
+
+[1] M. S. Lewicki. A review of methods for spike sorting: the detection and classiﬁcation of neural action
+potentials. Network, 9(4):R53–R78, Nov 1998.
+[2] M. Sahani. Latent variable models for neural data analysis. PhD thesis, California Institute of Technol-
+ogy, Pasadena, California, 1999.
+[3] M Wehr, J S Pezaris, and M Sahani. Simultaneous paired intracellular and tetrode recordings for evaluat-
+ing the performance of spike sorting algorithms. Neurocomputing, 26-27:1061–1068, 1999.
+
+8
+
+[4] Maneesh Sahani, John S. Pezaris, and Richard A. Andersen. On the separation of signals from neighboring
+cells in tetrode recordings. In In Advances in Neural Information Processing Systems 10, pages 222–228.
+MIT Press, 1998.
+[5] P. H. van Cittert. Zum einﬂu der spaltbreite auf die intensittsverteilung in sp ektrallinien. ii. Zeitschrift fr
+Physik A Hadrons and Nuclei, 69:298–308, 1931. 10.1007/BF01391351.
+[6] J. Mendel. Optimal Seismic Deconvolution: An Estimation Based Approach. Academic Press, 1983.
+[7] Evan Smith and Michael S Lewicki. Efﬁcient coding of time-relative str ucture using spikes. Neural
+Computation, 17(1):19–45, Jan 2005.
+[8] Roger Grosse Rajat Raina, Helen Kwong, and Andrew Y. Ng. Shift-invariant sparse coding for audio
+classi ﬁcation. In UAI, 2007.
+[9] J W Pillow, J Shlens, L Paninski, A Sher, A M Litke, E J Chichilnisky, and E P Simoncelli. Spatio-
+temporal correlations and visual signaling in a complete neuronal popula tion. Nature, 454(7206):995–
+999, Aug 2008.
+[10] Jason S. Prentice, Jan Homann, Kristina D. Simmons, Gaper Tkaik, Vijay Balasubramanian, and Philip C.
+Nelson. Fast, scalable, bayesian spike identiﬁcation for multi-electrode ar rays. PLoS ONE, 6(7):e19884,
+07 2011.
+[11] R. Quian Quiroga, Z. Nadasdy, and Y. Ben-Shaul. Unsupervised spike detection and sorting with wavelets
+and superparamagnetic clustering. Neural Comput., 16:1661–1687, August 2004.
+[12] Ki Yong Kwon and K. Oweiss. Wavelet footprints for detection and sorting of extracellular neural action
+potentials. In Acoustics, Speech and Signal Processing (ICASSP), 2011 IEEE International Conference
+on, pages 609 –612, may 2011.
+[13] Markus Meister, Jerome Pine, and Denis A. Baylor. Multi-neuronal signals from the retina: acquisition
+and analysis. Journal of Neuroscience Methods, 51(1):95 – 106, 1994.
+[14] S. Nirenberg, S. M. Carcieri, A. L. Jacobs, and P. E. Latham. Retinal ganglion cells act largely as inde-
+pendent encoders. Nature, 411:698–701, 2001.
+[15] R. Segev, J. Goodhouse, J. Puchalla, and M. J. Berry. Recording spikes from a large fraction of the
+ganglion cells in a retinal patch. Nature Neuroscience, 7(10):1154–1161, October 2004.
+[16] C. Pouzat, O. Mazor, and G. Laurent. Using noise signature to optimize spike-sorting and to assess
+neuronal classi ﬁcation quality.
+J Neurosci Methods, 122(1):43–57, 2002.
+[17] Frank Wood, Michael J. Black, Carlos Vargas-irwin, Matthew Fellows, and John P. Donoghue. On the
+variability of manual spike sorting. IEEE Transactions on Biomedical Engineering, 51:912–918, 2004.
+[18] Kenneth D. Harris, Darrell A. Henze, Jozsef Csicsvari, Hajime Hirase, Kenneth D, Darrell A. Henze, and
+Jozsef Csicsvari. Accuracy of tetrode spike separation as determined by simultaneous intracellular and
+extracellular measurements. J Neurophysiol, 84:401–414, 2000.
+[19] Emery N. Brown, Robert E. Kass, and Partha P. Mitra. Multiple neural spike train data analysis: state-of-
+the-art and future challenges. Nature neuroscience, 7(5):456–461, May 2004.
+[20] C Ekanadham, D Tranchina, and E P Simoncelli. Sparse decomposition of transformation-invariant sig-
+nals with continuous basis pursuit. In Proc. Int’l Conf Acoustics Speech Signal Processing (ICASSP), Los
+Angeles, CA, May 22-27 2011. IEEE Sig Proc Society.
+[21] C Ekanadham, D Tranchina, and E P Simoncelli. Sparse decomposition of translation-invariant signals
+with continuous basis pursuit. IEEE Transactions on Signal Processing, 2011. Accepted for publication.
+[22] B. A. Olshausen and D. J. Field. Emergence of simple-cell receptive ﬁeld properties by learning a sparse
+code for natural images. Nature, 381(6583):607–609, Jun 1996.
+[23] Ingrid Daubechies, Ronald DeVore, Massimo Fornasier, and C. Sinan Gntrk. Iteratively reweighted least
+squares minimization for sparse recovery. Communications on Pure and Applied Mathematics, 63(1):1–
+38, 2010.
+[24] Emmanuel J. C. Enhancing sparsity by reweighted 1 minimization. J. Fourier Analysis and Applications,
+pages 877–905, 2008.
+[25] R. Chartrand and Wotao Yin. Iteratively reweighted algorithms for c ompressive sensing. In Acoustics,
+Speech and Signal Processing, 2008. ICASSP 2008. IEEE International Conference on, pages 3869 –
+3872, 31 2008-april 4 2008.
+[26] Honglak Lee, Alexis Battle, Rajat Raina, and Andrew Y. Ng. Efﬁcien t sparse coding algorithms.
+Advances in Neural Information Processing Systems 19, pages 801–808. 2007.
+[27] M. Grant and S. Boyd. CVX: Matlab software for disciplined convex programming, version 1.21.
+http://cvxr.com/cvx, October 2010.
+
+In
+
+9
+
+

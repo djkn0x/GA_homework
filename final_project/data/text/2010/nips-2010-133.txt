@@ -1,0 +1,638 @@
+MAP Estimation for Graphical Models by
+Likelihood Maximization
+
+Akshat Kumar
+Department of Computer Science
+University of Massachusetts
+Amherst, MA
+akshat@cs.umass.edu
+
+Shlomo Zilberstein
+Department of Computer Science
+University of Massachusetts
+Amherst, MA
+shlomo@cs.umass.edu
+
+Abstract
+
+Computing a maximum a posteriori (MAP) assignment in graphical models is a
+crucial inference problem for many practical applications. Several provably con-
+vergent approaches have been successfully developed using linear programming
+(LP) relaxation of the MAP problem. We present an alternative approach, which
+transforms the MAP problem into that of inference in a mixture of simple Bayes
+nets. We then derive the Expectation Maximization (EM) algorithm for this mix-
+ture that also monotonically increases a lower bound on the MAP assignment
+until convergence. The update equations for the EM algorithm are remarkably
+simple, both conceptually and computationally, and can be implemented using a
+graph-based message passing paradigm similar to max-product computation. Ex-
+periments on the real-world protein design dataset show that EM’s convergence
+rate is signiﬁcantly higher than the previous LP relaxation based approach MPLP.
+EM also achieves a solution quality within 95% of optimal for most instances.
+
+1
+
+Introduction
+
+Graphical models provide an effective framework to model complex systems via simpler local in-
+teractions and also provide an insight into the structure of the underlying probabilistic model. In
+particular, we focus on the class of undirected models called Markov random ﬁelds (MRFs) for
+which the joint distribution can be speciﬁed as the product of potential functions over the cliques
+of the graph. For many practical problems modeled using MRFs, ﬁnding the maximum a posteriori
+(MAP) assignment or the most probable assignment to the variables in the graph is a key infer-
+ence problem. For example, MAP estimation has been applied to image processing in computer
+vision [17, 11], protein design and protein side-chain prediction problems [17, 11], and natural lan-
+guage processing [7]. Finding the MAP assignment is NP-hard in general except for tree-structured
+graphs and graphs with bounded treewidth [5, 3]. This further underscores the need for developing
+scalable approximation algorithms that provide good solution quality.
+Recently, many algorithms have been proposed for approximating the MAP problem [15, 5, 11, 9, 6].
+Particularly, linear programming (LP) relaxation of the MAP problem has emerged as a popular
+technique to solve large-scale problems such as protein design and prediction problems [17, 10, 11].
+Such approaches relax the constraint that the solution for the MAP problem be integral. However, for
+large problems such as protein design, the large size of the LP prohibits the application of standard
+LP-solvers [17]. To alleviate such scalability issues, convergent message passing algorithms have
+been introduced, which monotonically decrease the dual objective of the LP relaxation [5, 11, 9].
+Convergence to the global optima is not guaranteed in general, but when the solution is integral, it
+can be shown to be globally optimal. The main advantage of these approaches lies in their ability
+to provide an upper bound on the problem and a certiﬁcate of optimality when upper bound is
+sufﬁciently close to the decoded solution.
+
+1
+
+In our work, we take a different approach to the MAP problem based on mean ﬁeld methods in
+variational inference [16]. First, we present an alternate representation of the MAP problem by de-
+composing the MRF into a ﬁnite-mixture of simple Bayes nets in which maximizing the likelihood
+of a special variable is equivalent to solving the MAP problem. Our approach is inspired by re-
+cent developments in planning by probabilistic inference and goal-directed planning [1, 13, 14, 12].
+Second, using this alternate representation, we derive the EM algorithm for approximate MAP es-
+timation. EM increases the lower bound on the MAP assignment monotonically until convergence
+and lends itself naturally to a graph-based message passing implementation.
+The main advantage of the EM approach lies in settings where a good approximation to MAP needs
+to be generated quickly. In our experiments on some of the largest protein design problems [17, 11],
+we show that EM increases the lower bound on MAP rapidly. This attribute of EM combined
+with the Max-Product LP algorithm (MPLP) [5, 11] that decreases the upper bound rapidly (as
+observed empirically) yields a new hybrid approach that provides quality-bounded solutions signiﬁ-
+cantly faster than previous approaches. Although convergence to the global optima is not guaranteed,
+EM achieves an average solution quality within 95% of optimal for the protein design problems and
+is signiﬁcantly faster than both MPLP [5, 11] and max-product (MP) [8]. We show that each iter-
+ation of EM is faster than that of max-product or MPLP by a factor related to the average degree
+of the graph. Empirically, the speedup factor can be as high as 30 for densely connected problems.
+We also show that EM is an embarrassingly parallel algorithm and can be parallelized easily to fur-
+ther speedup the convergence. Finally we also discuss potential pitfalls that are inherent in the EM
+formulation and highlight settings in which EM may not perform well.
+
+2 Markov Random Fields and the MAP Problem
+
+p(x; θ) =
+
+ij∈E θij (xi ,xj ) .
+
+A pairwise Markov random ﬁeld (MRF) can be described by an undirected graph G = (V , E ) con-
+sisting of a set of nodes, one per variable in x = {x1 , . . . , xn }, and a set of edges that connect pairs
+of nodes. A variable can take any value from a set of possible values referred to as the domain of
+that variable. An edge (i, j ) between nodes xi and xj speciﬁes a function θij . The joint assignment
+P
+x has the probability:
+e
+
+1
+Z
+P
+The MAP problem consists of ﬁnding the most probable assignment to all variables under p(x; θ).
+This is equivalent to ﬁnding the complete assignment x that maximizes the function f (x; θ) =
+ij∈E θij (xi , xj ). Before describing our formulation of the MAP problem, we ﬁrst describe the
+marginal polytope associated with the MAP problem and its outer bound based on LP relaxation.
+Then we discuss the relation of our approach with these polytopes. For details, we refer to [16, 11].
+Let µ denote a vector of marginal probabilities (also called mean parameters) for each node and
+edge of the MRF. That is, µ includes µi (xi ) ∀i ∈ V and µij (xi , xj ) ∀(i, j ) ∈ E . The set of µ that
+arises from some joint distribution p is referred to as the marginal polytope:
+M(G) = {µ | ∃p(x) s.t. p(xi , xj ) = µij (xi , xj ), p(xi ) = µi (xi )}
+X
+X
+The MAP problem is then equivalent to solving the following LP:
+µ · θ = max
+θij (xi , xj )µij (xi , xj )
+max
+f (x; θ) = max
+µ∈M(G)
+µ∈M(G)
+x
+ij∈E
+xi xj
+It can be shown that there always exists a maximizing solution µ which is integral and gives the
+optimal x. Unfortunately, the number of constraints used to describe this polytope are exponential
+and thus it cannot be solved efﬁciently. To remedy this, LP relaxations are proposed that outer bound
+the polytope M(G). The relaxation weakens the global constraint that µ arises from some common
+X
+X
+X
+distribution p. Instead, only pairwise and singleton consistency is required for mean parameters as
+given by the following conditions:
+µi (xi ) = 1 ∀i ∈ V ,
+µij ( ˆxi , xj ) = µj (xj ) ,
+xi
+ˆxj
+ˆxi
+The outer bound polytope is expressed as
+ML (G) = {µ ≥ 0 | The conditions of Eq. 3 hold}
+
+µij (xi , ˆxj ) = µi (xi ) ∀(i, j ) ∈ E
+
+(1)
+
+(2)
+
+(3)
+
+(4)
+
+2
+
+Figure 1: a) A pairwise Markov random ﬁeld; b) Equivalent mixture representation
+LP relaxation approaches such as MPLP [5, 11] optimize the function µ · θ over this outer bound
+ML (G) and consequently yield an upper bound on the MAP. Next we describe our approach for
+estimating the MAP.
+distributions that factorize according to the variables of the MRF, p0 (x) = Qn
+In the deﬁnition of marginal polytope M(G) (Eq. 1), no
+Inner bound on the marginal polytope
+restrictions are placed on the probability distribution p. Consider the following class of probability
+i=1 p0
+i (xi ). This is
+similar to the mean ﬁeld methods used in variational inference [16]. Our approach is to directly
+optimize over the following set of mean parameters µ:
+Mlb (G) = {µ | ∃p0 (x) s.t. µi (xi ) = p0
+j (xj )}
+i (xi )p0
+i (xi ) , µij (xi , xj ) = p0
+(5)
+where p0 is the distribution that factorizes according the variables in the MRF. Clearly Mlb (G) is
+an inner bound over M(G), because in M(G) there is no such restriction on the class of allowed
+X
+X
+probability distributions. The optimization criterion for estimating MAP under this set is:
+µ · θ = max
+µ∈Mlb (G)
+ij∈E
+xi xj
+Let f ?
+lb denote the optimizing value for the above formulation and f ? for the formulation in Eq. 2.
+lb ≤ f ? . A simple observation shows that indeed f ?
+lb = f ? . The reason is that there always
+Clearly f ?
+exists a maximizing µ ∈ M(G) that is integral and thus f ? corresponds to an integral assignment
+x which is also the MAP assignment [16]. Since all the integral assignments are also allowed by
+the deﬁnition of the factored distribution p0 and Mlb (G), it follows that optimizing over Mlb (G)
+lb = f ? and yields the MAP estimate. It is worth noticing that the constraints describing
+implies f ?
+the set Mlb (G) are only linear in the number of nodes in the MRF and correspond to normalization
+constraints as opposed to the exponentially large constraint set for M(G).
+It might appear that we have signiﬁcantly reduced the space of allowed mean parameters µ while
+still preserving the MAP. But the problem still remains challenging. The reduced set of parameters
+Mlb (G) is non-convex because of the non-linear constraint µij (xi , xj ) = µi (xi )µj (xj ) [16]. Thus
+optimization over Mlb (G) cannot be done using linear programming. To alleviate this problem,
+we next present another reformulation of the optimization problem in Eq. 6. Then we present the
+Expectation Maximization (EM) algorithm [4] for this reformulation that monotonically increases
+the lower bound on the MAP assignment using likelihood maximization until convergence.
+
+flb (x; θ) = max
+µ∈Mlb (G)
+
+max
+x
+
+θij (xi , xj )µi (xi )µj (xj )
+
+(6)
+
+3 MAP as a Mixture of Bayes Nets
+
+In this section we reformulate the optimization problem in Eq. 6 and recast it as the problem of
+likelihood maximization in a ﬁnite-mixture of simple Bayes nets. The key idea is to decompose
+the MRF into a mixture of simpler Bayes nets with many hidden variables – all the variables xi of
+the MRF. To incorporate the potential functions θ’s of the MRF and achieve equivalence between
+the likelihood and MAP value, a special binary reward variable ˆθ is introduced with its conditional
+distribution proportional to potentials θ . The details of the reformulation follow.
+For each edge (i, j ) in the graph G corresponding to the MRF, we create a depth-1 Bayes net. It
+consists of a binary reward variable ˆθ with its parents being the variables xi and xj . The reason
+for calling it a reward variable will become clear later. Fig. 1(a) shows a pairwise MRF over four
+variables. Fig. 1(b) shows the equivalent mixture of Bayes nets for each of the four edges in this
+MRF. The mixture random variable l, which is used to identify the Bayes nets, can take values from
+1 to |E |, the number of edges in the graph, with uniform probability. That is, if k = |E |, then
+
+3
+
+x1x2x4x31l=1l=2l=3l=4x1x1x2x4ˆθˆθˆθˆθx2x4x3x3MixtureofBayesnets1P (l = i) = 1/k for any 1 ≤ i ≤ k . In what follows, we will also use the variable l to denote the
+corresponding edge in the MRF.
+The parameters to estimate in this mixture are the marginal probabilities for each node xi . That is
+p = hp1 , . . . , pn i. This step directly establishes the connection with the space of factored probability
+distribution p0 of the set Mlb (G) (see Eq. 5).
+Next we set the conditional probability distribution of the variable ˆθ for each of the Bayes nets. This
+is done as follows:
+P ( ˆθ = 1|xl1 , xl2 , l) = θl (xl1 , xl2 ) − θmin
+θmax − θmin
+where l indicates a particular Bayes net corresponding to an edge of the MRF, xl1 and xl2 are
+the parent variables of ˆθ in this Bayes net and θl the potential function for this edge. θmax is the
+maximum value for any potential function θ , and θmin the minimum value. For example, for l = 1 in
+Fig. 1(b), xl1 = x1 , xl2 = x2 and P ( ˆθ = 1|x1 , x2 , l = 1) = (θ12 (x1 , x2 ) − θmin )/(θmax − θmin ).
+Note that these probabilities are nothing but the normalized potential functions θij of the original
+MRF. For this reason, ˆθ is also called a reward variable.
+It is used to establish the equivalence
+between the MAP value and the likelihood of observing ˆθ = 1.
+The full joint for a particular Bayes net indicated by the variable l is given by
+P ( ˆθ , xl1 , xl2 |l; p) = P ( ˆθ |xl1 , xl2 , l)pl1 (xl1 ; p)pl2 (xl2 ; p).
+(8)
+where pl1 is the marginal associated with the variable xl1 . Let us denote the variables (xl1 , xl2 ) by
+xl and let ˆθxl denote the probability P ( ˆθ = 1|xl1 , xl2 , l), then the following theorem establishes the
+link between the likelihood and MAP value. θl (xl ) denotes the corresponding potential function θl
+of the MRF, for l = 1 in Fig. 1(b), θl (xl ) = θ12 (x1 , x2 ).
+Theorem 1. Let the CPT of binary reward variable ˆθ be selected such that ˆθxl ∝ θl (xl ). Then
+maximizing the likelihood Lp = P ( ˆθ = 1; p) of observing the reward variable in the mixture of
+Bayes nets is equivalent to the MAP estimation of the original MRF.
+P ( ˆθ = 1, xl1 , xl2 |l; p) = X
+l = P ( ˆθ = 1|l; p) = X
+Proof. The likelihood for a single Bayes net is given by
+Lp
+xl
+xl
+Lp = X
+X
+X
+For the complete mixture, it is given by
+xl
+l
+l
+X
+X
+Upon substituting the deﬁnition of ˆθxl from Eq. 7 and using simple algebraic manipulations, we get
+θl (xl )pl1 (xl1 ; p)pl2 (xl2 ; p) = k(θmin + (θmax − θmin )Lp ).
+xl
+l
+Notice that the LHS of the above equation is the same as the optimization objective in Eq. 6. Thus
+we have shown that maximizing the likelihood Lp provides the MAP estimate.
+
+ˆθxl pl1 (xl1 ; p)pl2 (xl2 ; p).
+
+ˆθxl pl1 (xl1 ; p)pl2 (xl2 ; p).
+
+P (l)Lp
+l =
+
+1
+k
+
+(7)
+
+(9)
+
+(10)
+
+The above equation can also be explained intuitively in the context of goal directed planning. The
+RHS can be rewritten as k(Lp θmax + ¯Lp θmin ), where ¯Lp = 1 − Lp . According to this formulation,
+there are only two rewards in the system: θmin and θmax . The goal is to achieve the higher reward
+θmax for each edge in the MRF. Thus maximizing the probability Lp of achieving this goal solves
+the optimization problem.
+
+4 EM Algorithm for MAP Estimation
+
+We now derive the EM algorithm [4] for maximizing the likelihood of the reward variable in the
+mixture of Bayes nets. In this mixture, only the reward variable is treated as observed ( ˆθ = 1); all
+
+4
+
+Algorithm 1: Graph-based message passing for MAP estimation
+input : Graph G = (V , E ) for the MRF and potentials θ for each edge
+repeat
+h
+i
+foreach node i ∈ V do
+P
+MPLP: Send message γi→j to each neighbor j ∈ Ne(i)
+Set node belief bi (xi ) to the sum of incoming messages: bi (xi ) = P
+γi→j (xj ) ← maxxi
+θij (xi , xj ) − γj→i (xi ) +
+k∈Ne(i) γk→i (xi )
+2
+|Ne(i)|+1
+k∈Ne(i) γk→i (xi )
+δi→j (xj ) ← P
+EM: Send message δi→j to each neighbor j ∈ Ne(i)
+P
+pi (xi ) ˆθxi xj
+xi
+i (xi ) = pi (xi )
+Set marginal probability to sum of incoming messages: p?
+until stopping criterion is satisﬁed
+MPLP: Return complete assignment x s.t. xi = argmax ˆxi bi ( ˆxi )
+EM : Return complete assignment x s.t. xi = argmax ˆxi pi ( ˆxi )
+
+k∈Ne(i) δk→i (xi )
+Ci
+
+other variables are latent. We note that EM is not guaranteed to converge to a global optimum. How-
+ever, our experiments show that EM achieves an average solution quality within 95% of optimal for
+the standard MAP benchmark of protein design problems. We also show that the update equations
+for EM can be implemented efﬁciently using graph-based message passing and are computationally
+much faster than other message-passing algorithms such as max-product [8] and MPLP [5]. Below,
+we derive the update equations for the M-step. The E-step can be directly inferred from that. The
+parameters p to estimate are the marginal probabilities pi for each variable xi .
+Q(p, p? ) = X
+X
+M-step: EM maximizes the following expected complete log-likelihood for the mixture of Bayes
+nets. The variable p denotes the previous parameters and p? denotes the new parameters.
+P ( ˆθ = 1, xl , l; p) log P ( ˆθ = 1, xl , l; p? )
+xl
+l
+The full joint is given by:
+1
+P ( ˆθ = 1, xl , l; p) = P ( ˆθ = 1|xl , l)P (xl |l; p)P (l) =
+ˆθxl pl1 (xl1 ; p)pl2 (xl2 ; p)
+k
+We will omit the parameter p whenever the expression is unambiguous. Taking the log, we get:
+log P ( ˆθ = 1, xl , l; p) = hInd. terms of pi + log pl1 (xl1 ) + log pl2 (xl2 )
+(12)
+Substituting the above equation into the deﬁnition of Q(p, p? ) (Eq. 11) and discarding the terms
+X
+X
+which are independent of p? , we get:
+1
+ˆθxl pl1 (xl1 )pl2 (xl2 ){log p?
+l2 (xl2 )}
+l1 (xl1 ) + log p?
+k
+xl
+l
+Upon simplifying the above equation by grouping together the terms associated with the variables
+i (xi ) X
+X
+nX
+X
+xi of the MRF, we get:
+pi (xi ) log p?
+j∈Ne(i)
+xi
+xj
+i=1
+where Ne(i) denotes the set of immediate neighbors of the node i in the MRF graph. The above
+P
+pi (xi ) P
+expression can be easily maximized by maximizing for variables xi ’s individually. The ﬁnal update
+equation for the marginals is given by:
+j∈Ne(i)
+xj
+i (xi ) =
+p?
+Ci
+where Ci is the normalization constant for variable xi , and ˆθxi xj is the normalized reward:
+P ( ˆθ = 1|xi , xj , l) = (θij (xi , xj ) − θmin )/(θmax − θmin ).
+Algorithm 1 shows the graph-based message passing technique for both EM and MPLP. For both
+EM and MPLP, parameters are initialized randomly. The rest of the steps are self-explanatory.
+
+ˆθxi xj pj (xj )
+
+ˆθxi xj pj (xj )
+
+Q(p, p? ) =
+
+1
+k
+
+Q(p, p? ) =
+
+(11)
+
+(13)
+
+(14)
+
+(15)
+
+5
+
+Figure 2: a) Quality achieved by EM for all protein design instances. b) Quality for the largest
+instance ‘1fpo’; x-axis denotes time (in sec.), y -axis denotes the quality achieved.
+
+Complexity analysis and implementation Consider a single message γ sent out by a node in
+MPLP. The complexity of computing γ is O(d2 · deg), where d is the domain size of the variables,
+and deg represents the average degree of the graph or the average number of neighbors of a node.
+For EM, this complexity is only O(d2 ). Therefore, the computational complexity of each iteration
+of EM is lower than that of MPLP by a factor of deg . The same result holds for max-product,
+because its message-passing structure is similar to that of MPLP. The average number of neighbors
+in dense graphs such as the ones encountered in protein-design problems can be as high as 30. This
+makes EM signiﬁcantly faster than the previous approaches as we demonstrate empirically in the
+next section.
+EM’s simple message passing scheme also facilitates a very efﬁcient parallel implementation. In
+particular, all the δ messages for the current iteration in Alg. 1 can be computed in parallel for each
+node i, because they depend only on the parameters from the previous iteration. In contrast, MPLP
+follows a block coordinate descent strategy in which optimization is performed over a subset of
+variables, keeping all the other variables ﬁxed [5]. Therefore, opportunities for parallelism in the
+current implementations of MPLP are limited.
+
+5 Experiments
+
+Our ﬁrst set of experiments are on the protein design problems (total of 97 instances), which are
+described in [17]. In these problems, given a desired backbone structure of the protein, the task is to
+ﬁnd a sequence of amino-acids that is as stable as possible or has the lowest energy. This problem can
+be represented as ﬁnding the MAP conﬁguration in an MRF. These problems are particularly hard
+and dense with up to 170 variables, each having a large domain size of up to 150 values. We compare
+performance with the MPLP algorithm as described in [5, 11] and with max-product [8]. We used
+the standard setting for MPLP – ﬁrst it is run with edge based clusters for 1000 iterations [5] and
+then clusters of size 3 are added to tighten the LP relaxation [11]. EM was implemented in JAVA. To
+speedup the convergence of EM, we used a simple modiﬁcation of the M-step as described in [12].
+All our experiments were done on a Mac Pro with dual quad-core processor and 4GB RAM. All
+algorithms used only a single processor for computation. We note that another clustering-based
+improvement of MPLP is presented in [9]. Such clusters can be similarly incorporated into the EM
+algorithm, which currently does not use any clusters. Therefore, comparisons with such clustering
+techniques are left for future work.
+The main purpose of our experiments is to show that EM achieves high solution quality, much more
+quickly than MPLP or max-product. Therefore EM provides a good alternative, particularly when
+fast near-optimal solutions are desired. As reported in [11], for protein design problems solved
+exactly, mean running time was 9.7 hours. For all the problems, instead of running MPLP until the
+near-optimal solution is found, we used a ﬁxed cutoff of 5000 sec. For all the problems, we ran EM
+and max-product for 1500 iterations. For EM, different runs were initialized randomly and the best
+of 5-runs is plotted. Empirically, EM achieves a solution quality within 95% of optimal on average
+much faster than MPLP. The longest time EM took for any protein design instance was 352 sec. for
+the ‘1fpo’ instance (Fig. 2(b)).
+
+6
+
+ 50 55 60 65 70 75 80 85 90 95 100 0 10 20 30 40 50 60 70 80 90 100% of optimalInstanceOptimalUBAVG-OPTAVG-UB-50 0 50 100 150 200 250 300 350 400 450 0 100 2001fpo 200 1700 3200 4700N=170, C=3167EMMPLPU.B.Figure 3: Quality comparison with MPLP for six of the largest protein design instances. The x-axis
+denotes time (in sec.) and the y -axis denotes the quality achieved.
+
+Fig. 2(a) shows the solution quality EM achieves for all the instances in 1500 iterations. Since a tight
+upper bound for all the problems except the instance ‘1fpo’ is known [11], we show the percentage
+of optimal EM achieves. The legend titled ‘Optimal’ in Fig. 2(a) shows this value. For the unsolved
+instance ‘1fpo’, we use the best known upper bound MPLP achieved in 10 hours (≈ 434). As it is
+clear from this graph, EM achieves near-optimal solution quality for all the instances, within 95%
+on average. To show empirically that MPLP decreases the upper bound quickly, we also show the
+percentage of solution quality EM achieves when instead of using the best known upper bound, we
+use the upper bound provided by MPLP after 1,000 iterations. The legend in Fig. 2(a) titled ‘UB’
+shows this percentage. Even using this bound, EM achieves a quality within 91% on average (legend
+‘AVG-UB’). This further suggests that combining EM’s ability to rapidly increase the lower bound
+and MPLP’s ability to decrease the upper bound quickly, is a good way to create a hybrid approach
+that can provide provably near-optimal solutions much faster.
+Fig. 2(b) shows the quality achieved by EM and MPLP as a function of time for the largest instance
+‘1fpo’. To show the convergence curve of EM clearly, the plot uses a different scale for time T ≤ 200
+and the rest. This graph also shows that EM provides a much better solution quality, much faster
+than the MPLP. Legend ‘U.B’ denotes the best known upper bound. Empirically, we noticed that
+the main advantage of the EM approach was for problems which were large in size having many
+variables. For smaller problems, EM and MPLP were comparable in performance. Fig. 3 shows
+the quality comparisons with time for some of the largest protein design instances. Each graph title
+shows the instance name, N denotes the number of variables in the MRF, C denotes the number
+of potential functions θ or edges in the graph. For all these problems, EM provided near-optimal
+solution quality and is signiﬁcantly faster than MPLP.
+We also compared EM with max-product. Table 1 shows this comparison for some of the largest
+protein design instances. In this table, MP Quality denotes the best quality max-product achieved in
+1500 iterations, Time/Iteration denotes the time and iteration number when it was achieved for the
+ﬁrst time. Again, EM outperforms max-product by a signiﬁcant margin, achieving a higher solution
+quality much faster. For some of the problems, such as ‘1tmy’ and ‘1or7’, the quality achieved
+by EM was much higher. Also, for none of these problems max-product converged. This may
+be due to the fact that these are highly constrained problems with many cycles in the graph. The
+average degree of a node for these problems is very high, e.g., ≈ 37 for ‘1fpo’. The time required
+per iteration of max-product was 11 sec. for this instance. Therefore the predicted time per EM’s
+iteration is 11/37 ≈ 0.298 sec.; the actual time for EM was 0.235 sec. The same result holds for
+other instances as well. This is consistent with the complexity analysis in Sec. 4.
+We also tested EM on the protein prediction problems [17, 11] which are simpler and sparser than
+the protein design problems. The LP relaxations in this case can be solved even by the standard
+LP solvers unlike the protein design problems [17]. Surprisingly, EM does not work well on these
+
+7
+
+-50 0 50 100 150 200 250 300 0 100 2001fs1 200 1700 3200 4700N=114, C=2262EMMPLPU.B.-50 0 50 100 150 200 250 300 0 100 2001gef 200 1700 3200 4700N=119, C=2408EMMPLPU.B.-50 0 50 100 150 200 250 300 0 100 2001iib 200 1700 3200 4700N=103, C=2235EMMPLPU.B.-50 0 50 100 150 200 250 300 350 0 100 2001on2 200 1700 3200 4700N=135, C=2547EMMPLPU.B.-50 0 50 100 150 200 250 300 0 100 2001tmy 200 1700 3200 4700N=117, C=2720EMMPLPU.B.-50 0 50 100 150 200 250 300 0 100 2002phy 200 1700 3200 4700N=124, C=2753EMMPLPU.B.Instance MP Quality Time/Iteration
+3628.5/344
+268.3
+1fs1
+13938.9/1331
+239.8
+1gef
+10928.9/965
+272.4
+1bkb
+236.2
+11493.1/1099
+1iib
+11628.34/1226
+314.7
+1on2
+99.5/8
+202.9
+1tmy
+368.1
+234.9/22
+1or7
+9072.7/791
+406.2
+1fpo
+
+EM Quality Time/Iteration
+202.3/1220
+267.6
+71.6/428
+267.3
+250.1/1462
+288.2
+245.7
+78.1/442
+146.6/807
+317.1
+222.4/1067
+264.8
+240.8/1087
+410.2
+407.1
+263.6/1125
+
+U.B.
+276.4
+276.1
+292.8
+251.1
+327.23
+272.1
+419.3
+434
+
+Table 1: Solution quality and time (in sec.) comparison between EM and Max-Product (MP). U.B.
+denotes the best known upper bound.
+
+problems. For the hardest instance ‘1a8i’ (812 variables, 10124 edges, edge density=.03), MPLP
+achieves the near optimal value of 73, whereas EM could only achieve a value of −374. The reason
+for this lies in the reward structure of the problem or the values θmin and θmax . For this problem
+θmin = −5770.96 and θmax = 3.88. As shown earlier, EM works with the normalized rewards
+assigning 0 to the minimum reward −5770.96, and 1 to the maximum reward 3.88. This dramatic
+scaling of the reward is particularly problematic for EM as shown below.
+According to Thm. 1, the log-likelihood EM converges to is −2.949 × 10−4 . For EM to achieve the
+value 73, the log-likelihood should be −2.913 × 10−4 . However the drastic scaling of the reward
+causes this minor difference to signiﬁcantly affect solution quality. In such settings, EM may not
+work well. In contrast, for the largest protein design instance ‘1fpo’, the minimum reward is −59.2
+and maximum is 4.37. We also experimented on a 10×10 grid graph with 5 values per variable using
+the Potts model similar to [5]. We randomly generated 100 instances and found that EM achieved
+good solution quality, within 95% of optimal on average. The difference between the maximum and
+minimum reward in these problems was less than 5, with a typical setting: θmin ≈ −2.5, θmax ≈ 2.5.
+This further supports the previous analysis.
+
+6 Conclusion
+
+A number of techniques have been developed recently to ﬁnd the MAP assignment of Markov ran-
+dom ﬁelds. Particularly successful are approaches based on LP relaxation of the MAP problem
+such as MPLP. Such approaches minimize an upper bound relatively quickly, but take much longer
+to ﬁnd a good solution. In contrast, our proposed formulation seeks to provide good quality solu-
+tions quickly by directly maximizing a lower bound on the MAP value over the inner bound on the
+marginal polytope. The proposed Expectation Maximization (EM) algorithm increases this lower
+bound monotonically by likelihood maximization and is guaranteed to converge. Furthermore, EM’s
+update equations can be efﬁciently implemented using a graph-based message passing paradigm.
+Although EM may get stuck at a local optimum, our empirical results on the protein design dataset
+show that EM performs very well, producing solutions within 95% of optimal on average. EM
+achieves such high solution quality signiﬁcantly faster than MPLP or max-product for many large
+protein design problems. Another signiﬁcant advantage EM enjoys is the ease of parallelization.
+Using advanced parallel computing paradigms such as Google’s MapReduce [2] can further speedup
+the algorithm with little additional effort. Finally, we examined a setting in which EM may not
+work well due to a large gap between the minimum and maximum reward. Our ongoing efforts
+include incorporating some of the advanced clustering techniques based on LP relaxation of the
+MAP problem with the EM method, and designing heuristics that can help EM avoid getting stuck
+in local optima for problems with large variations in the reward structure.
+
+7 Acknowledgment
+
+We thank anonymous reviewers for their helpful suggestions. Support for this work was provided in
+part by the National Science Foundation Grant IIS-0812149 and by the Air Force Ofﬁce of Scientiﬁc
+Research Grant FA9550-08-1-0181.
+
+8
+
+References
+[1] H. Attias. Planning by probabilistic inference. In Proc. of the 9th Int. Workshop on Artiﬁcial Intelligence
+and Statistics, 2003.
+[2] J. Dean and S. Ghemawat. MapReduce: a ﬂexible data processing tool. Communications of the ACM,
+53(1):72–77, 2010.
+[3] R. Dechter. Constraint Processing. Morgan Kaufmann Publishers Inc., San Francisco, CA, USA, 2003.
+[4] A. P. Dempster, N. M. Laird, and D. B. Rubin. Maximum likelihood from incomplete data via the EM
+algorithm. Journal of the Royal Statistical society, Series B, 39(1):1–38, 1977.
+[5] A. Globerson and T. Jaakkola. Fixing Max-Product: Convergent message passing algorithms for MAP
+LP-relaxations. In Advances in Neural Information Processing Systems, 2007.
+[6] K. Jung, P. Kohli, and D. Shah. Local rules for global MAP: When do they work? In Advances in Neural
+Information Processing Systems, 2009.
+[7] C. D. Manning and H. Sch ¨utze. Foundations of statistical natural language processing. MIT Press,
+Cambridge, MA, USA, 1999.
+[8] J. Pearl. Probabilistic Reasoning in Intelligent Systems. Morgan Kaufmann Publishers Inc., 1988.
+[9] D. Sontag, A. Globerson, and T. Jaakkola. Clusters and coarse partitions in LP relaxations. In Advances
+in Neural Information Processing Systems, pages 1537–1544, 2008.
+[10] D. Sontag and T. Jaakkola. New outer bounds on the marginal polytope. In Advances in Neural Informa-
+tion Processing Systems, 2007.
+[11] D. Sontag, T. Meltzer, A. Globerson, T. Jaakkola, and Y. Weiss. Tightening LP relaxations for MAP using
+message passing. In Proc. of Uncertainty in Artiﬁcial Intelligence, pages 503–510, 2008.
+[12] M. Toussaint, L. Charlin, and P. Poupart. Hierarchical POMDP controller optimization by likelihood
+maximization. In Proc. of Uncertainty in Artiﬁcial Intelligence, pages 562–570, 2008.
+[13] M. Toussaint, S. Harmeling, and A. Storkey. Probabilistic inference for solving (PO)MDPs. Technical
+Report EDIINF-RR-0934, University of Edinburgh, School of Informatics, 2006.
+[14] M. Toussaint and A. J. Storkey. Probabilistic inference for solving discrete and continuous state markov
+decision processes. In Proc. of the International Conference on Machine Learning, pages 945–952, 2006.
+[15] M. Wainwright, T. Jaakkola, and A. Willsky. MAP estimation via agreement on (hyper)trees: Message-
+passing and linear programming approaches. IEEE Transactions on Information Theory, 51:3697–3717,
+2002.
+[16] M. J. Wainwright and M. I. Jordan. Graphical models, exponential families, and variational inference.
+Foundations and Trends in Machine Learning, 1(1-2):1–305, 2008.
+[17] C. Yanover, T. Meltzer, Y. Weiss, P. Bennett, and E. Parrado-hernndez. Linear programming relaxations
+and belief propagation – an empirical study. Journal of Machine Learning Research, 7:2006, 2006.
+
+9
+
+

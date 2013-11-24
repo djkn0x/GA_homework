@@ -1,0 +1,640 @@
+Submodularity Cuts and Applications
+
+⁄
+Yoshinobu Kawahara
+The Inst. of Scientiﬁc and Industrial Res. (ISIR),
+Osaka Univ., Japan
+kawahara@ar.sanken.osaka-u.ac.jp
+
+Kiyohito Nagano
+Dept. of Math. and Comp. Sci.,
+Tokyo Inst. of Technology, Japan
+nagano@is.titech.ac.jp
+
+Koji Tsuda
+Comp. Bio. Research Center,
+AIST, Japan
+koji.tsuda@aist.go.jp
+
+Jeff A. Bilmes
+Dept. of Electrical Engineering,
+Univ. of Washington, USA
+bilmes@u.washington.edu
+
+Abstract
+
+Several key problems in machine learning, such as feature selection and active
+learning, can be formulated as submodular set function maximization. We present
+herein a novel algorithm for maximizing a submodular set function under a car-
+dinality constraint — the algorithm is based on a cutting-plane method and is
+implemented as an iterative small-scale binary-integer linear programming proce-
+dure. It is well known that this problem is NP-hard, and the approximation factor
+achieved by the greedy algorithm is the theoretical limit for polynomial time. As
+for (non-polynomial time) exact algorithms that perform reasonably in practice,
+there has been very little in the literature although the problem is quite impor-
+tant for many applications. Our algorithm is guaranteed to ﬁnd the exact solution
+ﬁnitely many iterations, and it converges fast in practice due to the efﬁciency of
+the cutting-plane mechanism. Moreover, we also provide a method that produces
+successively decreasing upper-bounds of the optimal solution, while our algorithm
+provides successively increasing lower-bounds. Thus, the accuracy of the current
+solution can be estimated at any point, and the algorithm can be stopped early
+once a desired degree of tolerance is met. We evaluate our algorithm on sensor
+placement and feature selection applications showing good performance.
+
+1 Introduction
+
+In many fundamental problems in machine learning, such as feature selection and active learning,
+we try to select a subset of a ﬁnite set so that some utility of the subset is maximized. A number of
+such utility functions are known to be submodular, i.e., the set function f satisﬁes f (S ) + f (T ) ≥
+f (S ∩ T ) + f (S ∪ T ) for all S, T ⊆ V , where V is a ﬁnite set [2, 5]. This type of function can
+be regarded as a discrete counterpart of convex functions, and includes entropy, symmetric mutual
+information, information gain, graph cut functions, and so on. In recent years, treating machine
+learning problems as submodular set function maximization (usually under some constraint, such as
+limited cardinality) has been addressed in the community [10, 13, 22].
+
+In this paper, we address submodular function maximization under a cardinality constraint:
+s.t. |S | ≤ k ,
+max
+f (S )
+(1)
+S(cid:181)V
+where V = {1, 2, . . . , n} and k is a positive integer with k ≤ n. Note that this formulation is
+considerably general and covers a broad range of problems. The main difﬁculty of this problem
+comes from a potentially exponentially large number of locally optimal solutions. In the ﬁeld of
+∗
+
+URL: http://www.ar.sanken.osaka-u.ac.jp/ kawahara/
+
+1
+
+combinatorial optimization, it is well-known that submodular maximization is NP-hard and the
+approximation factor of (1 − 1/e) (≈ 0.63) achieved by the greedy algorithm [19] is the theoretical
+limit of a polynomial-time algorithm for positive and nondecreasing submodular functions [3]. That
+is, in the worst case, any polynomial-time algorithm cannot give a solution whose function value is
+more than (1 − 1/e) times larger than the optimal value unless P=NP. In recent years, it has been
+reported that greedy-based algorithms work well in several machine-learning problems [10, 1, 13,
+22]. However, in some applications of machine learning, one seeks a solution closer to the optimum
+than what is guaranteed by this bound. In feature selection or sensor placement, for example, one
+may be willing to spend much more time in the selecting phase, since once selected, items are used
+many times or for a long duration. Unfortunately, there has been very little in the literature on
+ﬁnding exact but still practical solutions to submodular maximization [17, 14, 8]. To the best of our
+knowledge, the algorithm by Nemhauser and Wolsey [17] is the only way for exactly maximizing
+a general form of nondecreasing submodular functions (other than naive brute force). However, as
+stated below, this approach is inefﬁcient even for moderate problem sizes.
+
+In this paper, we present a novel algorithm for maximizing a submodular set function under a cardi-
+nality constraint based on a cutting-plane method, which is implemented as an iterative small-scale
+binary-integer linear programming (BILP) procedure. To this end, we derive the submodularity cut,
+a cutting plane that cuts off the feasible sets on which the objective function values are guaranteed
+to be not better than current best one, and this is based on the submodularity of a function and its
+Lov ´asz extension [15, 16]. This cut assures convergence to the optimum in ﬁnite iterations and
+allows the searching for better subsets in an efﬁcient manner so that the algorithm can be applied
+to suitably-sized problems. The existing algorithm [17] is infeasible for such problems since, as
+originally presented, it has no criterion for improving the solution efﬁciently at each iteration (we
+compare these algorithms empirically in Sect. 5.1). Moreover, we present a new way to evaluate an
+upper bound of the optimal value with the help of the idea of Nemhauser and Wolsey [17]. This
+enables us to judge the accuracy of the current best solution and to calculate an †-optimal solution
+for a predetermined † > 0 (cf. Sect. 4). In our algorithm, one needs to iteratively solve small-
+scale BILP (and mixed integer programming (MIP) for the upper-bound) problems, which are also
+NP-hard. However, due to their small size, these can be solved using efﬁcient modern software
+packages such as CPLEX. Note that BILP is a special case of MIP and more efﬁcient to solve in
+general, and the presented algorithm can be applied to any submodular functions while the existing
+one needs the nondecreasing property.1 We evaluate the proposed algorithm on the applications of
+sensor placement and feature selection in text classiﬁcation.
+
+The remainder of the paper is organized as follows: In Sect. 2, we present submodularity cuts and
+give a general description of the algorithm using this cutting plane. Then, we describe a speciﬁc
+procedure for performing the submodularity cut algorithm in Sect. 3 and the way of updating an
+upper bound for calculating an †-optimal solution in Sect. 4. And ﬁnally, we give several empirical
+examples in Sect. 5, and conclude the paper in Sect. 6.
+
+2 Submodularity Cuts and Cutting-Plane Algorithm
+We start with a subset S0 ⊆ V of some ground set V with a reasonably good lower bound γ =
+f (S0 ) ≤ max{f (S ) : S ⊆ V }. Using this information, we cut off the feasible sets on which the
+objective function values are guaranteed to be not better than f (S0 ). In this section, we address
+a method for solving the submodular maximization problem (1) based on this idea along the line
+of cutting-plane methods, as described by Tuy [23] (see also [6, 7]) and often successfully used in
+algorithms for solving mathematical programming problems [18, 11, 20].
+
+2.1 Lov ´asz extension
+
+For dealing with the submodular maximization problem (1) in a way analogous to the continuous
+counterpart, i.e., convex maximization, we brie ﬂy describe an useful extension to submodular func-
+tions, called the Lov ´asz extension [15, 16]. The relationship between the discrete and the continuous,
+described in this subsection, is summarized in Table 1.
+1A submodular function is called nondecreasing if f (A) ≤ f (B ) for (A ⊆ B ). For example, an entropy
+function is nondecreasing but a cut function on nodes is not.
+
+2
+
+Table 1: Correspondence between continu-
+ous and discrete.
+(discrete)
+f : 2V → R
+S ⊆ V
+f is submodular
+
+(continuous)
+Eq. (2)=⇒ ˆf : Rn → R
+Eq. (3)⇐⇒ I S ∈ Rn
+Thm. 1⇐⇒ ˆf is convex
+
+⁄
+
+Figure 1: Illustration of cutting plane H . For H
+⁄
+and c
+, see Section 3.2.
+Given any real vector p ∈ Rn , we denote the m distinct elements of p by ˆp1 > ˆp2 > · · · > ˆpm .
+P
+Then, the Lov ´asz extension ˆf : Rn → R corresponding to a general set function f : 2V → R, which
+is not necessarily submodular, is deﬁned as
+k=1 ( ˆpk − ˆpk+1 )f (Uk ) + ˆpm f (Um ),
+m¡1
+ˆf (p) =
+(2)
+where Uk = {i ∈ V : pi ≥ ˆpk }. From the deﬁnition,
+ˆf is a piecewise linear (i.e., polyhedral) func-
+tion.2 In general, ˆf is not convex. However, the following relationship between the submodularity
+of f and the convexity of ˆf is given [15, 16]:
+Theorem 1 For a set function f : 2V → R and its Lov ´asz extension ˆf : Rn → R, f is submodular
+P
+if and only if ˆf is convex.
+Now, we deﬁne I S ∈ {0, 1}n as I S =
+i2S ei , where ei is the i-th unit vector. Obviously, there is
+a one-to-one correspondence between I S and S . I S is called the characteristic vector of S .3 Then,
+the Lov ´asz extension ˆf is a natural extension of f in the sense that it satisﬁes the following [15, 16]:
+(S ⊆ V ).
+ˆf (I S ) = f (S )
+(3)
+In what follows, we assume that f is submodular. Now we introduce a continuous relaxation of the
+problem (1) using the Lov ´asz extension ˆf . A polytope P ⊆ Rn is a bounded intersection of a ﬁnite
+j x ≤ bj , j = 1, · · · , m}, where
+P is of the form P = {x ∈ Rn : A
+>
+set of half-spaces — that is,
+Aj is a real vector and bj is a real scalar. According to the correspondence between discrete and
+continuous functions described above, it is natural to replace the objective function f : 2V → R and
+the feasible region {S ⊆ V : |S | ≤ k} of the problem (1) by the Lov ´asz extension ˆf : Rn → R and
+P
+a polytope D0 ⊆ Rn deﬁned by
+D0 = {x ∈ Rn : 0 ≤ xi ≤ 1 (i = 1, · · · , n),
+i=1xi ≤ k},
+n
+respectively. The resulting problem is a convex maximization problem. For problem (1), we will use
+the analogy with the way of solving the continuous problem: max { ˆf (x) : x ∈ D0 }. The question
+is, can we solve it and how good is the solution?
+
+2.2 Submodularity cuts
+
+Here, we derive what we call the submodularity cut, a cutting plane that cuts off the feasible sets
+with optimality guarantees using the submodularity of f , and with the help of the relationship be-
+tween submodularity and convexity described in Thm. 1. Note that the algorithm using this cutting
+plane, described later, converges to an optimal solution in a ﬁnite number of iterations (cf. Thm. 5).
+The presented technique is essentially a discrete analog of concavity cut techniques for continuous
+concave minimization, which rests on the following property (see, e.g., [11]).
+Theorem 2 A convex function g : Rn → R attains its global maximum over a polytope P ⊂ Rn at
+a vertex of P .
+2 For a submodular function, the Lov ´asz extension (2) is known to be equal to
+ˆf (p) = sup{pT x : x ∈ B (f )} (p ∈ Rn ),
+f [15] and x(S ) = Pi∈S xi .
+where B (f ) = {x ∈ Rn : x(S ) ≤ f (S ) (∀S ⊂ V ), x(V ) = f (V )} is the base polyhedron associated with
+3 For example in case of |V | = 6, the characteristic vector of S = {1, 3, 4} becomes I S = (1, 0, 1, 1, 0, 0).
+
+3
+
+vHH*c*d1d2y2y1PH+H -First, we clarify the relation between discrete and continuous problems. Let P be a polytope with
+P ⊆ D0 . Denote by S (P ) the subsets of V whose characteristic vectors are inside of P , i.e.,
+I S 0 ∈ P for any S
+0 ∈ S (P ), and denote by V (P ) the set consisting of all vertices of P . Note
+that any characteristic vector I S ∈ P is a vertex of P . Also, there is a one-to-one correspondence
+between S (D0 ) and V (D0 ). Now clearly, we have
+max{f (S
+0 ∈ S (P )} ≤ max{ ˆf (x) : x ∈ P }.
+0 ) : S
+(4)
+¯P where the function value of ˆf is always smaller than the currently-known
+If we can ﬁnd a subset
+largest value, any f ( ¯S ) for ¯S ∈ S ( ¯P ) is also smaller than the value. Thus, the cutting plane for the
+problem max{ ˆf (x) : x ∈ D0} can be applied to our problem (1) through the relationship (4).
+To derive the submodularity cut, we use the following deﬁnition:
+Deﬁnition 3 ( γ -extension) Let g : Rn → R be a convex function, x ∈ Rn , γ be a real number
+satisfying γ ≥ g(x) and t > 0. Then, a point y ∈ Rn de ﬁned by the following formula is called
+γ -extension of x in direction d ∈ Rn \ {0} (with respect to g ) where θ ∈ R ∪ {∞}:
+θ = sup{t : g(x + td) ≤ γ }.
+y = x + θd with
+(5)
+We may have θ = ∞ depending on g and d, but this is unproblematic in practice. The γ -extension
+of x ∈ Rn can be deﬁned with respect to the Lov ´asz extension because it is a convex function.
+The submodular cut algorithm is an iterative procedure. At each iteration, the algorithm keeps a
+polytope P ⊆ D0 , the current best function value γ , and a set S
+⁄ ⊆ V satisfying f (S
+⁄ ) = γ . We
+construct a submodular cut as follows. Let v ∈ V (P ) be a vertex of P such that v = I S for some
+S ∈ S (P ), and let K = K (v ; d1 , . . . , dn ) be a convex polyhedral cone with vertex v generated by
+linearly independent vectors d1 , . . . , dn , i. e., K = {v + t1d1 + · · · + tndn : tl ≥ 0}. For each
+i = 1, · · · , n, let y l = v + θldl be the γ -extension of v in direction dl with respect to ˆf . We choose
+the vectors d1 , . . . , dn so that P ⊂ K and θl > 0 (cf. Sect. 3.1). These directions are not necessarily
+chosen tightly on P (in fact, the directions described in Sect. 3.1 enclose P but also a set larger).
+Since the vectors dl are linearly independent, there exists a unique hyperplane H = H (y1 , · · · , yn )
+that contains y l (l = 1, · · · , n), which we call a submodular cut. It is deﬁned by (cf. Fig. 1)
+H = {x : eT Y
+¡1v}.
+¡1x = 1 + eT Y
+(6)
+− v)). The hyperplane H generates
+where e = (1, · · · , 1)T ∈ Rn and Y = ((y1
+− v), · · · , (yn
+two halfspaces H¡ = {x : eT Y
+¡1x ≤ 1 + eT Y v} and H+ = {x : eT Y
+¡1x ≥ 1 + eT Y v}.
+Obviously the point v is in the halfspace H¡ , and moreover, we have:
+Lemma 4 Let P ⊆ D0 be a polytope, γ be the current best function value, v be a vertex of P such
+that v = I S for some S ∈ S (P ) and H¡ be the halfspace determined by the cutting plane, i.e.,
+H¡ = {x : eT Y
+¡1x ≤ 1 + eT Y v}, where Y = ((y1
+− v), · · · , (yn
+− v)) and y1 , . . . , yn are the
+γ -extensions of v in linearly independent directions d1 , . . . , dn . Then, it holds that
+0 ∈ S (P ∩ H¡ ).
+0 ) ≤ γ
+f (S
+for all S
+Proof Since P ⊂ K = K (I S ; d1 , · · · , dn ), it follows that P ∩ H¡ is contained in the simplex
+R = [I S , y1 , · · · , yn ]. Since the Lov ´asz extension ˆf is convex and the maximum of a convex
+function over a compact convex set is attained at a vertex of the convex set (Thm. 2), the maximum
+of ˆf over R is attained at a vertex of R. Therefore, we have
+max{ ˆf (x) : x ∈ P ∩ H¡} ≤ max{f (x) : x ∈ R} = max{ ˆf (v); ˆf (y1 ), · · · , ˆf (yn )} ≤ γ .
+From Eq. (4), max{f (S
+0 ∈ S (P ∩ H¡ )} ≤ max{ ˆf (x) : x ∈ P ∩ H¡} ≤ γ .
+0 ) : S
+The above lemma shows that we can cut off the feasible subsets S (P ∩ H¡ ) from S (P ) without
+loss of any feasible set whose objective function value is better than γ . If S (P ) = S (P ∩ H¡ ), then
+γ = max{f (S ) : |S | ≤ k} is achieved. A speciﬁc way to check whether S (P ) = S (P ∩ H¡ ) will
+be given in Sect. 3.2. As v ∈ S (P ∩ H¡ ) and v /∈ S (P ∩ H+ ), we have
+|S (P )| > |S (P ∩ H+ )|.
+(7)
+The submodular cut algorithm updates P ← P ∩ H+ until the global optimality of γ is guaranteed.
+The general description is shown in Alg. 1 (also see Fig. 2). Furthermore, the ﬁniteness of the
+algorithm is assured by the following theorem.
+
+4
+
+Figure 2: Outline of the
+submodularity cuts algo-
+rithm.
+
+Algorithm 1 General description of the submodularity cuts algorithm.
+1. Compute a subset S0 s.t. |S0 | ≤ k , and set a lower bound γ0 = f (S0 ).
+2. Set P0 ← D0 , stop ← f alse, i ← 1 and S
+⁄ = S0 .
+3. while stop=false do
+Construct with respect to Si¡1 , Pi¡1 and γi¡1 a submodularity cut H i .
+4.
+if S (Pi¡1 ) = S (Pi¡1 ∩ H i¡ ) then
+5.
+stop ← true (S
+⁄
+is an optimal solution and γi¡1 the optimal value).
+6.
+else
+7.
+⁄
+Update γi (using Si and other available information) and set S
+8.
+Compute Si ∈ S (Pi ), and set Pi ← Pi¡1 ∩ H i
++ and i ← i + 1.
+9.
+end if
+10.
+11. end while
+
+s.t. f (S
+
+⁄ ) = γi .
+
+Theorem 5 Alg. 1 gives an optimal solution to the problem (1) in a ﬁnite number of iterations.
+Proof In the beginning, |S (D0 )| is ﬁnite. In view of (7), each iteration decreases
+|S (P )| by at least
+1. So, the number of iterations is ﬁnite.
+
+3 Implementation
+
+In this section, we describe a speciﬁc way to perform Alg. 1 using a binary-integer linear program-
+ming (BILP) solver. The pseudo-code of the resulting algorithm is shown in Alg. 2.
+
+3.1 Construction of submodularity cuts
+Given a vertex of a polytope P ⊆ D0 , which is of the form I S , we describe how to compute linearly
+independent directions d1 , · · · , dn for the construction of the submodularity cut at each iteration of
+the algorithm (Line 4 in Alg. 1). Note that the way described here is just one option and any other
+choice satisfying P ⊂ K can be substituted.
+If |S | < k , then directions d1 , . . . , dn can be chosen as −el (l ∈ S ) and el (l ∈ V \ S ). Now we
+focus on the case where |S | = k . Deﬁne a neighbor S(i,j ) of S as
+S(i,j ) := (S \ {i}) ∪ {j } (i ∈ S, j ∈ V \ S ).
+That is, the neighbor S(i,j ) is given by replacing one of the elements of S with that of V \ S . Note
+− I S = ej − ei for any neighbor S(i,j ) of S . Let S(i⁄ ,j ⁄ ) be a neighbor that maximizes
+that I S(i,j )
+f (S(i,j ) ) among all neighbors of S . Since a subset S of size k has k × (n − k) neighbors S(i,j )
+(i ∈ S , j ∈ V \ S ), this computation is O(nk). Suppose that S = {i1 , . . . , ik } with i1 = i
+⁄
+and V \ S = {jk+1 , . . . , jn} with jn = j
+. If f (S(i⁄ ,j ⁄ ) ) > γ , we update γ ← f (S(i⁄ ,j ⁄ ) ) and
+⁄
+(
+⁄ ← S(i⁄ ,j ⁄ ) . Thus, in either case it holds that γ ≥ f (S(i⁄ ,j ⁄ ) ). As an example of the set of
+S
+directions {d1 , . . . , dn}, we choose
+ej ⁄ − eil
+if l ∈ {1, . . . , k}
+if l ∈ {k + 1, . . . , n − 1}
+− ej ⁄
+dl =
+ejl
+−ej ⁄
+if l = n.
+It is easy to see that d1 , . . . , dn are linearly independent. Moreover, we obtain the following lemma:
+P
+Lemma 6 For the directions d1 , . . . , dn de ﬁned in (8), a cone
+K (I S ; d1 , . . . , dn ) = {I S + t1d1 + · · · + tndn : tl ≥ 0}
+l=1xl ≤ k}.
+contains the polytope D0 = {x ∈ Rn : 0 ≤ xl ≤ 1 (l = 1, · · · , n),
+n
+The proof of this lemma is included in the supplementary material (Sect. A). The γ -extensions, i.e.,
+θ’s, in these directions can be obtained in closed forms. The details of this are also included in the
+supplementary material (Sect. A).
+
+(8)
+
+5
+
+S0    S(P0)Sopt    S(Popt)H 0S1    S(P1)(cid:29)(cid:68)(cid:80)(cid:79)(cid:85)(cid:74)(cid:79)(cid:86)(cid:80)(cid:86)(cid:84)(cid:31)(cid:29)(cid:69)(cid:74)(cid:84)(cid:68)(cid:83)(cid:70)(cid:85)(cid:70)(cid:31)(cid:45)(cid:80)(cid:87)(cid:66)(cid:84)(cid:91)(cid:1)(cid:70)(cid:89)(cid:85)(cid:70)(cid:79)(cid:84)(cid:74)(cid:80)(cid:79)(cid:49)(cid:83)(cid:80)(cid:81)(cid:15)(cid:1)(cid:24)......H1P1=P0 ∩ H 0Sopt-1    S(Popt-1)Hopt-1(cid:1134)(cid:1134)(cid:1134)(cid:1134)(cid:12)Popt=Popt-1 ∩ H opt-1(cid:12)Algorithm 2 Pseudo-code of the submodularity cuts algorithm using BILP.
+1. Compute a subset S0 s.t. |S0 | ≤ k , and set a lower bound γ0 = f (S0 ).
+2. Set P0 ← D0 , stop ← f alse, i ← 1 and S
+⁄ = S0 .
+3. while stop=false do
+Construct with respect to Si¡1 , Pi¡1 and γi¡1 a submodularity cut H .
+4.
+Solve the BILP problem (9) with respect to Aj and bj (j = 1, · · · , nk ), and let the optimal
+5.
+⁄
+solution and value Si and c
+, respectively.
+⁄ ≤ 1 + eT Y
+¡1v i¡1 then
+if c
+6.
+stop ← true (S
+⁄
+is an optimal solution and γi¡1 the optimal value).
+7.
+else
+8.
+⁄
+Update γi (using Si and other available information) and set S
+9.
+Set Pi ← Pi¡1 ∩ H+ and i ← i + 1.
+10.
+end if
+11.
+12. end while
+
+⁄ ) = γi .
+
+s.t. f (S
+
+3.2 Stopping criterion and next starting point
+the next starting subset Si (respectively, in Lines 5 and 9 in Alg. 1). Let eP ⊆ Rn be the minimum
+Next, we address the checking of optimality, i.e., whether S (P ) = S (P ∩ H¡ ), and also ﬁnding
+of H which is tangent to eP . If H = H
+polytope containing S (P ). Geometrically, checking S (P ) = S (P ∩H¡ ) can be done by considering
+⁄
+⁄
+⁄
+a parallel hyperplane H
+or H
+is given by translating
+H towards v , then S (P ) = S (P ∩ H¡ ). Numerically, such a translation corresponds to linear
+programming. Using Eq. (6), we obtain:
+⁄
+Proposition 7 Let c
+be the optimal value of the binary integer program
+{eT Y
+¡1x : Aj x ≥ bj , j = 1, · · · , mk }.
+max
+x2f0,1gn
+⁄ ≤ 1 + eT Y
+Then S (P ) ⊂ H¡ if c
+¡1v .
+of Eq. (9) yields a subset of S (P \ H¡ )
+⁄
+⁄
+¡1v , then the optimal solution x
+> 1 + eT Y
+Note that, if c
+which can be used as a starting subset of the next iteration (see Fig. 1).
+
+(9)
+
+4 Upper bound and †-optimal solution
+
+Although our algorithm can ﬁnd an exact solution in a ﬁnite number of iterations, the computational
+cost could be expensive for a high-dimensional case. Therefore, we present here an iterative update
+of an upper bound of the current solution, and thus a way to allow us to obtain an †-optimal solution.
+To this end, we combine the idea of the algorithm by Nemhauser and Wolsey [17] with our cutting
+plane algorithm. Note that this hybrid approach is effective only when f is nondecreasing.
+P
+If the submodular function f : 2V → R is nondecreasing, the submodular maximization problem
+P
+(1) can be reformulated [17] as
+j2V nS ρj (S )yj (S ⊆ V ),
+η ≤ f (S ) +
+max η
+s.t.
+j2V yj = k , yj ∈ {0, 1} (j ∈ V )
+(10)
+where ρj (S ) := f (S ∪ {j }) − f (S ). This formulation is a MIP with regard to one continuous and
+n binary variables, and has approximately 2n constraints. The ﬁrst type of constraint corresponds
+to all feasible subsets S , and the number of inequalities is as large as 2n . This approach is therefore
+infeasible for certain problem sizes. Nemhauser and Wolsey [17] address this problem by adding the
+constraints one by on and calculating a reduced MIP problem iteratively. In the worse case, however,
+the number of iterations becomes equal to the case of when all constraints are added. The solution
+of a maximization problem with a subset of constraints is larger than the one with all constraints, so
+the good news is that this solution is guaranteed to improve (by monotonically decreasing down to
+the true solution) at each iteration. In our algorithm, by contrast, the best current solution increases
+monotonically to the true solution. Therefore, by adding the constraint corresponding to Si at each
+iteration of our algorithm and solving the reduced MIP above, we can evaluate an upper bound of
+the current solution. Thus, we can assure the optimality of a current solution, or obtain a desired
+†-optimal solution using both the lower and upper bound.
+
+6
+
+Figure 3: Averaged computational time (log-scale) for com-
+puting exact and †-optimal solutions by the submodularity cut
+algorithm and existing algorithm by Nemhauser and Wolsey.
+
+Figure 4: An example of compu-
+tational time (log-scale) versus the
+calculated upper and lower bounds.
+
+5 Experimental Evaluation
+
+We ﬁrst empirically compare the proposed algorithm with the existing algorithm by Nemhauser and
+Wolsey [17] in Sect. 5.1, and then apply the algorithm to the real-world applications of sensor place-
+ment, and feature selection in text classiﬁcation (Sect. 5.2 and 5.3, respectively). In the experiments,
+we used the solution by a greedy algorithm as initial subset S0 . The experiments below were run
+on a 2.5GHz 64-bit workstation using Matlab and a Parallel CPLEX ver. 11.2 (8 threads) through a
+mex function. If θ = ∞ in Eq. (5), we set θ = θ1 , where θ1 is large (i.e. θ1 = 106 ).
+
+5.1 Artiﬁcial example
+
+Here, we evaluate empirically and illustrate the submodularity cut algorithm (Alg. 2) with respect
+to (1) computational time for exact solutions compared with the existing algorithm and (2) how
+P
+fast the algorithm can sandwich the true solution between the upper and lower bounds, using arti-
+ﬁcial datasets. The considered problem here is the K -location problem [17], i.e., the submodular
+maximization problem (1) with respect to the nondecreasing submodular function:
+m
+i=1 maxj2S cij ,
+f (S ) =
+where C = cij is an m × n nonnegative matrix and V = {1, · · · , n}. We generated several matrices
+C of different size n (we ﬁxed m = n+1), and solved the above problem with respect to k = 5, 8 for
+exact and † optimal solutions, using the two algorithms. The graphs in Fig. 3 show the computational
+time (log-scale) for several n and k = 5, 8, where the results were averaged over randomly generated
+3 matrices C . Note that, for example, the number of combination becomes more than two hundred
+millions for n = 45 and k = 8. As the ﬁgure shows, the required costs for Alg. 2 were less than the
+existing algorithm, especially in the case of high search spaces. This could be because the cutting-
+plane algorithm searches feasible subsets in an efﬁcient manner by eliminating worse ones with the
+submodularity cuts. And Fig. 4 shows an example of the calculated upper and lower bounds vs.
+time (k = 5 and n = 45). The lower bound is updated rarely and converges to the optimal solution
+quickly while the upper bound decreases gradually.
+
+5.2 Sensor placements
+
+Our ﬁrst example with real data is the sensor placements problem, where we try to select sensor
+P
+locations to minimize the variance of observations. The dataset we used here is temperature mea-
+surements at discretized ﬁnite locations V obtained using the NIMS sensor node deployed at a lake
+near the University of California, Merced [9, 12] (|V | = 86).4 As in [12], we evaluated the set of
+locations S ⊆ V using the averaged variance reduction f (S ) = V ar(∅) − V ar(S ) = 1
+sFs (S ),
+− σ2
+n
+where Fs (S ) = σ2
+sjS is the variance reduction and σ2
+sjS denote the predictive variance at lo-
+cation s ∈ V after observing locations S ⊆ V . This function is monotone and submodular. The
+s
+graphs in Fig. 5 show the computation time of our algorithm, and the accuracy improvement of our
+calculated solution over that of the greedy algorithm (%), respectively, for † = 0.05, 0.1, 0.2. Both
+the computation time and improvement are large at around k = 5 compared with other choices of k .
+This is because the greedy solutions are good when k is either very small or large.
+4The covariance matrix of the Gaussian process that models the measurements is available in Matlab Tool-
+box for Submodular Function Optimization (http://www.cs.caltech.edu/∼krausea/sfo/).
+
+7
+
+(cid:21)(cid:24)(cid:22)(cid:19)(cid:22)(cid:24)(cid:23)(cid:19)(cid:23)(cid:24)(cid:20)(cid:19)(cid:19)(cid:20)(cid:19)(cid:20)(cid:20)(cid:19)(cid:21)(cid:20)(cid:19)(cid:22)(cid:98)(cid:98)(cid:54)(cid:88)(cid:69)(cid:80)(cid:82)(cid:71)(cid:88)(cid:79)(cid:68)(cid:85)(cid:76)(cid:87)(cid:92)(cid:98)(cid:11)(cid:82)(cid:83)(cid:87)(cid:17)(cid:12)(cid:54)(cid:88)(cid:69)(cid:80)(cid:82)(cid:71)(cid:88)(cid:79)(cid:68)(cid:85)(cid:76)(cid:87)(cid:92)(cid:98)(cid:11)(cid:19)(cid:17)(cid:19)(cid:19)(cid:20)(cid:12)(cid:54)(cid:88)(cid:69)(cid:80)(cid:82)(cid:71)(cid:88)(cid:79)(cid:68)(cid:85)(cid:76)(cid:87)(cid:92)(cid:98)(cid:11)(cid:19)(cid:17)(cid:19)(cid:24)(cid:12)(cid:49)(cid:72)(cid:80)(cid:75)(cid:68)(cid:88)(cid:86)(cid:72)(cid:85)(cid:98)(cid:9)(cid:98)(cid:58)(cid:82)(cid:79)(cid:86)(cid:72)(cid:92)Dimensionality (n)Time (log-scale) [s]k = 5(cid:21)(cid:24)(cid:22)(cid:19)(cid:22)(cid:24)(cid:23)(cid:19)(cid:23)(cid:24)(cid:20)(cid:19)(cid:19)(cid:20)(cid:19)(cid:20)(cid:20)(cid:19)(cid:21)(cid:20)(cid:19)(cid:22)(cid:98)(cid:98)(cid:54)(cid:88)(cid:69)(cid:80)(cid:82)(cid:71)(cid:88)(cid:79)(cid:68)(cid:85)(cid:76)(cid:87)(cid:92)(cid:98)(cid:11)(cid:82)(cid:83)(cid:87)(cid:17)(cid:12)(cid:54)(cid:88)(cid:69)(cid:80)(cid:82)(cid:71)(cid:88)(cid:79)(cid:68)(cid:85)(cid:76)(cid:87)(cid:92)(cid:98)(cid:11)(cid:19)(cid:17)(cid:19)(cid:19)(cid:20)(cid:12)(cid:54)(cid:88)(cid:69)(cid:80)(cid:82)(cid:71)(cid:88)(cid:79)(cid:68)(cid:85)(cid:76)(cid:87)(cid:92)(cid:98)(cid:11)(cid:19)(cid:17)(cid:19)(cid:24)(cid:12)(cid:49)(cid:72)(cid:80)(cid:75)(cid:68)(cid:88)(cid:86)(cid:72)(cid:85)(cid:98)(cid:9)(cid:98)(cid:58)(cid:82)(cid:79)(cid:86)(cid:72)(cid:92)Dimensionality (n)Time (log-scale) [s]k = 8(cid:20)(cid:19)(cid:19)(cid:20)(cid:19)(cid:20)(cid:20)(cid:19)(cid:21)(cid:20)(cid:19)(cid:22)(cid:23)(cid:22)(cid:21)(cid:23)(cid:22)(cid:23)(cid:23)(cid:22)(cid:25)(cid:23)(cid:22)(cid:27)(cid:23)(cid:23)(cid:19)(cid:23)(cid:23)(cid:21)(cid:23)(cid:23)(cid:23)(cid:98)(cid:98)(cid:54)(cid:81)(cid:81)(cid:70)(cid:83)(cid:1)(cid:67)(cid:80)(cid:86)(cid:79)(cid:69)(cid:45)(cid:80)(cid:88)(cid:70)(cid:83)(cid:1)(cid:67)(cid:80)(cid:86)(cid:79)(cid:69)(cid:39)(cid:86)(cid:79)(cid:68)(cid:85)(cid:74)(cid:80)(cid:79)(cid:1)(cid:87)(cid:66)(cid:77)(cid:86)(cid:70)(cid:1)(cid:80)(cid:71)(cid:1)(cid:85)(cid:73)(cid:70)(cid:1)(cid:84)(cid:80)(cid:77)(cid:86)(cid:85)(cid:74)(cid:80)(cid:79)(cid:1)(cid:67)(cid:90)(cid:1)(cid:85)(cid:73)(cid:70)(cid:1)(cid:72)(cid:83)(cid:70)(cid:70)(cid:69)(cid:90)(cid:1)(cid:66)(cid:77)(cid:72)(cid:80)(cid:83)(cid:74)(cid:85)(cid:73)(cid:78)Time (log-scale) [s]Function valueFigure 5: Computational time (left) and accuracy improvement over the greedy algorithm (right).
+
+Table 1: Selected words with [the values of information gain, classiﬁcation precision].
+greedy
+submodularity cuts
+k
+5 (tonn,‘agricultur’,trade,pct,‘market’)[2.59,0.53]→ (‘week’,tonn,trade,pct,‘washington’)[2.66,0.58]
+10 ( . . .,week,oil,price,‘dollar’,‘ofﬁci’)[3.55,0.57] → ( . . .,price,oil,‘bank’,‘produc’,‘blah’)[3.88,0.62]
+
+5.3 Feature selection in text classiﬁcation
+
+Our second real test case is feature selection in document classiﬁcation using the Reuters-21578
+dataset. We applied the greedy and submodularity cuts algorithms to the training set that includes
+7,770 documents with 5,180 words (features) and 90 categories, where we used the information
+gain as a criterion [4]. Table 1 shows the selected words by the algorithms in the cases of k =
+5, 10 (for the proposed algorithm † = 0.003 in both cases) with the values of information gain and
+classiﬁcation precision ( tp/(tp + f p), tp; true positive, f p; false positive). For classiﬁcation on the
+test set (3,019 documents with 5,180 words and 90 categories), we applied a Naive Bayes classiﬁer
+with the selected features. The submodularity cuts algorithm selected several different words from
+that of the greedy algorithm. We can see that the words selected by our algorithm would have high
+predictive power even though the number of the chosen words is very small.
+
+6 Conclusions
+
+In this paper, we presented a cutting-plane algorithm for submodular maximization problems, which
+can be implemented as an iterative binary-integer linear programming procedure. We derived a cut-
+ting plane procedure, called the submodularity cut, based on the submodularity of a set function
+through the Lov ´asz extension, and showed this cut assures that the algorithm converges to the opti-
+mum in ﬁnite iterations. Moreover, we presented a way to evaluate an upper bound of the optimal
+value with the help of Nemhauser and Wolsey [17], which enables us to ensure the accuracy of the
+current best solution and to calculate an intended †-optimal solution for a predetermined † > 0.
+Our new algorithm computationally compared favorably against the existing algorithm on artiﬁcial
+datasets, and also showed improved performance on the real-world applications of sensor place-
+ments and feature selection in text classiﬁcation.
+
+The submodular maximization problem treated in this paper covers broad range of applications in
+machine learning. In future works, we will develop frameworks with †-optimality guarantees for
+more general problem settings such as knapsack constraints [21] and not nondecreasing submodular
+functions. This will be make the submodularity cuts framework applicable to a still wider variety of
+machine learning problems.
+
+Acknowledgments
+
+This research was supported in part by JSPS Global COE program “Computationism as a Foundation
+for the Sciences”, KAKENHI (20800019 and 21680025), the JFE 21st Century Foundation, and
+the Functional RNA Project of New Energy and Industrial Technology Development Organization
+(NEDO). Further support was received from a PASCAL2 grant, and by NSF grant IIS-0535100.
+Also, we are very grateful to the reviewers for helpful comments.
+
+8
+
+Cardinality ( k )Time (log-scale) [s](cid:24)(cid:20)(cid:19)(cid:20)(cid:24)(cid:21)(cid:19)(cid:20)(cid:19)(cid:19)(cid:20)(cid:19)(cid:20)(cid:20)(cid:19)(cid:21)(cid:20)(cid:19)(cid:22)(cid:20)(cid:19)(cid:23)(cid:98)(cid:98)(cid:19)(cid:17)(cid:21)(cid:19)(cid:17)(cid:20)(cid:24)(cid:19)(cid:17)(cid:20)Cardinality ( k )Improvement [%](cid:21)(cid:22)(cid:24)(cid:20)(cid:19)(cid:20)(cid:24)(cid:21)(cid:19)(cid:19)(cid:20)(cid:21)(cid:22)(cid:23)(cid:98)(cid:98)(cid:19)(cid:17)(cid:21)(cid:19)(cid:17)(cid:20)(cid:24)(cid:19)(cid:17)(cid:20)References
+
+[1] A. Das and D. Kempe. Algorithms for subset selection in linear regression. In R. E. Ladner and C. Dwork,
+editors, Proc. of the 40th Annual ACM Symp. on Theory of Computing (STOC 2008), pages 45–54, 2008.
+[2] J. Edmonds. Submodular functions, matroids, and certain polyhedra. In R. Guy, H. Hanani, N. Sauer,
+and J. Sh ¨onheim, editors, Combinatorial Structures and Their Applications, pages 69–87. Gordon and
+Breach, 1970.
+[3] U. Feige. A threshold of ln n for approximating set cover. Journal of the ACM, 45:634–652, 1998.
+[4] G. Forman. An extensive empirical study of feature selection metrics for text classiﬁcation.
+Journal of
+Machine Learning Research, 3:1289–1305, 2003.
+[5] S. Fujishige. Submodular Functions and Optimization. Elsevier, second edition, 2005.
+[6] F. Glover. Convexity cuts and cut search. Operations Research, 21:123–134, 1973.
+[7] F. Glover. Polyhedral convexity cuts and negative edge extension. Zeitschrift f ¨ur Operations Research,
+18:181–186, 1974.
+[8] B. Goldengorin. Maximization of submodular functions: Theory and enumeration algorithms. European
+Journal of Operational Research, 198(1):102–112, 2009.
+[9] T. C. Harmon, R. F. Ambrose, R. M. Gilbert, J. C. Fisher, M. Stealey, and W. J. Kaiser. High resolution
+river hydraulic and water quality characterization using rapidly deployable. Technical report, CENS,,
+2006.
+[10] S. C. H. Hoi, R. Jin, J. Zhu, and M. R. Lyu. Batch mode active learning and its application to medical
+image classiﬁcation. In Proc. of the 23rd int’l conf. on Machine learning (ICML 2006), pages 417–424,
+2006.
+[11] R. Horst and H. Tuy. Global Optimization (Deterministic Approaches). Springer, 3 edition, 1996.
+[12] A. Krause, H. B. McMahan, C. Guestrin, and A. Gupta. Robust submodular observation selection. Journal
+of Machine Learning Research, 9:2761–2801, 2008.
+[13] A. Krause, A. Singh, and C. Guestrin. Near-optimal sensor placements in Gaussian processes: Theory,
+efﬁcient algorithms and empirical studies.
+Journal of Machine Learning Research, 9:235–284, 2009.
+[14] H. Lee, G. L. Nemhauser, and Y. Wang. Maximizing a submodular function by integer programming:
+Polyhedral results for the quadratic case. European Journal of Operational Research, 94:154–166, 1996.
+[15] L. Lov ´asz. Submodular functions and convexity. In A. Bachem, M. Gr ¨otschel, and B. Korte, editors,
+Mathematical Programming – The State of the Art , pages 235–257. 1983.
+[16] K. Murota. Discrete Convex Analysis, volume 10 of Monographs on Discrete Math and Applications.
+Society for Industrial & Applied, 2000.
+[17] G. L. Nemhauser and L. A. Wolsey. Maximizing submodular set functions: formulations and analysis of
+algorithms. In P. Hansen, editor, Studies on Graphs and Discrete Programming, volume 11 of Annals of
+Discrete Mathematics. 1981.
+[18] G. L. Nemhauser and L. A. Wolsey. Integer and Combinatorial Optimization. Wiley-Interscience, 1988.
+[19] G. L. Nemhauser, L. A. Wolsey, and M. L. Fisher. An analysis of approximations for maximizing for
+submodular set functions – I. Mathematical Programming, 14:265–294, 1978.
+[20] M. Porembski. Finitely convergent cutting planes for concave minimization. Journal of Global Optimiza-
+tion, 20(2):109–132, 2001.
+[21] M. Sviridenko. A note on maximizing a submodular set function subject to a knapsack constraint. Oper-
+ations Research Letters, 32(1):41–43, 2004.
+[22] M. Thoma, H. Cheng, A. Gretton, J. Han, H. P. Kriegel, A. J. Smola, L. Song, P. S. Yu, X. Yan, and K. M.
+Borgwardt. Near-optimal supervised feature selection among frequent subgraphs. In Proc. of the 2009
+SIAM Conference on Data Mining (SDM 2009), pages 1075–1086, 2009.
+[23] H. Tuy. Concave programming under linear constraints. Soviet Mathematics Doklady, 5:1437–1440,
+1964.
+
+9
+
+

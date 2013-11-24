@@ -1,0 +1,833 @@
+Density Propagation and
+Improved Bounds on the Partition Function∗
+
+Stefano Ermon, Carla P. Gomes
+Dept. of Computer Science
+Cornell University
+Ithaca NY 14853, U.S.A.
+
+Ashish Sabharwal
+IBM Watson Research Ctr.
+Yorktown Heights
+NY 10598, U.S.A.
+
+Bart Selman
+Dept. of Computer Science
+Cornell University
+Ithaca NY 14853, U.S.A.
+
+Abstract
+
+Given a probabilistic graphical model, its density of states is a distribution that,
+for any likelihood value, gives the number of conﬁgurations with that probabil-
+ity. We introduce a novel message-passing algorithm called Density Propagation
+(DP) for estimating this distribution. We show that DP is exact for tree-structured
+graphical models and is, in general, a strict generalization of both sum-product and
+max-product algorithms. Further, we use density of states and tree decomposition
+to introduce a new family of upper and lower bounds on the partition function.
+For any tree decomposition, the new upper bound based on ﬁner -grained density
+of state information is provably at least as tight as previously known bounds based
+on convexity of the log-partition function, and strictly stronger if a general con-
+dition holds. We conclude with empirical evidence of improvement over convex
+relaxations and mean- ﬁeld based bounds.
+
+1
+
+Introduction
+
+Associated with any undirected graphical model [1] is the so-called density of states, a term bor-
+rowed from statistical physics indicating a distribution that, for any likelihood value, gives the
+number of conﬁgurations with that probability. The density of states plays an important role in
+statistical physics because it provides a ﬁne grained descr iption of the system, and can be used to
+efﬁciently compute many properties of interests, such as th e partition function and its parameterized
+version [2, 3]. It can be seen that computing the density of states is computationally intractable in
+the worst case, since it subsumes a #-P complete problem (computing the partition function) and an
+NP-hard one (MAP inference). All current approximate techniques estimating the density of states
+are based on sampling, the most prominent being the Wang-Landau algorithm [3] and its improved
+variants [2]. These methods have been shown to be very effective in practice. However, they do not
+provide any guarantee on the quality of the results. Furthermore, they ignore the structure of the
+underlying graphical model, effectively treating the energy function (which is proportional to the
+negative log-likelihood of a conﬁguration) as a black-box.
+
+As a ﬁrst step towards exploiting the structure of the graphi cal model when computing the density
+of states, we propose an algorithm called D EN S I TYPRO PAGAT ION (DP). The algorithm is based on
+dynamic programming and can be conveniently expressed in terms of message passing on the graph-
+ical model. We show that D EN S I TYPRO PAGAT ION computes the density of states exactly for any
+tree-structured graphical model. It is closely related to the popular Sum-Product (Belief Propaga-
+tion, BP) and Max-Product (MP) algorithms, and can be seen as a generalization of both. However,
+it computes something much richer, namely the density of states, which contains information such
+as the partition function and variable marginals. Although we do not work at the level of individual
+conﬁgurations, D EN S I TYPRO PAGAT ION allows us to reason in terms of groups of conﬁgurations
+with the same probability (energy).
+
+∗Supported by NSF Expeditions in Computing award for Computational Sustainability (grant 0832782).
+
+1
+
+Being able to solve inference tasks for certain tractable classes of problems (e.g., trees) is important
+because one can often decompose a complex problem into tractable subproblems (such as spanning
+trees) [4], and the solutions to these simpler problems can be combined to recover useful properties
+of the original graphical model [5, 6].
+In this paper we show that by combining the additional
+information given by the density of states, we can obtain a new family of upper and lower bounds on
+the partition function. We prove that the new upper bound is always at least as tight as the one based
+on the convexity of the log-partition function [4], and we provide a general condition where the
+new bound is strictly tighter. Further, we illustrate empirically that the new upper bound improves
+upon the convexity-based one on Ising grid and clique models, and that the new lower bound is
+empirically slightly stronger than the one given by mean- ﬁe ld theory [4, 7].
+
+2 Problem de ﬁnition and setup
+
+We consider a graphical model speci ﬁed as a factor graph with N = |V | discrete random variables
+xi , i ∈ V where xi ∈ Xi . The global random vector x = {xs , s ∈ V } takes value in the Cartesian
+product X = X1 ×X2 × · · ·×XN , with cardinality D = |X | = QN
+i=1 |Xi |. We consider a probability
+distribution over elements x ∈ X (called conﬁgurations)
+1
+Z Yα∈I
+ψα ({x}α )
+p(x) =
+that factors into factors ψα : {x}α → R+ , where I is an index set and {x}α ⊆ V a subset of
+variables the factor ψα depends on, and Z is a normalization constant known as partition function.
+The corresponding factor graph is a bipartite graph with vertex set V ∪ I . In the factor graph, each
+variable node i ∈ V is connected with all the factors α ∈ I that depend on i. Similarly, each factor
+node α ∈ I is connected with all the variable nodes i ∈ {x}α . We denote the neighbors of i and α
+by N (i) and N (α) respectively.
+We will also make use of the related exponential representation [8]. Let φ be a collection of potential
+functions {φα , α ∈ I }, deﬁned over the index set I . Given an exponential parameter vector Θ =
+{Θα , α ∈ I }, the exponential family deﬁned by φ is the family of probability distributions over X
+deﬁned as follows:
+exp  Xα∈I
+Θαφα ({x}α )!
+where we assume p(x) = p(x, Θ∗ ). Given an exponential family, we deﬁne the density of states [2]
+as the following distribution:
+n(E , Θ) = Xx∈X
+where δ (E − Θ · φ(x)) indicates a Dirac delta centered at Θ · φ(x). For any exponential parameter
+Θ, it holds that
+Z A
+n(E , Θ)dE = |{x ∈ X |Θ · φ(x) ≤ A}|
+−∞
+to the quantity Pα∈I Θ∗
+refer
+and RR n(E , Θ)dE = |X |. We will
+αφα ({x}α ) =
+Pα∈I log ψα ({x}α ) as the energy of a conﬁguration x, although it has an additional minus sign
+with respect to the conventional energy in statistical physics.
+3 Density Propagation
+
+δ (E − Θ · φ(x))
+
+1
+Z (Θ)
+
+p(x, Θ) =
+
+exp(Θ · φ(x)) =
+
+1
+Z (Θ)
+
+(1)
+
+(2)
+
+(3)
+
+Since any propositional Satis ﬁability (SAT) instance can b e efﬁciently encoded as a factor graph
+(e.g., by deﬁning a uniform probability measure over satisf ying assignments), it is clear that com-
+puting the density of states is computationally intractable in the worst case, as a generalization of an
+NP-Complete problem (satis ﬁability testing) and a #-P comp lete problem (model counting).
+We show that the density of states can be computed efﬁciently 1 for acyclic graphical models. We
+provide a Dynamic Programming algorithm, which can also be interpreted as a message passing
+algorithm on the factor graph, called D EN S I TYPRO PAGAT ION (DP), which computes the density of
+states exactly for acyclic graphical models.
+
+1Polynomial in the cardinality of the support, which could be exponential in N in the worst case.
+
+2
+
+3.1 Density propagation equations
+
+mb→i (xi )
+
+D EN S I TYPRO PAGAT ION works by exchanging messages from variable to factor nodes and vice
+versa. Unlike traditional message passing algorithms, where messages represent marginal probabil-
+ities (vectors of real numbers), for every xi ∈ Xi a D EN S I TYPRO PAGAT ION message ma→i (xi ) is
+a distribution (a “marginal ” density of states), i.e. ma→i (xi ) = Pk ck (a → i, xi )δEk (a→i,xi ) is a
+sum of Dirac deltas.
+At every iteration, messages are updated according to the following rules. The message from vari-
+able node i to factor node a is updated as follows:
+mi→a (xi ) = Ob∈N (i)\a
+where N is the convolution operator (commutative, associative and distributive). Intuitively, the
+convolution operation gives the distribution of the sum of (conditionally) independent random vari-
+ables, in this case corresponding to distinct subtrees in a tree-structured graphical model. The mes-
+sage from factor a to variable i is updated as follows:
+
+mj→a (xj )
+ma→i (xi ) = X{x}α\i
+ Oj∈N (a)\i
+ O δEα ({x}α )
+where δEα ({x}α ) is a Dirac delta function centered at Eα (xα ) = log ψα ({x}α ).
+For tree structured graphical models, D EN S I TYPRO PAGAT ION converges after a ﬁnite number of
+iterations, independent of the initial condition, to the true density of states. Formally,
+Theorem 1. For any variable i ∈ V and A ∈ R, for any initial condition, after a ﬁnite number of
+iterations (cid:16)Pq∈Xs Nb∈N (i) mb→i (q)(cid:17) (E ) = n(E , Θ∗ ).
+The proof is by induction on the size of the tree (omitted due to lack of space).
+3.1.1 Complexity and Approximation with Energy Bins
+
+(4)
+
+(5)
+
+The most efﬁcient message update schedule for tree structur ed models is a two-pass procedure where
+messages are ﬁrst sent from the leaves to the root node, and th en propagated backwards from the
+root to the leaves. However, as with other message-passing algorithms, for tree structured instances
+the algorithm will converge with either a sequential or a parallel update schedule, with any initial
+condition for the messages. Although DP requires the same number of messages updates as BP
+and MP, DP updates are more expensive because they require the computation of convolutions.
+Speci ﬁcally, each variable-to-factor update rule (4) requ ires (N − 2)L convolutions, where N is the
+number of neighbors of the variable node and L is the number of states in the random variable. Each
+factor-to-variable update rule (5) requires summation over N − 1 variables, each of size L, requiring
+O(LN ) convolutions. Using Fast Fourier Transform (FFT), each convolution takes O(K log K ),
+where K is the maximum number of non-zero entries in a message. In the worst case, the density of
+states can have an exponential number of non-zero entries (i.e., the ﬁnite number of possible energy
+values, which we will also refer to as “buckets ”), for instan ce when potentials are set to logarithms
+of prime numbers, making every x ∈ X have a different probability. However, in many practical
+problems of interest (e.g., SAT/CSP models and certain grounded Markov Logic Networks [9]), the
+number of energy “buckets ” is limited, e.g., bounded by the t otal number of constraints. For general
+graphical models, coarse-grain energy bins can be used, similar to the Wang-Landau algorithm [3],
+without losing much precision. Speci ﬁcally, if we use bins o f size ǫ/M , where each bin corresponds
+to conﬁgurations with energy in the interval
+[kǫ/M , (k + 1)ǫ/M ), the energy estimated for each
+conﬁguration through O(M ) convolutions is at most an O(ǫ) additive value away from its true
+energy (as the quantization error introduced by energy binning is summed up across convolution
+steps). This also guarantees that the density of states with coarse-grain energy bins gives a constant
+factor approximation of the true partition function.
+
+3.1.2 Relationship with sum and max product algorithms
+
+D EN S I TYPRO PAGAT ION is closely related to traditional message passing algorithms such as BP
+(Belief Propagation, Sum-Product) and MP (Max-Product), since it is based on the same (condi-
+tional) independence assumptions. Speci ﬁcally, as shown b y the next theorem, both BP and MP can
+
+3
+
+γb→i (xi )
+
+γj→a (xj ) + Eα ({x}α )
+
+be seen as simpli ﬁed versions of D EN S I TYPRO PAGAT ION that consider only certain global statistics
+of the distributions represented by D EN S I TYPRO PAGAT ION messages.
+Theorem 2. With the same initial condition and message update schedule, at every iteration we can
+recover Belief Propagation and Max-Product marginals from D EN S I TYPRO PAGAT ION messages.
+Proof. Given a DP message mi→j (xj ) = Pk ck (i → j, xj )δEk (i→j,xj ) , the Max-Product algorithm
+corresponds to considering only the entry associated with the highest probability, i.e. γi→j (xj ) =
+f (mi→j (xj )) , maxk {Ek (i → j, xj )}. According to DP updates in equations (4) and (5), the
+quantities γi→j (xj ) are updated as follows
+γi→a (xi ) = f 
+mb→i (xi )
+ O
+ = X
+b∈N (i)\a
+b∈N (i)\a
+γa→i (xi ) = f 
+
+
+mj→a (xj )
+ X
+{x}α\i X
+ O
+ O δEα ({x}α )
+ = max
+{x}α\i
+j∈N (a)\i
+j∈N (a)\i
+These results show that the quantities γi→j (xj ) are updated according to the Max-Product algorithm
+(with messages in log-scale). To see the relationship with BP, for every DP message mi→j (xj ), let
+us deﬁne
+µi→j (xj ) = ||mi→j (xj )(E ) exp(E )||1 = ZR
+Notice that µi→j (xj ) would correspond to an unnormalized marginal probability, assuming that
+mi→j (xj ) is the density of states of the instance when variable j is clamped to value xj . According
+to DP updates in equation (4) and (5)
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)1
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+µi→a (xi ) = ||mi→a (xi )(E ) exp(E )||1 =
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+mj→a (xj )
+ O δEα ({x}α ) (E ) exp(E )
+X
+µa→i (xi ) = ||µa→i (xi )(E ) exp(E )||1 =
+{x}α\i
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)1
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+
+mj→a (xj )
+ O
+ O δEα ({x}α ) (E ) exp(E )
+j∈N (a)\i
+that is we recover BP updates for the µi→j quantities. Similarly, if we deﬁne temperature versions
+of the marginals µT
+i→j (xj ) , ||mi→j (xj )(E ) exp(E /T )||1 , we recover the temperature-versions of
+Belief Propagation updates, similar to [10] and [11].
+
+O
+b∈N (i)\a
+
+ O
+j∈N (a)\i
+
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)1
+(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)(cid:12)
+µj→a (xi )
+
+= X
+{x}α\i
+
+ψα ({x}α ) Y
+j∈N (a)\i
+
+mi→j (xj )(E ) exp(E )dE
+
+mb→i (xi )(E ) exp(E )
+
+= Y
+b∈N (i)\a
+
+µb→i (xi )
+
+= X
+{x}α\i
+
+As other message passing algorithms, D EN S I TYPRO PAGAT ION updates are well deﬁned also for
+loopy graphical models, even though there is no guarantee of convergence or correctness [12]. The
+correspondence with BP and MP (Theorem 2) however still holds: if loopy BP converges, then
+the corresponding quantities µi→j computed from DP messages will converge as well, and to the
+same value (assuming the same initial condition and update schedule). Notice however that the
+convergence of the µi→j does not imply the convergence of D EN S I TYPRO PAGAT ION messages
+(e.g., in probability, law, or Lp ). In fact, we have observed empirically that the situation where
+µi→j converge but mi→j do not converge (not even in distribution) is fairly common. It would
+be interesting to see if there is a variational interpretation for D EN S I TYPRO PAGAT ION equations,
+similar to [13]. Notice also that Junction Tree style algorithms could also be used in conjunction
+with DP updates for the messages, as an instance of generalized distributive law [14].
+
+4 Bounds on the density of states using tractable families
+
+Using techniques such as D EN S I TYPRO PAGAT ION, we can compute the density of states exactly for
+tractable families such as tree-structured graphical models. Let p(x, Θ∗ ) be a general (intractable)
+probabilistic model of interest, and let Θi be a family of tractable parameters (e.g., corresponding to
+trees) such that Θ∗ is a convex combination of Θi , as deﬁned formally below and used previously
+
+4
+
+by Wainwright et al. [5, 6]. See below (Figure 1) for an example of a possible decomposition of
+a 2 × 2 Ising model into 2 tractable distributions. By computing the partition function or MAP
+estimates for the tree structured subproblems, Wainwright et al. showed that one can recover useful
+information about the original intractable problem, for instance by exploiting convexity of the log-
+partition function log Z (Θ).
+We present a way to exploit the decomposition idea to derive an upper bound on the density of states
+n(E , Θ∗ ) of the original intractable model, despite the fact that density of states is not a convex
+function of Θ∗ . The result below gives a point-by-point upper bound which, to the best of our
+knowledge, is the ﬁrst bound of this kind for density of state s. In the following, with some abuse
+of the notation, we denote n(E , Θ∗ ) = Px∈X (cid:0)1{Θ∗ ·φ(x)=E} (cid:1) the function giving the number of
+conﬁgurations with energy E (zero almost everywhere).
+i=1 γi = 1, and yn = E − Pn−1
+i=1 γiΘi , Pn
+Theorem 3. Let Θ∗ = Pn
+i=1 yi . Then
+n(E , Θ∗ ) ≤ ZR ZR
+. . . ZR
+n
+{n(yi , γiΘi )} dy1dy2 . . . dyn−1
+min
+i=1
+Proof. From the deﬁnition of density of states and using 1{} to denote the 0-1 indicator function,
+n(E , Θ∗ ) = Xx∈X
+1{Θ∗ φ(x)=E} = Xx∈X
+1{(Pi γiΘi )φ(x)=E}
+. . . ZR   n
+1{γiΘi φ(x)=yi }! dy1dy2 . . . dyn−1 where yn = E −
+= Xx∈X ZR ZR
+Yi=1
+. . . ZR Xx∈X   n
+1{γiΘi φ(x)=yi }! dy1dy2 . . . dyn−1
+= ZR ZR
+Yi=1
+. . . ZR Xx∈X (cid:18) n
+i=1 (cid:8)1{γiΘi φ(x)=yi }(cid:9)(cid:19) dy1dy2 . . . dyn−1
+= ZR ZR
+min
+i=1 (Xx∈X (cid:0)1{γiΘi φ(x)=yi } (cid:1)) dy1dy2 . . . dyn−1
+≤ ZR ZR
+. . . ZR
+n
+min
+Observing that Px∈X (cid:0)1{γiΘi φ(x)=yi } (cid:1) is precisely n(yi , γiΘi ) ﬁnishes the proof.
+5 Bounds on the partition function using n-dimensional matching
+
+n−1
+Xi=1
+
+yi
+
+The density of states n(E , Θ∗ ) can be used to compute the partition function, since by deﬁni
+tion
+Z (Θ∗ ) = ||n(E , Θ∗ ) exp(E )||1 . We can therefore get an upper bound on Z (Θ∗ ) by integrating the
+point-by-point upper bound on n(E , Θ∗ ) from Theorem 3. This bound can be tighter than the known
+bound [6] obtained by applying Jensen’s inequality to the log-partition function (which is convex),
+given by log Z (Θ∗ ) ≤ Pi γi log Z (Θi ). For instance, consider a graphical model with weights that
+are large enough such that the density of states based sum deﬁ ning Z (Θ∗ ) is dominated by the contri-
+bution of the highest-energy bucket. As a concrete example, consider the decomposition in Figure 1.
+As the edge weight w (w = 2 in the ﬁgure) grows, the convexity-based bound will approxi mately
+equal the geometric average of 2 exp(6w) and 8 exp(2w), which is 4 exp(4w). On the other hand,
+the bound based on Theorem 3 will approximately equal min{2, 8} exp((2 + 6)w/2) = 2 exp(4w).
+In general, the latter bound will always be strictly better for large enough w unless the highest-energy
+bucket counts are identical across all Θi .
+While this is already promising, we can, in fact, obtain a much tighter bound by taking into account
+the interactions between different energy levels across any parameter decomposition, e.g., by en-
+forcing the fact that there are a total of |X | conﬁgurations. For compactness, in the following let us
+deﬁne yi (x) = exp(Θi · φ(x)) for any x ∈ X and i = 1, · · · , n. Then,
+Z (Θ∗ ) = Xx∈X
+exp(Θ∗ · φ(x)) = Xx∈X Yi
+yi (x)γi
+Theorem 4. Let Π be the ( ﬁnite) set of all possible permutations of X . Given σ = (σ1 , · · · , σn ) ∈
+Πn , let Z (Θ∗ , σ) = Px∈X Qi yi (σi (x))γi . Then,
+Z (Θ∗ , σ) ≤ Z (Θ∗ ) ≤ max
+min
+σ∈Πn
+σ∈Πn
+
+Z (Θ∗ , σ)
+
+(6)
+
+5
+
+Algorithm 1 Greedy algorithm for the maximum matching (upper bound).
+1: while there exists E such that n(E , Θi ) > 0 do
+Emax (Θi ) ← maxE {E |n(E , Θi ) > 0)}, for i = 1, · · · , n
+2:
+c′ ← min {n(Emax (Θ1 ), Θ1 ), · · · , n(Emax (Θn ), Θn )}
+3:
+ub (γ1Emax (Θ1 ) + · · · + γnEmax (Θn ), Θ1 , · · · , Θn ) ← c′
+4:
+n(Emax (Θi ), Θi ) ← n(Emax (Θi ), Θi ) − c′ , for i = 1, · · · , n
+5:
+6: end while
+
+Proof. Let σI ∈ Πn denote a collection of n identity permutations. Then we have Z (Θ∗ ) =
+Z (Θ∗ , σI ), which proves the upper and lower bounds in equation (6).
+
+We can think of σ ∈ Πn as an n-dimensional matching over the exponential size conﬁguration
+space X . For any i, j , σi (x) matches with σj (x), and σ(x) gives the corresponding hyper-edge.
+If we deﬁne the weight of each hyper-edge in the matching grap h as w(σ(x)) = Qi yi (σi (x))γi
+then Z (Θ∗ , σ) = Px∈X w(σ(x)) corresponds to the weight of the matching represented by σ . We
+can therefore think the bounds in equation (6) as given by a maximum and a minimum matching,
+respectively. Intuitively, the maximum matching corresponds to the case where the conﬁgurations
+in the high energy buckets of the densities happen to be the same conﬁguration (matching), so that
+their energies are summed up.
+
+5.1 Upper bound
+
+The maximum matching maxσ Z (Θ∗ , σ) (i.e., the upper bound on the partition function) can be
+computed using Algorithm 1. Algorithm 1 returns a distribution ub such that R ub (E )dE = |X | and
+R ub (E ) exp(E )dE = maxσ Z (Θ∗ , σ). Notice however that ub (E ) is not a valid point-by-point
+upper bound on the density n(E , Θ∗ ) of the original mode.
+Proposition 1. Algorithm 1 computes the maximum matching and its runtime is bounded by the
+total number of non-empty buckets Pi |{E |n(E , Θi ) > 0}|.
+1 +E ′
+Proof. The correctness of Algorithm 1 follows from observing that exp(E1 +E2 )+ exp(E ′
+2 ) ≥
+exp(E1 + E ′
+1 and E2 ≥ E ′
+1 + E2 ) when E1 ≥ E ′
+2 ) + exp(E ′
+2 . Intuitively, this means that for
+n = 2 parameters it is always optimal to connect the highest energy conﬁgurations, therefore the
+greedy method is optimal. This result can be generalized for n > 2 by induction. The runtime is
+proportional to the total number of buckets because we remove one bucket from at least one density
+at every iteration.
+
+A key property of Algorithm 1 is that even though it deﬁnes a ma tching over an exponential num-
+ber of conﬁgurations
+|X |, its runtime proportional only to the total number of buckets, because it
+matches conﬁgurations in groups at the bucket level.
+
+The following result shows that the value of the maximum matching is at least as tight as the
+bound provided by the convexity of the log-partition function, which is used for example by Tree
+Reweighted Belief Propagation (TRWBP) [6].
+Theorem 5. For any parameter decomposition Pn
+i=1 γiΘi = Θ∗ , the upper bound given by the
+maximum matching in equation (6) and computed using Algorithm 1 is always at least as tight as
+the bound obtained using the convexity of the log-partition function.
+
+Proof. The bound obtained by applying Jensen’s inequality to the log-partition function (which is
+convex), given by log Z (Θ∗ ) ≤ Pi γi log Z (Θi ) [6], leads to the following geometric average
+bound Z (Θ∗ ) ≤ Qi (Px yi (x))γi . Given any n permutations of the conﬁgurations σi : X → X for
+i = 1, · · · , n (in particular, it holds for the one attaining the maximum matching value) we have
+yi (σi (x))!γi
+||yi (σi (x))γi ||1/γi = Yi  Xx
+Xx Yi
+yi (σi (x))γi = || Yi
+yi (σi (x))γi ||1 ≤ Yi
+where we used Generalized Holder inequality and the norm || · ||ℓ indicates a sum over X .
+
+6
+
+Algorithm 2 Greedy algorithm for the minimum matching with n = 2 parameters (lower bound).
+1: while there exists E such that n(E , Θi ) > 0 do
+Emax (Θi ) ← maxE {E |n(E , Θi ) > 0)}; Emin (Θ2 ) ← minE {E |n(E , Θ2 ) > 0)}
+2:
+c′ ← min {n(Emax (Θ1 ), Θ1 ), n(Emin (Θ2 ), Θ2 )}
+3:
+lb (γ1Emax (Θ1 ) + γ2Emin (Θ2 ), Θ1 , Θ2 ) ← c′
+4:
+n(Emax (Θ1 ), Θ1 ) ← n(Emax (Θ1 ), Θ1 ) − c′ ; n(Emin (Θ2 ), Θ2 ) ← n(Emin (Θ2 ), Θ2 ) − c′
+5:
+6: end while
+
+5.2 Lower bound
+
+We also provide Algorithm 2 to compute the minimum matching when there are n = 2 parameters.
+The proof of correctness is similar to that for Proposition 1.
+Proposition 2. For n = 2, Algorithm 2 computes the minimum matching and its runtime is bounded
+by the total number of non-empty buckets Pi |{E |n(E , Θi ) > 0}|.
+For the minimum matching case, the induction argument does not apply and the result does not
+extend to the case n > 2. For that case, we can obtain a weaker lower bound by applying Re-
+verse Generalized Holder inequality [15], obtaining from a different perspective a bound previously
+derived in [16]. Speci ﬁcally, let s1 , · · · , sn−1 < 0 and sn such that P 1
+= 1. We then have
+si
+Z (Θ∗ , σ) = Xx Yi
+yi (σmin,i (x))γi = || Yi
+yi (σmin,i (x))γi ||1 ≥
+min
+σ
+1
+||yi (σmin,i (x))γi ||si = Yi  Xx
+yi (σmin,i (x))si γi !
+= Yi  Xx
+yi (x)si γi !
+si
+Yi
+Notice this result cannot be applied if yi (x) = 0, i.e. there are factors assigning probability zero
+(hard constraints) in the probabilistic model.
+
+(7)
+
+1
+si
+
+6 Empirical evaluation
+
+To evaluate the quality of the bounds, we consider an Ising model from statistical physics,
+where given a graph (V , E ), single node variables xs , s ∈ V are Bernoulli distributed
+(xs ∈ {0, 1})), and the global
+random vector
+is distributed according to p(x, Θ) =
+Z (Θ) exp (cid:16)Ps∈V Θsxs + P(i,j )∈E Θij 1{xi=xj }(cid:17). Figure 1 shows a simple 2 × 2 grid Ising
+1
+model with exponential parameter Θ∗ = [0, 0, 0, 0, 1, 1, 1, 1] (Θs = 0 and Θij = 1) decom-
+posed as the convex sum of two parameters Θ1 and Θ2 corresponding to tractable distributions,
+i.e. Θ∗ = (1/2)Θ1 + (1/2)Θ2 . The corresponding partition function is Z (Θ∗ ) = 2 + 12 exp(2) +
+2 exp(4) ≈ 199.86. In panels 1(d) and 1(e) we report the corresponding density of states n(E , Θ1 )
+and n(E , Θ2 ) as histograms. For instance, for the model corresponding to Θ2 there are only two
+global conﬁgurations (all variables positive and all negat
+ive) that give an energy of 6. It can be seen
+from the densities reported that Z (Θ1 ) = 2 + 6 exp(2) + 6 exp(4) + 2 exp(6) ≈ 1180.8, while
+Z (Θ2 ) = 8 + 8 exp(2) ≈ 67.11. The corresponding geometric average (obtained from the con-
+vexity of the log-partition function) is p(Z (Θ1 ))p(Z (Θ2 )) ≈ 281.50. In panels 1(f) and 1(c) we
+show ub and lb computed using Algorithms 1 and 2, i.e. the solutions to the maximum and minimum
+matching problems, respectively. For instance, for the maximum matching case the 2 conﬁgurations
+with energy 6 from n(E , Θ1 ) are matched with 2 of the 8 with energy 2 from n(E , Θ2 ), giving an
+energy 6/2 + 2/2 = 4. Notice that ub and lb are not valid bounds on individual densities of states
+themselves, but they nonetheless provide upper and lower bounds on the partition function as shown
+in the ﬁgure: ≈ 248.01 and 134.27, respectively. The bound (8) given by inverse Holder inequality
+with s1 = −1, s2 = 1/2 is ≈ 126.22, while the mean ﬁeld lower bound [4, 7] is ≈ 117.91. In this
+case, the additional information provided by the density leads to tighter upper and lower bounds on
+the partition function.
+
+In Figure 2 we report the upper bounds obtained for several types of Ising models (in all cases,
+Θs = 0, i.e., there is no external ﬁeld). In the two left plots, we co nsider a N ×N square Ising model,
+once with attractive interactions (Θij ∈ [0, w]) and once with mixed interactions (Θij ∈ [−w, w]).
+In the two right plots, we use a complete graph (a clique) with N = 15 vertices. For each model,
+we compute the upper bound given by TRWBP (with edge appearance probabilities µe based on a
+
+7
+
+v2
+
+2
+
+v3
+
+2
+
+2
+
+v1
+
+v4
+
+v2
+
+v3
+
+v1
+
+2
+
+v4
+
+(a) Graph for Θ1 .
+
+(b) Graph for Θ2 .
+
+6
+
+6
+
+2
+
+2
+
+s
+n
+o
+i
+t
+a
+r
+u
+g
+i
+f
+n
+o
+C
+
+6
+
+4
+
+2
+
+0
+
+0
+
+1
+
+3
+
+4
+
+Energy
+(c) Zub = 2 + 6e + 6e3 + 2e4 .
+
+s
+n
+o
+i
+t
+a
+r
+u
+g
+i
+f
+n
+o
+C
+
+6
+
+4
+
+2
+
+0
+
+6
+
+6
+
+2
+
+2
+
+0
+
+2
+
+4
+
+Energy
+(d) Histogram n(E , Θ1 )
+
+6
+
+s
+n
+o
+i
+t
+a
+r
+u
+g
+i
+f
+n
+o
+C
+
+8
+
+6
+
+4
+
+2
+
+0
+
+8
+
+8
+
+0
+
+2
+
+Energy
+(e) Histogram n(E , Θ2 )
+
+s
+n
+o
+i
+t
+a
+r
+u
+g
+i
+f
+n
+o
+C
+
+12
+10
+8
+6
+4
+2
+0
+
+12
+
+2
+
+2
+
+1
+
+2
+Energy
+(f) Zlb = 2e + 12e2 + 2e3
+
+3
+
+Figure 1: Decomposition of a 2 × 2 Ising model, densities obtained with maximum and minimum
+matching algorithms, and the corresponding upper and lower bounds on Z (Θ∗ ).
+
+(a) 15 × 15 grid, attractive.
+
+(b) 10 × 10 grid, mixed.
+
+(c) 15-Clique, attractive.
+
+(d) 15-Clique, mixed.
+
+Figure 2: Relative error of the upper bounds.
+
+subset of 10 randomly selected spanning trees) and the mean- ﬁeld bound u sing the implementations
+in libDAI [17]. We then compute the bound based on the maximum matching using the same set
+of spanning trees. For the grid case, we also use a combination of 2 spanning trees and compute
+the corresponding lower bound based on the minimum matching (notice it is not possible to cover
+all the edges in a clique with only 2 spanning tree). For each bound, we report the relative error,
+deﬁned as
+(log(bound) − log(Z )) / log(Z ), where Z is the true partition function, computed using
+the junction tree method.
+
+In these experiments, both our upper and lower bounds improve over the ones obtained with TR-
+WBP [6] and mean- ﬁeld respectively. The lower bound based on m inimum matching visually over-
+laps with the mean- ﬁeld bound and is thus omitted from Figure 2. It is, however, strictly better, even
+if by a small amount. Notice that we might be able to get a better bound by choosing a different
+set of parameters Θi (which may be suboptimal for TRW-BP). By optimizing the parameters si in
+the inverse Holder bound (8) using numerical optimization (BFGS and BOBYQA [18]), we were
+always able to obtain a lower bound at least as good as the one given by mean ﬁeld.
+
+7 Conclusions
+
+We presented D EN S I TYPRO PAGAT ION, a novel message passing algorithm for computing the den-
+sity of states while exploiting the structure of the underlying graphical model. We showed that
+D EN S I TYPRO PAGAT ION computes the exact density for tree structured graphical models and is a
+generalization of both Belief Propagation and Max-Product algorithms. We introduced a new family
+of bounds on the partition function based on n-dimensional matching and tree decomposition but
+without relying on convexity. The additional information provided by the density of states leads,
+both theoretically and empirically, to tighter bounds than known convexity-based ones.
+
+8
+
+References
+
+[1] M.J. Wainwright and M.I. Jordan. Graphical models, exponential families, and variational
+inference. Foundations and Trends in Machine Learning, 1(1-2):1–305, 2008.
+[2] S. Ermon, C. Gomes, A. Sabharwal, and B. Selman. Accelerated Adaptive Markov Chain for
+Partition Function Computation. Neural Information Processing Systems, 2011.
+[3] F. Wang and DP Landau. Efﬁcient, multiple-range random w alk algorithm to calculate the
+density of states. Physical Review Letters, 86(10):2050–2053, 2001.
+[4] M.J. Wainwright. Stochastic processes on graphs with cycles: geometric and Variational ap-
+proaches. PhD thesis, Massachusetts Institute of Technology, 2002.
+[5] M. Wainwright, T. Jaakkola, and A. Willsky. Exact map estimates by (hyper) tree agreement.
+Advances in neural information processing systems, pages 833–840, 2003.
+[6] M.J. Wainwright. Tree-reweighted belief propagation algorithms and approximate ML estima-
+tion via pseudo-moment matching. In AISTATS, 2003.
+[7] G. Parisi and R. Shankar. Statistical ﬁeld theory. Physics Today, 41:110, 1988.
+[8] L.D. Brown. Fundamentals of statistical exponential families: with applications in statistical
+decision theory. Institute of Mathematical Statistics, 1986.
+[9] M. Richardson and P. Domingos. Markov logic networks. Machine Learning, 62(1):107–136,
+2006.
+[10] Y. Weiss, C. Yanover, and T. Meltzer. MAP estimation, linear programming and belief propa-
+gation with convex free energies. In Uncertainty in Arti ﬁcial Intelligence , 2007.
+[11] T. Hazan and A. Shashua. Norm-product belief propagation: Primal-dual message-passing for
+approximate inference. Information Theory, IEEE Transactions on, 56(12):6294–6316, 2010.
+[12] K.P. Murphy, Y. Weiss, and M.I. Jordan. Loopy belief propagation for approximate inference:
+An empirical study.
+In Proceedings of the Fifteenth conference on Uncertainty in arti ﬁcial
+intelligence, pages 467–475. Morgan Kaufmann Publishers Inc., 1999.
+[13] J.S. Yedidia, W.T. Freeman, and Y. Weiss. Understanding belief propagation and its general-
+izations. Exploring arti ﬁcial intelligence in the new millennium , 8:236–239, 2003.
+[14] S.M. Aji and R.J. McEliece. The generalized distributive law.
+Information Theory, IEEE
+Transactions on, 46(2):325–343, 2000.
+[15] W.S. Cheung. Generalizations of H ¨olders inequality. International Journal of Mathematics
+and Mathematical Sciences, 26:7–10, 2001.
+[16] Qiang Liu and Alexander Ihler. Negative tree reweighted belief propagation. In Proceedings
+of the Twenty-Sixth Conference Annual Conference on Uncertainty in Arti ﬁcial Intelligence
+(UAI-10), pages 332–339, Corvallis, Oregon, 2010. AUAI Press.
+[17] J.M. Mooij. libDAI: A free and open source c++ library for discrete approximate inference in
+graphical models. The Journal of Machine Learning Research, 11:2169–2173, 2010.
+[18] M.J.D. Powell. The BOBYQA algorithm for bound constrained optimization without deriva-
+tives. University of Cambridge Technical Report, 2009.
+
+9
+
+

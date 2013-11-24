@@ -1,0 +1,532 @@
+Finding the Best Panoramas
+
+Jeremy Pack
+
+CS 229 Fall 2011
+
+Abstract
+
+Google Maps publishes street level panoramic pho-
+tographs from around the world in the Street View ser-
+vice. When users request street level imagery in a given
+area, we would like to show the best or most represen-
+tative imagery from the region. In order to select the
+best panorama for a region of any size, I developed a
+panorama ranking algorithm.
+
+An enhancement to this technique is also described
+here,
+leveraging the Alternating Direction Method of
+Multipliers to create a high throughput distributed on-
+line learning algorithm that should allow for instant clas-
+siﬁcation updating based on real-time user traﬃc.
+
+The
+deployed
+algorithm was
+ranking
+maps.google.com on Monday, December 12, 2011.
+
+on
+
+For more in depth information on the particular diﬃ-
+culties posed by our work on Google Street View, please
+refer to [1] and [2].
+
+(a) Chicago
+
+(b) UC San Diego
+
+(c) South Africa
+
+Figure 1: Ranking Server for Diﬀerent Re-
+gions
+
+1 Training data
+
+1.1 Ranking panoramas
+
+The goal of this work is to be able to determine a best
+panoramic image in any given set of panoramic images.
+Assuming that any best panorama from a set would also
+be the best in any subset containing it, and that any
+subset without it would have a diﬀerent best panorama
+implies that there is some total ordering on the set of
+all panoramic images. As will be discussed later in Sec-
+tion 6.2, this ordering depends on the deﬁnition of ’best’
+for the current user.
+In [3], user rankings of photographs are averaged to-
+gether to estimate image quality. This technique is very
+prone to scoring bias from individual users, which must
+then be accounted for. Instead, I use pairwise ranking,
+where the user selects one of two panoramas as preferred.
+Another alternative would be listwise ranking, which can
+exhibit better statistical and convergence characteristics
+([4]). Pairwise ranking was selected instead in order to
+get a variety of rankings as quickly as possible, but list-
+wise ranking may be better for future training.
+
+1.2 Condorcet Criterion
+
+A Condorcet method can be used to ﬁnd the preferred
+item in a set of items by considering the pairwise prefer-
+ences across all items (see [5]). For a method to meet the
+Condorcet Criterion, it must guarantee that if any single
+item in the set is preferred in every pairwise comparison
+to every other item in the set, it must be the selected
+Condorcet Winner. There are far too many panoramas
+to perform a comparison between every possible pair.
+Instead, I use a small number of comparisons to statis-
+tically determine machine learning parameters to maxi-
+mize the likelihood of satisfying the Condercet Criterion,
+similar to the technique described in [6]. In addition, we
+
+1
+
+use the extension to the Condorcet Criterion and Ke-
+meny Orders described in [7]. This requires that any
+item that is ’consistently’ preferred over another item
+should be ahead in the ﬁnal ranking.
+
+1.3 Preference training data
+
+To estimate the pair-wise rankings for a number of
+panoramas, an application was constructed to randomly
+show a pair of images from some location. It may show,
+for example, two images from Chicago (Figure 1a), UC
+San Diego (Figure 1a), South Africa (Figure 1c), or some
+other region of any size. A user would then select one
+of the two images as the better image to represent the
+given area.
+Users were encouraged to rate images from areas
+where they had lived, studied, or frequently traveled.
+Approximately 10, 000 such rankings were used to train
+the machine learning algorithm. It must be stressed that
+the goal was not to ﬁnd just the most likely Condorcet
+ranking for this small set of panoramic images, but to
+determine machine learning parameters to automatically
+generate the most likely Condorcet ranking for all Street
+View panoramas in the world - including those that were
+never manually rated.
+There are multiple sources of error and ambiguity in
+the training data:
+• Users may accidentally select the wrong pano as the
+better panorama.
+• Diﬀerent users may have very diﬀerent preferences
+for what constitutes a good panorama.
+• There were only a small number of users rating a
+large number of panoramas, meaning that there are
+certain biases apparent in the results.
+
+2 Model
+
+2.1 Parameters considered (partial list)
+
+To train the machine learning classiﬁer, features includ-
+ing the following were considered:
+• Camera type (there are a number of diﬀerent reso-
+lutions in Street View imagery)
+• Date of image capture
+• Connectedness of panorama (intersections etc.)
+• Nearby geo-located user photos
+• User photos that match the given panorama (Street
+View panoramas are feature matched with public
+user photos)
+• Count of unique users to contribute photos
+
+• Nearby businesses and landmarks
+• Type and importance of road
+• Number of people or cars in the image
+• Collection vehicle (trike, car, snowmobile, etc.)
+
+2.2 Simpliﬁed model
+
+The parameters in the modeled score include the follow-
+ing:
+• θ : non-landmark feature weights
+• xi : some combination of the non-landmark features
+for panorama i
+• i : set of nearby landmarks for panorama i - each
+feature is in one of a small set of super-categories,
+and also part of a larger set of sub-categories (gov-
+ernment buildings, businesses, parks etc.)
+• δi : distance of the landmarks i from panorama i
+• φ : feature weight for the various types of landmarks
+in the sub-categories and super-categories.
+• f (i , δi , φ) : the weight in the panorama score for
+panorama i, given the nearby landmarks i .
+• θT xi + f (i , φ) : the score for panorama i.
+
+The function f (i , δi , φ) is assumed to be increasing
+in δi for landmarks with a positive weight in φ, or de-
+creasing when the weight in φ is negative. A simple
+function that meets this criteria is the sigmoid function
+1
+1+exp(−z) , where z is some linear function of the
+g(z ) =
+distance δi . f is then the φ weighted sum of these sig-
+moid functions of the distance. Note that this sum is
+not convex in φ and δi .
+
+2.3 Binary Classiﬁer
+
+The training data is a set of preferences of the form
+“Panorama A is better than Panorama B”. Using the
+scoring model described previously, this can be modeled
+as “The score of Panorama A should be higher than
+the score of Panorama B”. We thus want to develop a
+classiﬁer that generally selects the same panorama as
+better as was picked by the users. An error is then the
+case where the panorama selected as better by the user
+is considered worse by the algorithm.
+As described in Section 1.3, there are numerous
+sources of error in the training data. Because of this,
+there is no reason to believe that the data will be sep-
+arable, no matter how many features are included for
+consideration. Preference rankings are thus considered
+to be probabilistic predictors of the true ranking.
+
+2
+
+3 Method of solution
+
+3.4 Weighting of training samples
+
+3.1 Descent method
+
+As mentioned above, the resulting score function is not
+convex. This necessitated the use of sequential convex
+optimization to converge to a solution. Once the initial
+solution was found, the distance function parameters in
+f were set to be constant while selecting features.
+By setting these parameters constant,
+it was then
+possible to use the Support Vector Machines algorithm
+(SVM) to develop a classiﬁer. Many of the features being
+used were primarily discrete-valued or boolean. Most of
+the remaining features were usually zero (most panora-
+mas have no nearby post oﬃces, for example). This
+made SVM very unstable, and it performed worse gen-
+erally than a basic linear classiﬁer. Stabilizing an SVM
+with discrete features is described in [8], but further ex-
+perimentation is needed to determine if their technique
+would work well with the mixture of features here.
+
+3.2 Feature selection
+
+Being unable to use SVM, I was forced to determine
+the nonlinear features to include manually. To do this,
+I split the data into subsets using two splitting tech-
+niques. The ﬁrst technique involved using a Mixture of
+Gaussians model (as described in [9]) to split the data
+into sets of similar panoramas. The second technique
+split across the diﬀerent discrete features (all highways
+in one bucket, all sidewalks in one bucket, etc.). I then
+calculated the classiﬁcation error for the comparisons
+between each subset of panoramas. For those pairs of
+subsets with high classiﬁcation error, I attempted to de-
+termine the most relevant nonlinear features that could
+be used to distinguish the subsets.
+To determine which features to remove, I partitioned
+the preference set into parts, and trained on each one
+separately. The feature with the highest probability of
+being zero was repeatedly removed to determine the ﬁnal
+set of features to consider.
+
+3.3 Optimization function
+
+The optimization function was basically as follows:
+
+minimize C ||ei ||1 + λ ||θ ||2
+2 + η ||φ||2
+2
+sub ject to g(xi ) − g(xj ) + ek ≥ 1 for i,j in comparison k
+ei ≥ 0
+
+Convergence was excellent and robust, and for the full
+training set it gave the same training and generalization
+errors for a variety of values of C , λ and η – 29.5% and
+30% respectively. Since the absolute minimum train-
+ing error given the cycles in the training data was 10%,
+and even an over-ﬁt SVM couldn’t get better than 29%
+training error, I found those results quite satisfactory.
+
+If all of the panoramas in the suburbs of San Jose
+were perfectly ranked, but the panoramas of the Golden
+Gate bridge and other Bay Area landmarks were poorly
+ranked, the algorithm would be of little value. We thus
+want to weight important panoramas more heavily than
+less important panoramas in the algorithm.
+To make sure high scoring panoramas were weighted
+more heavily, the random selection of panoramas wasn’t
+uniform. As training samples were added, early itera-
+tions of the classiﬁcation were run to generate approx-
+imate scores. Panoramas with higher scores were then
+included more often in the set of panoramas presented
+to the people rating.
+
+3.5 Satisfying the Condorcet Criterion
+
+After the weights are found for the scoring function,
+scores can be generated for all panoramas in the world.
+Because of the sub jectivity of the training data as de-
+scribed in section 1.3, a high percentage of the user pref-
+erences cannot be satisﬁed, even after including a num-
+ber of nonlinear features. We can still add a manual
+weight to the panoramas used for training to still satisfy
+the Condorcet Criterion in cases where we are reason-
+able certain that one panorama should score more highly
+than another panorama.
+Because we do not have a comparison between ev-
+ery panorama, we can use linear programming to ﬁnd a
+Kemeny-like solution without resorting to an NP Hard
+algorithm, as described in [6]. Given the user preference
+that panorama A be scored higher than panorama B, for
+example, we would have that S (A) + mA − S (B ) − mB +
+ek > 0 where mA , mB are the manual scores for A and
+B respectively, and ek is the unsatisﬁed disagreement
+term. Massaging this into a linear program requires us-
+ing separate variables for the positive and negative parts
+of each of these values, and then minimizing the linear
+sum of all m and e values.
+After the initial trial of adding manual weights, it be-
+came clear that there was a problem case where low
+quality panos that were only ranked once or twice could
+be ranked higher than high quality because of user error
+in the classiﬁcation. After the ﬁrst run one of Paris’s ﬁne
+public restrooms was ranked more highly than the Eif-
+fel Tower. Thus, reasonable certainty requires that the
+probability of ranking error and user bias be considered
+in the algorithm.
+The simplest way to avoid this type of error proved to
+be a requirement that any change in the manual score of
+a panorama be accompanied by a much larger decrease
+in total disagreement in ranking. This means weighting
+e more heavily in the optimization function in the linear
+program. The precise value for the weight of e depends
+on the expected error rate.
+
+3
+
+depend on the value θ + κp . The classiﬁer would then
+be trained separately for each pairwise combination of
+p1 , p2 ∈ P . Any pair without enough training samples
+to train a classiﬁer would not be considered.
+The results of the diﬀerent training runs could then
+be averaged for each p ∈ P .
+
+4.3 The Alternating Direction Method
+of Multipliers
+
+It is possible to do far better than simply averaging the
+results. The Alternating Directions Method of Multi-
+pliers (ADMM) is a powerful way to split a convex op-
+timization problem into multiple sub-problems that are
+solved repeatedly (see [10]). This technique shows far
+better convergence than simple averaging, and is guar-
+anteed to converge given basic requirements on the func-
+tions used in each sub-problem.
+I wrote code to perform ADMM consensus (see [11]
+for information on consensus algorithms) across subsets
+of the data. ADMM convergence was good, with a few
+special diﬃculties. For instance, since a binary classiﬁer
+was being used, scaling of the scores was arbitrary and
+they had to be scaled separately in each subproblem.
+The great beneﬁt of using ADMM is that it quite nat-
+urally allows for online training, and once initially con-
+verged, keeps the solution very close to optimal as more
+data are added over time. This means that true online,
+distributed real-time training is achievable, even with a
+high volume of real-time training data.
+
+5 Further work
+
+5.1 Heading selection
+
+The current implementation on maps.google.com does
+not automatically select a good direction for the user
+to turn to view the panorama. The optimal direction
+can be determined by considering the direction of user
+photos from the current panorama, or by considering the
+direction of nearby landmarks.
+Over time, it may be possible to calculate the optimal
+directions based on user behavior. As seen in Figure 2c,
+in a place like the south-west corner of Central Park or
+Times Square in New York City, it can be diﬃcult to
+determine a best direction to turn the panoramic view.
+
+5.2 Iconic views
+
+Some landmarks are so famous that we want more than
+just some view of the image - we want the iconic view.
+In [12], the authors present techniques for automatically
+determining from a large set of photographs which view
+of an ob ject is iconic. This type of technique could be
+used to select the best of many diﬀerent views of famous
+places. Their work also discusses automatically deter-
+mining which ob ject in a photograph is the “sub ject”,
+
+(a) Macau and Hong Kong- Tourist/Event Lo-
+cations
+
+(b) Sydney - Artistic Quality
+
+(c) New York City - Heading Selection
+
+Figure 2: Diﬃcult Ranking Decisions
+
+4 Distributed online learning
+
+4.1 High volume training data
+
+Though this oﬄine classiﬁer works generally well at
+ﬁnding good panoramas, actually determining which
+panoramas are best for the users of the Street View ser-
+vice across a variety of use cases will require far more
+training data.
+It would be preferable to analyze user
+traﬃc in real-time to constantly update the algorithm
+parameters.
+
+4.2 Training separately on subsets of the
+data
+
+To perform online training on a large dataset, it will
+be necessary to distribute the machine learning algo-
+rithm. This actually provides an interesting opportunity
+to train the algorithm separately on diﬀerent subsets of
+the data.
+It makes sense, for instance, that the machine learning
+algorithm may result in diﬀerent parameters in diﬀerent
+countries, because of the variability across countries and
+languages of the quality of the landmark and user photo
+data sets that are being used as features in the classiﬁer.
+Also, there is a discernible diﬀerence in the parameters
+for user photographs and landmarks for panoramas that
+are on highways or freeways versus those that are on
+neighborhood streets or ma jor thoroughfares.
+Given a subset p ∈ P , it is thus possible to assume
+some global value for the parameters θ , as well as local
+modiﬁers to the global parameters κp for each subset p.
+The scoring for subset p of the panoramas would then
+
+4
+
+which could make it easier to determine which direction
+to point the user initially when viewing the panorama.
+
+6 Conclusions
+
+6.1 Fun facts
+
+There were a number of interesting things learned from
+the training of the algorithm:
+• The number of unique photographers who took pho-
+tos in an area is more important than the number
+of unique photos in an area.
+• Government buildings are a strong positive pre-
+dicter of panorama ranking.
+• Bars and hotels have are a strong predicter of low
+quality panoramas.
+• Nearly ten percent of user preferences could not be
+satisﬁed by any ordering.
+• People love their sports teams, so when they rate
+their home town they always rate the stadium
+highly. This led to a very strong positive weight
+on stadiums in the rankings.
+
+6.2 Deﬁnition of “best” panorama
+
+Users have very diﬀerent opinions about which panora-
+mas are best. Would a user prefer the view of Syd-
+ney Australia that shows both the Harbour Bridge and
+the Opera House – or the artistically superior shot from
+below the Harbour Bridge of the Sydney skyline (Fig-
+ure 2c)?
+These diﬀering ideas of what constitutes “best” will
+actually change even for a given user, depending on the
+context. As such, a natural extension of this work is to
+model the behavior of a given user to predict which type
+of imagery they would be interested in seeing. There
+could then be a number of separate rankings for the
+panoramas, to target users interested in seeing the best
+cafes and restaurants in town; or the best architecture;
+or the most interesting churches, cathedrals and temples;
+or the best views of the ocean or mountains.
+
+6.3 Launch on maps.google.com
+
+The initial demonstration of this technique was so con-
+vincing that it was determined that the ranking should
+be made available to the public immediately. The rank-
+ing generated using the oﬄine classiﬁer was made avail-
+able as the default panorama selection method on the
+website maps.google.com on Monday, December 12th.
+To use this new ranking information on Google Maps,
+move to a map view at the country or state level, and
+drag and drop the Pegman ﬁgure onto a city. The service
+will attempt to return the best panorama from within a
+few pixels of the selected location.
+
+5
+
+References
+
+[1] L. Vincent, “Taking online maps down to street
+level,” Computer, vol. 40, no. 12, pp. 118–120, 2007.
+
+[2] D. Anguelov, C. Dulong, D. Filip, C. Frueh, S. La-
+fon, R. Lyon, A. Ogale, L. Vincent, and J. Weaver,
+“Google street view: Capturing the world at street
+level,” Computer, vol. 43, no. 6, pp. 32–38, 2010.
+
+[3] Y. Ke, X. Tang, and F. Jing, “The design of
+high-level features for photo quality assessment,”
+in Computer Vision and Pattern Recognition, 2006
+IEEE Computer Society Conference on, vol. 1,
+pp. 419–426, Ieee, 2006.
+
+[4] Z. Cao, T. Qin, T. Liu, M. Tsai, and H. Li,
+“Learning to rank: from pairwise approach to list-
+wise approach,” in Proceedings of the 24th interna-
+tional conference on Machine learning, pp. 129–136,
+ACM, 2007.
+
+[5] D. Austen-Smith and J. Banks, “Information ag-
+gregation, rationality, and the condorcet jury the-
+orem,” American Political Science Review, pp. 34–
+45, 1996.
+
+[6] C. Dwork, R. Kumar, M. Naor, and D. Sivaku-
+mar, “Rank aggregation methods for the web,” in
+Proceedings of the 10th international conference on
+World Wide Web, pp. 613–622, ACM, 2001.
+
+[7] M. Truchon, “An extension of the condorcet crite-
+rion and kemeny orders,” Cahier, vol. 9813, 1998.
+
+[8] K. Sadohara, “Learning of boolean functions using
+support vector machines,” in Algorithmic Learning
+Theory, pp. 106–118, Springer, 2001.
+
+[9] J. Bilmes, “A gentle tutorial of the em algo-
+rithm and its application to parameter estimation
+for gaussian mixture and hidden markov models,”
+International Computer Science Institute, vol. 4,
+p. 126, 1998.
+
+[10] S. Boyd, N. Parikh, E. Chu, B. Peleato, and
+J. Eckstein, “Distributed optimization and statis-
+tical learning via the alternating direction method
+of multipliers,” tech. rep., working paper on line,
+Stanford, Univ, 2010.
+
+[11] F. Zanella, D. Varagnolo, A. Cenedese, G. Pil-
+lonetto, and L. Schenato, “Newton-raphson consen-
+sus for distributed convex optimization,” 2011.
+
+[12] T. Berg and D. Forsyth, “Automatic ranking of
+iconic images,” University of California, Berkeley,
+Tech. Rep, 2007.
+
+

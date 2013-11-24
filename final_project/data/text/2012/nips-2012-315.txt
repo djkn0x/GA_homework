@@ -1,0 +1,757 @@
+Learning Label Trees for Probabilistic Modelling of
+Implicit Feedback
+
+Andriy Mnih
+amnih@gatsby.ucl.ac.uk
+Gatsby Computational Neuroscience Unit
+University College London
+
+Yee Whye Teh
+ywteh@gatsby.ucl.ac.uk
+Gatsby Computational Neuroscience Unit
+University College London
+
+Abstract
+
+User preferences for items can be inferred from either explicit feedback, such as
+item ratings, or implicit feedback, such as rental histories. Research in collabora-
+tive ﬁltering has concentrated on explicit feedback, resulting in the development
+of accurate and scalable models. However, since explicit feedback is often difﬁ-
+cult to collect it is important to develop effective models that take advantage of the
+more widely available implicit feedback. We introduce a probabilistic approach to
+collaborative ﬁltering with implicit feedback based on modelling the user’s item
+selection process. In the interests of scalability, we restrict our attention to tree-
+structured distributions over items and develop a principled and efﬁcient algorithm
+for learning item trees from data. We also identify a problem with a widely used
+protocol for evaluating implicit feedback models and propose a way of addressing
+it using a small quantity of explicit feedback data.
+
+1
+
+Introduction
+
+The rapidly growing number of products available online makes it increasingly difﬁcult for users to
+choose the ones worth their attention. Recommender systems assist users in making these choices by
+ranking the products based on inferred user preferences. Collaborative ﬁltering [6] has become the
+approach of choice for building recommender systems due to its ability to infer complex preference
+patterns from large collections of user preference data. Most collaborative ﬁltering research deals
+with inferring preferences from explicit feedback, for example ratings given to items. As a result,
+several effective methods have been developed for this version of the problem. Matrix factorization
+based models [13, 5, 12] have emerged as the most popular of these due to their simplicity and supe-
+rior predictive performance. Such models are also highly scalable because their training algorithms
+take advantage of the sparsity of the rating matrix, resulting in training times that are linear in the
+number of observed ratings.
+However, since explicit feedback is often difﬁcult to collect it is essential to develop effective models
+that take advantage of the more abundant implicit feedback, such as logs of user purchases, rentals,
+or clicks. The difﬁculty of modelling implicit feedback comes from the fact that it contains only
+positive examples, since users explicitly express their interest, by selecting items, but not their dis-
+interest. Note that not selecting a particular item is not necessarily an expression of disinterest, as it
+might also be due to the obscurity of the item, lack of time, or other reasons.
+Just like their explicit feedback counterparts, the most successful implicit feedback collaborative
+ﬁltering (IFCF) methods are based on matrix factorization [4, 10, 9]. However, instead of a highly
+sparse rating matrix, they approximate a dense binary matrix, where each entry indicates whether or
+not a particular user selected a particular item. We will collectively refer to such methods as Binary
+Matrix Factorization (BMF). Since such approaches treat unobserved user/item pairs as fake negative
+examples which can dominate the much less numerous positive examples, the contribution to the
+
+1
+
+objective function from the zero entries is typically downweighted. The matrix being approximated
+is no longer sparse, so models of this type are typically trained using batch alternating least squares.
+As a result, the training time is cubic in the number of latent factors, which makes these models less
+scalable than their explicit feedback counterparts.
+Recently [11] introduced a new method, called Bayesian Personalized Ranking (BPR), for modelling
+implicit feedback that is based on more realistic assumptions than BMF. Instead of assuming that
+users like the selected items and dislike the unselected ones, it assumes that users merely prefer the
+former to the latter. The model is presented with selected/unselected item pairs and is trained to rank
+the selected items above the unselected ones. Since the number of such pairs is typically very large,
+the unselected items are sampled at random.
+In this paper we develop a new method that explicitly models the user item selection process using
+a probabilistic model that, unlike the existing approaches, can generate new item lists. Like BPR
+it assumes that selected items are more interesting than the unselected ones. Unlike BPR, however,
+it represents the appeal of items to a user using a probability distribution, producing a complete
+ordering of items by probability value. In order to scale to large numbers of items efﬁciently, we
+restrict our attention to tree-structured distributions. Since the accuracy of the resulting models
+depends heavily on the choice of the tree structure, we develop an algorithm for learning trees from
+data that takes into account the structure of the model the tree will be used with.
+We then turn our attention to the task of evaluating implicit feedback models and point out a problem
+with a widely used evaluation protocol, which stems from the assumption that all items not selected
+by a user are irrelevant. Our proposed solution involves using a small quantity of explicit feedback
+to reliably identify the irrelevant items.
+
+2 Modelling item selection
+
+We propose a new approach to collaborative ﬁltering with implicit feedback based on modelling
+the item selection process performed by each user. The identities of the items selected by a user
+are modelled as independent samples from a user-speciﬁc distribution over all available items. The
+probability of an item under this distribution reﬂects the user’s interest in it. Training our model
+amounts to performing multinomial density estimation for each user from the observed user/item
+pairs without explicitly considering the unobserved pairs.
+To make the modelling task more manageable we make two simplifying assumptions. First, we
+assume that user preferences do not change with time and model all items chosen by a user as
+independent samples from a ﬁxed user-speciﬁc distribution. Second, to keep the model as simple
+as possible we assume that items are sampled with replacement. We believe that sampling with
+replacement is a reasonable approximation to sampling without replacement in this case because
+the space of items is large while the number of items selected by a user is relatively small. These
+simpliﬁcations allow us to model the identities of the items selected by a user as IID samples.
+We now outline a simple implementation of the proposed idea which, though impractical for large
+datasets, will serve as a basis for developing a more scalable model. As is typical for matrix factor-
+ization methods in collaborative ﬁltering, we represent users and items with real-valued vectors of
+latent factors. The factor vectors for user u and item i will be denoted by Uu and Vi respectively.
+Intuitively, Uu captures the preferences of user u, while Vi encodes the properties of item i. Both
+user and item factor vectors are unobserved and so have to be learned from the observed user/item
+pairs. The dot product between Uu and Vi quantiﬁes the preference of user u for item i. We deﬁne
+the probability of user u choosing item i as
+(cid:80)
+exp(U (cid:62)
+P (i|u) =
+u Vi + ci )
+k exp(U (cid:62)
+u Vk + ck )
+where ci is the bias parameter that captures the overall popularity of item i and index k ranges over
+all items in the inventory. The model can be trained using stochastic gradient ascent [2] on the
+log-likelihood by iterating through the user/item pairs in the training set, updating Uu , Vi , and ci
+based on the gradient of log P (i|u). The main weakness of the model is that its training time is
+linear in the inventory size because computing the gradient of the log-probability of a single item
+requires explicitly considering all available items. Though linear time complexity might not seem
+
+(1)
+
+,
+
+2
+
+prohibitive, it severely limits the applicability of the model since collaborative ﬁltering tasks with
+tens or even hundreds of thousands of items are now common.
+
+3 Hierarchical item selection model
+
+P (n|nj , u) =
+
+The linear time complexity of the gradient computation is a consequence of normalization over the
+entire inventory in Eq. 1, which is required because the space of items is unstructured. We can speed
+up normalization, and thus learning, exponentially by assuming that the space of items has a known
+tree structure. We start by supposing that we are given a K -ary tree with items at the leaves and
+exactly one item per leaf. For simplicity, we will assume that each item is located at exactly one
+leaf. Such a tree is uniquely determined by specifying for each item the path from the root to the leaf
+containing the item. Any such path can be represented by the sequence of nodes n = n0 , n1 , ..., nL
+it visits, where n0 is always the root node.
+By making the choice of the next node stochastic, we can induce a distribution over the leaf nodes in
+the tree and thus over items. To allow each user to have a different distribution over items we make
+the probability of choosing each child a function of the user’s factor vector. The probability will
+also depend on the child node’s factor vector and bias the same way the probability of choosing an
+item in Eq. 1 depends on the item’s factor vector and bias. Let C (n) be the set of children of node
+exp (cid:0)U (cid:62)
+(cid:1)
+n. Then for user u, the probability of moving from node nj to node n on a root-to-leaf tree traversal
+is given by
+(cid:80)
+u Qn + bn
+m∈C (nj ) exp (U (cid:62)
+u Qm + bm )
+if n is a child of nj and 0 otherwise. Here Qn and bn are the factor vector and the bias of node n.
+The probability of selecting item i is then given by the product of the probabilities of the decisions
+P (i|u) = (cid:81)Li
+that lead from the root to the leaf containing i:
+j |ni
+j=1 P (ni
+j−1 , u).
+We will call the model deﬁned by Eq. 3 the Collaborative Item Selection (CIS) model. Given a tree
+over items, the CIS model can be trained using stochastic gradient ascent in log-likelihood, updating
+parameters after each user/item pair.
+While the model can use any tree over items, the choice of the tree affects the model’s efﬁciency and
+ability to generalize. Since computing the probability of a single item takes time linear in the item’s
+depth in the tree, we want to avoid trees that are too unbalanced. To produce a model that generalizes
+well we also want to avoid trees with difﬁcult classiﬁcation problems at the internal nodes [1], which
+correspond to hard-to-predict item paths.
+One way to produce a tree that results in relatively easy classiﬁcation problems is to assign similar
+items to the same class, which is the approach of [7] and [14]. However, the similarity metrics used
+by these methods are not model-based in the sense that they are not derived from the classiﬁers that
+will be used at the tree nodes. In Section 5 we will develop a scalable model-based algorithm for
+learning trees with item paths that are easy to predict using Eq. 2.
+
+,
+
+(2)
+
+(3)
+
+4 Related work
+
+The use of tree-structured label spaces to reduce the normalization cost has originated in statistical
+language modelling, where it was used to accelerate neural and maximum-entropy language models
+[3, 8]. The task of learning trees for efﬁcient probabilistic multiclass classiﬁcation has received sur-
+prisingly little attention. The two algorithms most closely related to the one proposed in this paper
+are [1] and [7]. [1] proposed a fully online algorithm for multinomial density estimation that con-
+structs a binary label tree by inserting the previously unseen labels whenever they are encountered.
+The location for a new label is found proceeding from the root to a leaf making the left child/right
+child decisions based on their probability under the model and a tree balancing penalty. This is the
+only tree-learning algorithm we are aware of that takes into account the probabilistic model the tree
+is used with. Unfortunately, this approach is very optimistic because it decides on the location for a
+new label in the tree based on a single training case and never revisits that decision.
+
+3
+
+The algorithm in [7] was developed for learning trees over words for use in probabilistic language
+models. It constructs such trees by performing top-down hierarchical clustering of words, which are
+represented by real-valued vectors. The word representations are learned through bootstrapping by
+training a language model based on a random tree. This algorithm, unlike the one we propose in
+Section 5, does not take into consideration the model the tree is constructed for.
+Most work on tree-based multiclass classiﬁcation deals with non-probabilistic models and does not
+apply to the problem we are concerned with in this paper. Of these approaches our algorithm is
+most similar to the one in [14], which looks for a tree structure that avoids requiring to discriminate
+between easily confused items as much as possible. The main weakness of that approach is the need
+for training a ﬂat classiﬁer to produce the confusion matrix needed by the algorithm. As a result, it
+is unlikely to scale to large datasets containing tens of thousands of classes.
+
+5 Model-based learning of item trees
+5.1 Overview
+In this section we develop a scalable algorithm for learning trees that takes into account the para-
+metric form of the model the tree will be used with. At the highest level our approach can be seen as
+top-down model-based hierarchical clustering of items. We chose top-down clustering over bottom-
+up clustering because it is the more scalable option. Since ﬁnding the best tree is intractable, we take
+a greedy approach that constructs the tree one level at a time, learning the lth node of each item path
+before ﬁxing it and advancing to the (l + 1)st node. Because our approach is model-based, it learns
+model parameters, i.e. node biases and factor vectors, jointly with the item paths. As a result, at ev-
+ery point during its execution it speciﬁes a complete probabilistic model of the data, which becomes
+more expressive with each additional tree level. This makes it possible to monitor the progress of
+the algorithm by evaluating the predictions made after learning each level.
+For simplicity, our tree-learning algorithm assumes that user factor vectors are known and ﬁxed.
+Since these vectors are actually unknown, we learn them by ﬁrst training a CIS model based on
+a random balanced tree. We then extract the user vectors learned by the model and use them to
+learn a better tree from the data. Finally, we train a CIS model based on the learned tree, updating
+all the parameters, including the user vectors. This three-stage approach is similar to the one used
+in [7] to learn trees over words. However, because our tree-learning algorithm is model-based,
+we already have a complete probabilistic model at its termination, so we only need to ﬁnetune its
+parameters instead of learning them from scratch. Finetuning is necessary because the parameters
+learned while building the tree are based on the ﬁxed user factor vectors from the random-tree-based
+model. Though it is possible to continue alternating between optimizing over the tree structure and
+over user vectors, we found the resulting gains too small to be worth the computational cost.
+
+(4)
+
+5.2 Learning a level of a tree
+We now describe how to learn a level of the tree. Suppose we have learned the ﬁrst l − 1 nodes of
+Li = log (cid:81)
+P (i|u) = (cid:80)
+log (cid:81)
+j−1 , u) = (cid:80)
+(cid:80)
+each item path and would like to learn the lth node. Let Ui be the set of users who rated item i in
+the training set. The contribution made by item i to the log-likelihood is then given by
+j |ni
+j |ni
+j P (ni
+j log P (ni
+j−1 , u).
+u∈Ui
+u∈Ui
+u∈Ui
+j−1 , u) = (cid:80)l−1
+(cid:80)
+The log-likelihood contribution due to a single observation can be expressed as
+(cid:80)Li
+j |ni
+l |ni
+j |ni
+j−1 , u) + log P (ni
+j=1 log P (ni
+j log P (ni
+l−1 , u)+
+j |ni
+j=l+1 log P (ni
+j−1 , u).
+The ﬁrst term on the RHS depends only on the parameters and path nodes that have already been
+learned, so it can be left out of the objective function. The third term is the log-probability of item i
+under the subtree rooted at node ni
+l , which depends on the structure and parameters of that subtree,
+which we have not learned yet. To emphasize the fact that this term is based on a user-dependent
+l we will denote it by log P (i|ni
+distribution over items under node ni
+l , u).
+l−1 , u) + (cid:80)
+(cid:80)
+Ll = (cid:80)
+(cid:80)
+The overall objective function for learning level l is obtained by adding up the contributions of all
+items, leaving out the terms that do not depend on the quantities to be learned:
+l |ni
+log P (i|ni
+log P (ni
+l , u).
+u∈Ui
+u∈Ui
+i
+i
+4
+
+(5)
+
+(6)
+
+The most direct approach to learning the paths would be to alternate between updating the lth node
+in the paths and the corresponding factor vectors and biases. Since jointly optimizing over the lth
+node in all item paths is infeasible, we have to resort to incremental updates, maximizing Ll over
+the lth node in one item path at a time. Unfortunately, even this operation is intractable because
+evaluating each value of ni
+l requires knowing the optimal contribution from the still-to-be-learned
+l−1 )(cid:1) ,
+(cid:0)(cid:80)
+levels of the tree, which is the second term in Eq. 6. In other words, to ﬁnd the optimal ni
+l we need
+to compute
+log P (n|ni
+ni
+l−1 , u) + F (n, ni
+l = arg maxn∈C (ni
+u∈Ui
+l−1 )
+(cid:80)
+(cid:80)
+where we left out the terms that do not depend on ni
+l . The optimal contribution F (ni
+l−1 ) from
+l , ni
+the future levels is deﬁned as
+l , ni
+F (ni
+l−1 ) = max
+u∈Uk
+k∈I (ni
+l−1 )
+Θ
+l−1 , and Θ is the set of node factor vec-
+where I (ni
+l−1 ) is the set of items that are assigned to node ni
+tors, biases, and tree structures that parameterize the set of distributions {P (k |nk
+l , u)|k ∈ I (ni
+l−1 )}.
+
+log P (k |nk
+l , u),
+
+(7)
+
+(8)
+
+5.3 Approximating the future
+
+The value of F (ni
+l−1 ) quantiﬁes the difﬁculty of discriminating between items assigned to node
+l , ni
+l−1 using the best tree structure and parameter setting possible given that item i is assigned to the
+ni
+child ni
+l of that node. Since F (ni
+l−1 ) in Eq. 8 rules out degenerate solutions where all items
+l , ni
+below a node are assigned to the same child of it, leaving F (ni
+l−1 ) out to make the optimization
+l , ni
+problem easier is not an option.
+We address the intractability of Eq. 7 while avoiding the degenerate solutions by approximating the
+user-dependent distributions P (k |nk
+l , u) by simpler distributions that make it much easier to evaluate
+l−1 ) requires maximizing
+l−1 ) for each candidate value for ni
+l . Since computing F (ni
+F (ni
+l , ni
+l , ni
+over the free parameters of P (k |nk
+l , u), choosing a parameterization of P (k |nk
+l , u) that makes this
+maximization easy can greatly speed up this computation. We approximate the tree-structured user-
+dependent P (k |nk
+l , u) with a ﬂat user-independent distribution P (k |nk
+l ). The main advantage of
+this parameterization is that the optimal P (k |nk
+l ) can be computed by counting the number of times
+each item assigned to node nk
+l occurs in the training data and normalizing. In other words, when
+
+P (k |nk
+(cid:80)
+l ) is used in Eq. 8, the maximum is achieved at
+if i ∈ I (nk
+Ni
+l )
+P (i|nk
+l ) Nm
+m∈I (nk
+l ) =
+otherwise
+0
+where Ni is the number of times item i occurs in the training set. The corresponding value for
+l−1 ) = (cid:80)
+Nk(cid:80)
+l−1 ) is given by
+l , ni
+F (ni
+l , ni
+F (ni
+l−1 ) Nk log
+k∈I (ni
+l ) Nm
+m∈I (nk
+l−1 ) can be computed in constant time we start by observing that the sum over
+To show that F (ni
+l , ni
+(cid:80)
+l−1 ) = (cid:80)
+l−1 can be written in terms of sums over items under each of its children:
+items under node ni
+Nk(cid:80)
+k∈I (c) Nk log Nk − (cid:80)
+= (cid:80)
+(cid:80)
+F (ni
+l , ni
+k∈I (c) Nk log
+c∈C (ni
+l−1 )
+m∈I (c) Nm
+with Zc = (cid:80)
+l−1 ) Zc log Zc .
+c∈C (ni
+c∈C (ni
+l−1 )
+k∈I (c) Nk . Since adding a constant to F (ni
+l−1 ) has no effect on the solution of Eq.
+l , ni
+l−1 ) = − (cid:80)
+7 and the ﬁrst term in the equation does not depend on ni
+l , we can drop it to get
+˜F (ni
+l , ni
+l−1 ) Zc log Zc .
+c∈C (ni
+To compute ˜F (ni
+l−1 ) efﬁciently, we store Zc ’s and the old ˜F (ni
+l−1 ) value, updating them
+l , ni
+l , ni
+whenever an item is moved to a different node. Such updates can be performed in constant time.
+
+(11)
+
+(10)
+
+.
+
+(9)
+
+(12)
+
+5
+
+We now show that the ﬁrst term in Eq. 7, corresponding to the contribution of the lth path node for
+(cid:0)U (cid:62)
+(cid:1) + C
+l−1 , u) = (cid:80)
+(cid:80)
+item i, can be computed efﬁciently. Plugging in the deﬁnition of P (n|nj , u) from Eq. 2 we get
+(cid:1)(cid:62)
+= (cid:0)(cid:80)
+log P (n|ni
+u Qn + bn
+u∈Ui
+u∈Ui
+Qn + |Ui |bn + C
+(13)
+Uu
+u∈Ui
+(cid:80)
+where C is a term that does not depend on n and so does not have to be considered when maximizing
+over n. Since we assume that the user factor vectors are known and ﬁxed, we precompute Ri =
+Uu for each user, which can be seen as creating a surrogate representation for item i.
+u∈Ui
+(cid:16)
+(cid:17)
+Finally, plugging Eq. 13 into Eq. 7 gives us the following update for item nodes:
+i Qn + |Ui |bn + ˜F (n, ni
+R(cid:62)
+l−1 )
+
+ni
+l = arg maxn∈C (ni
+l−1 )
+
+(14)
+
+.
+
+6 Evaluating models of implicit feedback
+
+Establishing sensible evaluation protocols for machine learning problems is important because they
+effectively deﬁne what “better” performance means and implicitly guide the development of future
+methods. Given that the problem of implicit feedback collaborative ﬁltering is relatively new, it is
+not surprising that the typical evaluation protocol was adopted from information retrieval. However,
+we believe that this protocol is much less appropriate in collaborative ﬁltering than it is in its ﬁeld
+of origin.
+Implicit feedback models are typically evaluated using information retrieval metrics, such as Mean
+Average Precision (MAP), that require knowing which items are relevant and which are irrelevant
+to each user. It is typical to assume that the items the user selected are relevant and all others are not
+[10]. However, this approach is problematic because it fails to distinguish between the items the user
+really has no interest in (i.e. the truly irrelevant ones) and the relevant items the user simply did not
+rate. And while the irrelevant items do tend to be far more numerous than the unobserved relevant
+ones, the effect of the latter can still be strong enough to affect model comparison, as we demonstrate
+in the next section. To address this issue, we propose using some explicit feedback information to
+identify a small number of truly irrelevant items for each user and using them in place of items of
+unknown relevance in the evaluation. Thus the models will be evaluated on their ability to rank
+the truly relevant items above the truly irrelevant ones, which we believe is the ultimate task of
+collaborative ﬁltering. Though this approach does require access to explicit feedback, only a small
+quantity of it is necessary, and it is used only for evaluation.
+For probabilistic models P (i|u), the most natural performance metrics are log-probability of the
+(cid:18)
+(cid:19)
+held-out data D and the closely-related perplexity (PPL), the standard metric for language models:
+(cid:80)
+− 1
+(u,i)∈D log P (i|u)
+|D |
+The model that assigns the correct item probability 1 has the perplexity of 1, while the model that
+assigns all N items the same probability (1/N ) has the perplexity of N . Unlike the ranking met-
+rics above, perplexity is computed based on the selected/relevant items alone and does not require
+assuming that the unselected items are irrelevant.1
+
+PPL = exp
+
+(15)
+
+.
+
+7 Experimental results
+
+First we investigated the impact of using tree-structured distributions over items by comparing the
+performance of tree-based CIS models to that of a ﬂat model deﬁned by Eq. 1. We used MovieLens
+1M, which is a fairly small dataset, for the comparison in order to be able to train the ﬂat model
+within reasonable time. The dataset contains 1M ratings on a scale from 1 to 5 given by 6040 users
+to 3952 movies. To simulate the implicit feedback setting, where the presence of a user/item pair
+indicates an expression of interest, we kept only the user/item pairs associated with ratings 4 and
+above (and discarded the rating values) and split the resulting 575K pairs into a 475K-pair training
+set, and a validation and test sets of 50K pairs each. We trained three models with 5-dimensional
+
+1The implicit assumption here is that the selected items are more relevant than the unselected ones.
+
+6
+
+Table 1: Test set scores in percent on the MovieLens 10M dataset obtained by treating items with low
+ratings as irrelevant. Higher scores indicate better performance for all metrics except for perplexity.
+R@5 R@10
+P@10 R@1
+P@5
+P@1
+PPL MAP
+Model
+CIS (Random)
+921
+70.68
+74.65
+58.02
+49.91
+20.66
+60.02
+77.31
+78.22
+61.24
+21.51
+50.64
+59.29
+76.64
+72.50
+822
+CIS (LearnedRI)
+78.27
+61.31
+21.54
+50.69
+59.37
+76.68
+72.61
+820
+CIS (LearnedCI)
+78.39
+61.43
+21.50
+50.63
+59.15
+75.75
+72.75
+865
+BPR
+BMF
+–
+70.80
+75.66
+58.03
+49.77
+20.94
+60.04
+77.21
+
+Table 2: Test set scores in percent on the MovieLens 10M dataset obtained by treating all unobserved
+items as irrelevant.
+Model MAP
+12.73
+BPR
+BMF
+16.13
+
+P@10 R@1 R@5 R@10
+18.86
+11.55
+3.06
+9.89
+12.94
+4.66
+15.64
+23.55
+
+P@1
+14.27
+22.10
+
+P@5
+11.56
+16.25
+
+factor vectors: a ﬂat model, a CIS model with a random balanced binary tree, and a CIS model
+with a learned binary tree (as in Section 5). The ﬂat model took 12 hours to train and had the test
+set perplexity of 920. Training the random tree model took half an hour, resulting in the perplexity
+of 975. The training process for the learned-tree model, which included training a random-tree
+model, learning a tree from the resulting user factor vectors, and ﬁnetuning all the parameters, took
+1 hour. The resulting model performed very well, achieving the test set perplexity of 912. These
+results suggest that even when the number of items is relatively small our tree-based approach to
+item selection modelling can yield an order-of-magnitude reduction in training times relative to the
+ﬂat model without hurting the predictive accuracy.
+We then used the larger MovieLens 10M dataset (0-5 rating scale, 69878 users, 10677 movies)
+to compare the proposed approach to the existing IFCF methods. As on MovieLens 1M, we kept
+only the user/item pairs with ratings 4 and above, producing a 4M-pair training set, a 500K-pair
+validation set, and a 500K-pair test set. We compared the models based on their perplexity and
+ranking performance as measured by the standard information retrieval metrics: Mean Average
+Precision (MAP), Precision@k, and Recall@k. We used the evaluation approach described in the
+previous section, which involved having the models rank only the items with known relevance status.
+We used the rating values to determine relevance, considering items rated below 3 as irrelevant and
+items rated 4 and above as relevant.
+We compared our hierarchical item selection model to two state-of-the-art models for implicit feed-
+back: the Bayesian Personalized Ranking model (BPR) and the Binary Matrix Factorization model
+(BMF). All models used 25-dimensional factor vectors, as we found that higher-dimensional factor
+vectors resulted in only marginal improvements. We included three CIS models based on differ-
+ent binary trees (K = 2) to highlight the effect of tree construction methods. The methods are as
+follows: “Random” generates random balanced trees; “LearnedRI” is the method from Section 5
+with randomly initialized item-node assignments; “LearnedCI” is the same method with item-node
+assignments initialized by clustering surrogate item representations Ri from Section 5.3. Training
+a ﬂat item selection model on this dataset was infeasible, as a single pass through the data took six
+hours, compared to a mere two minutes for CIS (LearnedCI).
+Better performance corresponds to lower values of perplexity and higher values of the other metrics.
+Table 1 shows the test scores for the resulting models. In terms of perplexity, CIS (Learned) is the
+top performer, with BPR coming in second and CIS (Random) a distant third. Since BMF does not
+produce a distribution over items, its performance cannot be naturally measured in terms of PPL. On
+the ranking metrics, CIS (Learned) and BPR emerge as the best-performing methods, achieving very
+similar scores. BPR has a slight edge over CIS on MAP, while CIS performs better on Precision@1.
+BMF and CIS (Random) are the weakest performers, with considerably worse scores than BPR and
+CIS (Learned) on all metrics. Comparing the results of CIS (Learned) and CIS (Random) shows that
+the of the tree used has a strong effect on the performance of CIS models and that using trees learned
+with the proposed algorithm makes CIS competitive with the best collaborative ﬁltering models. The
+similar results achieved by CIS (LearnedRI) and CIS (LearnedCI) suggest that that the performance
+
+7
+
+of the resulting model is not particularly sensitive to the initialization scheme of the tree-learning
+algorithm.
+To understand the behaviour of our tree-learning algorithm better we examined the trees produced
+by it. The learned trees looked sensible, with neighbouring leaves typically containing movies from
+the same sub-genre and appealing to the same audience. We then determined how discriminative
+the decisions were at each level of the tree by replacing the user-dependent distributions under all
+nodes at a particular depth by the best user-independent approximations (frequencies of items under
+the node). Comparing the perplexity of a model using the tree truncated at level l and at level
+l + 1 allowed us to determine how much level l + 1 contributed to the model. In the CIS (Random)
+model, the ﬁrst few and the last few levels had little effect on perplexity and the medium-depth levels
+accounted for most of perplexity reduction. In contrast, in the CIS (LearnedRI) model, the effect
+of a level on perplexity decreased with level depth, with the ﬁrst few levels reducing perplexity the
+most, which is a consequence of the greedy nature of the tree-learning algorithm.
+To highlight the importance of excluding items of unknown relevance when evaluating implicit
+feedback models we recomputed the performance metrics treating all items not rated by a user
+as irrelevant. As the scores in Table 2 show this seemingly minor modiﬁcation of the evaluation
+protocol makes BMF appear to outperform BPR by a large margin, which, as Table 1 indicates is not
+actually the case. In retrospect, these changes in relative performance are not particularly surprising
+since the training algorithm for BMF treats unobserved items as negative examples, which perfectly
+matches the assumption the evaluation is based on, namely that unobserved items are irrelevant. This
+is a clear example of a ﬂawed evaluation protocol favouring an unrealistic modelling assumption.
+
+8 Discussion
+
+We proposed a model that in addition to being competitive with the best implicit feedback models
+in terms of predictive accuracy also provides calibrated item selection probabilities for each user,
+which quantify the user’s interest in the items. These probabilities allow comparing the degree of
+interest in an item across users, making it possible to maximize the total user satisfaction when
+item availability is limited. More generally, the probabilities provided by the model can be used in
+combination with utility functions for making sophisticated decisions.
+Although we introduced our tree-learning algorithm in the context of collaborative ﬁltering, it is
+applicable to several other problems. One such problem is statistical language modelling, where
+the task is to predict the distribution of the next word in a sentence given its context consisting of
+several preceding words. While there already exists an algorithm for learning the structure of tree-
+based language models [7], it constructs trees by clustering word representations, not taking into
+account the form of the model that will use these trees. In contrast, our algorithm optimizes the tree
+structure and model parameters jointly, which can lead to superior model performance.
+The proposed algorithm can also be used to learn trees over labels for multinomial regression mod-
+els. When the number of labels is large, using a label space with a sensible tree structure can lead
+to much faster training and improved generalization. Our algorithm can be applied in this setting
+by noticing the correspondence between items and labels, and between user factor vectors and input
+vectors. However, unlike in collaborative ﬁltering where user factor vectors have to be learned, in
+this case input vectors are observed, which eliminates the need to train a model based on a random
+tree before applying the tree-learning algorithm.
+We believe that evaluation protocols for implicit feedback models deserve more attention than they
+have received. In this paper we observed that one widely used protocol can produce misleading
+results due to an unrealistic assumption it makes about item relevance. We proposed using a small
+quantity of explicit feedback data to directly estimate item relevance in order to avoid having to
+make that assumption.
+
+Acknowledgments
+We thank Biljana Petreska and Lloyd Elliot for their helpful comments and the Gatsby Charitable
+Foundation for generous funding. The research leading to these results has received funding from the
+European Community’s Seventh Framework Programme (FP7/2007-2013) under grant agreement
+No. 270327.
+
+8
+
+In Proceedings of ICASSP ’01,
+
+References
+[1] Alina Beygelzimer, John Langford, Yuri Lifshits, Gregory B. Sorkin, and Alexander L. Strehl.
+Conditional probability tree estimation analysis and algorithms. In Proceedings of the 25th
+Conference on Uncertainty in Artiﬁcial Intelligence, 2009.
+[2] L ´eon Bottou. Large-scale machine learning with stochastic gradient descent. In Proceedings
+of the 19th International Conference on Computational Statistics (COMPSTAT’2010), pages
+177–187, 2010.
+[3] J. Goodman. Classes for fast maximum entropy training.
+volume 1, pages 561–564, 2001.
+[4] Yifan Hu, Yehuda Koren, and Chris Volinsky. Collaborative ﬁltering for implicit feedback
+datasets. In Proceedings of the 2008 Eighth IEEE International Conference on Data Mining,
+pages 263–272, 2008.
+[5] Yehuda Koren. Factorization meets the neighborhood: a multifaceted collaborative ﬁltering
+model. In Proceeding of the 14th ACM SIGKDD international conference on Knowledge dis-
+covery and data mining, pages 426–434, 2008.
+[6] Benjamin Marlin. Collaborative ﬁltering: A machine learning perspective. Master’s thesis,
+University of Toronto, 2004.
+[7] Andriy Mnih and Geoffrey Hinton. A scalable hierarchical distributed language model. In
+Advances in Neural Information Processing Systems, volume 21, 2009.
+[8] Frederic Morin and Yoshua Bengio. Hierarchical probabilistic neural network language model.
+In AISTATS’05, pages 246–252, 2005.
+[9] Rong Pan and Martin Scholz. Mind the gaps: weighting the unknown in large-scale one-class
+collaborative ﬁltering. In KDD, pages 667–676, 2009.
+[10] Rong Pan, Yunhong Zhou, Bin Cao, Nathan Nan Liu, Rajan M. Lukose, Martin Scholz, and
+Qiang Yang. One-class collaborative ﬁltering. In ICDM, pages 502–511, 2008.
+[11] Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, and Schmidt-Thieme Lars. BPR:
+Bayesian personalized ranking from implicit feedback. In UAI ’09, pages 452–461, 2009.
+[12] Ruslan Salakhutdinov and Andriy Mnih. Probabilistic matrix factorization. In Advances in
+Neural Information Processing Systems, volume 20, 2008.
+[13] Nathan Srebro, Jason D. M. Rennie, and Tommi Jaakkola. Maximum-margin matrix factoriza-
+tion. In Advances in Neural Information Processing Systems, 2004.
+[14] Jason Weston, Samy Bengio, and David Grangier. Label embedding trees for large multi-class
+tasks. In Advances in Neural Information Processing Systems (NIPS), 2010.
+
+9
+
+

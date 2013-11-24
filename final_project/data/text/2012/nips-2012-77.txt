@@ -1,0 +1,691 @@
+Variational Inference for Crowdsourcing
+
+Qiang Liu
+ICS, UC Irvine
+qliu1@ics.uci.edu
+
+Jian Peng
+TTI-C & CSAIL, MIT
+jpeng@csail.mit.edu
+
+Alexander Ihler
+ICS, UC Irvine
+ihler@ics.uci.edu
+
+Abstract
+
+Crowdsourcing has become a popular paradigm for labeling large datasets. How-
+ever, it has given rise to the computational task of aggregating the crowdsourced
+labels provided by a collection of unreliable annotators. We approach this prob-
+lem by transforming it into a standard inference problem in graphical models,
+and applying approximate variational methods, including belief propagation (BP)
+and mean ﬁeld (MF). We show that our BP algorithm generalizes both major-
+ity voting and a recent algorithm by Karger et al. [1], while our MF method is
+closely related to a commonly used EM algorithm. In both cases, we ﬁnd that the
+performance of the algorithms critically depends on the choice of a prior distribu-
+tion on the workers’ reliability; by choosing the prior properly, both BP and MF
+(and EM) perform surprisingly well on both simulated and real-world datasets,
+competitive with state-of-the-art algorithms based on more complicated modeling
+assumptions.
+
+1
+
+Introduction
+
+Crowdsourcing has become an efﬁcient and inexpensive way to label large datasets in many ap-
+plication domains, including computer vision and natural language processing. Resources such as
+Amazon Mechanical Turk provide markets where the requestors can post tasks known as HITs (Hu-
+man Intelligence Tasks) and collect large numbers of labels from hundreds of online workers (or
+annotators) in a short time and with relatively low cost.
+A major problem of crowdsoucing is that the qualities of the labels are often unreliable and diverse,
+mainly since it is difﬁcult to monitor the performance of a large collection of workers. In the ex-
+treme, there may exist “spammers”, who submit random answers rather than good-faith attempts to
+label, or even “adversaries”, who may deliberately give wrong answers, either due to malice or to a
+misinterpretation of the task. A common strategy to improve reliability is to add redundancy, such
+as assigning each task to multiple workers, and aggregate the workers’ labels. The baseline majority
+voting heuristic, which simply assigns the label returned by the majority of the workers, is known to
+be error-prone, because it counts all the annotators equally. In general, efﬁcient aggregation methods
+should take into account the differences in the workers’ labeling abilities.
+A principled way to address this problem is to build generative probabilistic models for the annota-
+tion processes, and assign labels using standard inference tools. A line of early work builds simple
+models characterizing the annotators using confusion matrices, and infers the labels using the EM
+algorithm [e.g., 2, 3, 4]. Recently however, signiﬁcant efforts have been made to improve perfor-
+mance by incorporating more complicated generative models [e.g., 5, 6, 7, 8, 9]. However, EM is
+widely criticized for having local optimality issues [e.g., 1]; this raises a potential tradeoff between
+more dedicated exploitation of the simpler models, either by introducing new inference tools or ﬁx-
+ing local optimality issues in EM, and the exploration of larger model space, usually with increased
+computational cost and possibly the risk of over-ﬁtting.
+On the other hand, variational approaches, including the popular belief propagation (BP) and mean
+ﬁeld (MF) methods, provide powerful inference tools for probabilistic graphical models [10, 11].
+
+1
+
+These algorithms are efﬁcient, and often have provably strong local optimality properties or even
+globally optimal guarantees [e.g., 12]. To our knowledge, no previous attempts have taken advantage
+of variational tools for the crowdsourcing problem. A closely related approach is a message-passing-
+style algorithm in Karger et al. [1] (referred to as KOS in the sequel), which the authors asserted
+to be motivated by but not equivalent to standard belief propagation. KOS was shown to have
+strong theoretical guarantees on (locally tree-like) random assignment graphs, but does not have an
+obvious interpretation as a standard inference method on a generative probabilistic model. As one
+consequence, the lack of a generative model interpretation makes it difﬁcult to either extend KOS to
+more complicated models or adapt it to improve its performance on real-world datasets.
+Contribution. In this work, we approach the crowdsourcing problems using tools and concepts from
+variational inference methods for graphical models. First, we present a belief-propagation-based
+method, which we show includes both KOS and majority voting as special cases, in which partic-
+ular prior distributions are assumed on the workers’ abilities. However, unlike KOS our method is
+derived using generative principles, and can be easily extended to more complicated models. On
+the other side, we propose a mean ﬁeld method which we show closely connects to, and provides
+an important perspective on, EM. For both our BP and MF algorithms (and consequently for EM
+as well), we show that performance can be signiﬁcantly improved by using more carefully chosen
+priors. We test our algorithms on both simulated and real-world datasets, and show that both BP
+and MF (or EM), with carefully chosen priors, is able to perform competitively with state-of-the-art
+algorithms that are based on far more complicated models.
+
+2 Background
+Assume there are M workers and N tasks with binary labels {±1}. Denote by zi ∈ {±1}, i ∈ [N ]
+the true label of task i, where [N ] represents the set of ﬁrst N integers; Nj is the set of tasks labeled
+by worker j , and Mi the workers labeling task i. The task assignment scheme can be represented by
+a bipartite graph where an edge (i, j ) denotes that the task i is labeled by the worker j . The labeling
+(cid:80)
+results form a matrix L ∈ {0, ±1}N ×M , where Lij ∈ {±1} denotes the answer if worker j labels
+task i, and Lij = 0 if otherwise. The goal is to ﬁnd an optimal estimator ˆz of the true labels z given
+i∈[N ] prob[ ˆzi (cid:54)= zi ].
+the observation L, minimizing the average bit-wise error rate 1
+N
+We assume that all the tasks have the same level of difﬁculty, but that workers may have different
+predictive abilities. Following Karger et al. [1], we initially assume that the ability of worker j is
+measured by a single parameter qj , which corresponds to their probability of correctness: qj =
+prob[Lij = zi ]. More generally, the workers’ abilities can be measured by a confusion matrix, to
+which our method can be easily extended (see Section 3.1.2).
+The values of qj reﬂect the abilities of the workers: qj ≈ 1 correspond to experts that provide
+reliable answers; qj ≈ 1/2 denote spammers that give random labels independent of the questions;
+and qj < 1/2 denote adversaries that tend to provide opposite answers. Conceptually, the spammers
+and adversaries should be treated differently: the spammers provide no useful information and only
+degrade the results, while the adversaries actually carry useful information, and can be exploited to
+improve the results if the algorithm can identify them and ﬂip their labels. We assume the qj of all
+workers are drawn independently from a common prior p(qj |θ), where θ are the hyper-parameters.
+To avoid the cases when adversaries and/or spammers overwhelm the system, it is reasonable to
+require that E[qj |θ] > 1/2. Typical priors include the Beta prior p(qj |θ) ∝ qα−1
+(1 − qj )β−1 and
+discrete priors, e.g., the spammer-hammer model, where qj ≈ 0.5 or qj ≈ 1 with equal probability.
+j
+(cid:88)
+Majority Voting. The majority voting (MV) method aggregates the workers’ labels by
+= sign[
+j∈Mi
+The limitation of MV is that it weights all the workers equally, and performs poorly when the
+usually via a maximum a posteriori estimator, ˆq = arg max log p(q |L, θ) = log (cid:80)
+qualities of the workers are diverse, especially when adversarial workers exist.
+Expectation Maximization. Weighting the workers properly requires estimating their abilities qj ,
+z p(q , z |L, θ).
+This is commonly solved using an EM algorithm treating the z as hidden variables, [e.g., 2, 3, 4].
+Assuming a Beta(α, β ) prior on qj , EM is formulated as
+
+ˆzmaj ority
+i
+
+Lij ].
+
+2
+
+(cid:80)
+
+(1)
+
+M-step: ˆqj =
+
+E-step: µi (zi ) ∝ (cid:89)
+µi (Lij ) + α − 1
+i∈Nj
+j (1 − ˆqj )1−δij ,
+ˆqδij
+|Nj | + α + β − 2
+j∈Mi
+where δij = I[Lij = zi ]; the ˆzi is then estimated via ˆzi = arg maxzi µi (zi ). Many approaches have
+been proposed to improve this simple EM approach, mainly by building more complicated models.
+Message Passing. A rather different algorithm in a message-passing style is proposed by Karger,
+Oh and Shah [1] (referred to as KOS in the sequel). Let xi→j and yj→i be real-valued messages
+from tasks to workers and from workers to tasks, respectively. Initializing y0
+j→i randomly from
+(cid:88)
+(cid:88)
+j→i = 1, KOS updates the messages at t-th iteration via
+Normal(1, 1) or deterministically by y0
+i = (cid:80)
+Li(cid:48) j xt+1
+y t+1
+Lij (cid:48) y t
+j (cid:48)→i ,
+i(cid:48)→j ,
+j→i =
+j (cid:48)∈Mi\j
+i(cid:48)∈Nj\i
+and the labels are estimated via ˆst
+i ], where ˆxt
+j→i . Note that the 0th
+Lij y t
+i = sign[ ˆxt
+j∈Mi
+iteration of KOS reduces to majority voting when initialized with y0
+j→i = 1. KOS has surprisingly
+nice theoretical properties on locally tree-like assignment graphs: its error rate is shown to scale
+in the same manner as an oracle lower bound that assumes the true qj are known. Unfortunately,
+KOS is not derived using a generative model approach under either Bayesian or maximum likeli-
+hood principles, and hence is difﬁcult to extend to more general cases, such as more sophisticated
+worker-error models (Section 3.1.2) or other features and side information (see appendix). Given
+that the assumptions made in Karger et al. [1] are restrictive in practice, it is unclear whether the
+theoretical performance guarantees of KOS hold in real-world datasets. Additionally, an interest-
+ing phase transition phenomenon was observed in Karger et al. [1] – the performance of KOS was
+shown to degenerate, sometimes performing even worse than majority voting when the degrees of
+the assignment graph (corresponding to the number of annotators per task) are small.
+
+xt+1
+i→j =
+
+,
+
+(2)
+
+3 Crowdsourcing as Inference in a Graphical Model
+
+We present our main framework in this section, transforming the labeling aggregation problem into
+a standard inference problem on a graphical model, and proposing a set of efﬁcient variational
+methods, including a belief propagation method that includes KOS and majority voting as special
+cases, and a mean ﬁeld method, which connects closely to the commonly used EM approach.
+To start, the joint posterior distribution of workers’ abilities q = {qj : j ∈ [M ]} and the true labels
+p(z , q |L, θ) ∝ (cid:89)
+(cid:89)
+(cid:89)
+z = {zi : i ∈ [N ]} conditional on the observed labels L and hyper-parameter θ is
+j (1 − qj )γj −cj ,
+p(qj |θ)
+p(Lij |zi , qj ) =
+p(qj |θ)q cj
+where γj = |Nj | is the number of predictions made by worker j and cj := (cid:80)
+i∈Nj
+j∈[M ]
+j∈[M ]
+I[Lij = zi ] is
+i∈Nj
+(cid:90)
+(cid:88)
+the number of j ’s predictions that are correct. By standard Bayesian arguments, one can show that
+the optimal estimator of z to minimize the bit-wise error rate is given by
+p(z , q |L, θ)dq .
+p(zi |L, θ) =
+p(zi |L, θ)
+where
+ˆzi = arg max
+zi
+q
+z[N ]\i
+Note that the EM algorithm (1), which maximizes rather than marginalizes qj , is not equivalent to
+the Bayesian estimator (3), and hence is expected to be suboptimal in terms of error rate. However,
+calculating the marginal p(zi |L, θ) in (3) requires integrating all q and summing over all the other zi ,
+a challenging computational task. In this work we use belief propagation and mean ﬁeld to address
+this problem, and highlight their connections to KOS, majority voting and EM.
+
+(3)
+
+3.1 Belief Propagation, KOS and Majority Voting
+It is difﬁcult to directly apply belief propagation to the joint distribution p(z , q |L, θ), since it is
+(cid:90)
+(cid:90) 1
+a mixed distribution of discrete variables z and continuous variables q . We bypass this issue by
+(cid:89)
+(cid:89)
+directly integrating over qj , yielding a marginal posterior distribution over the discrete variables z ,
+p(z |L, θ) =
+j (1 − qj )γj −cj
+p(z , q |L, θ)dq =
+p(qj |θ)q cj
+j∈[M ]
+j∈[M ]
+0
+
+ψj (zNj ),
+
+def
+=
+
+(4)
+
+3
+
+From workers to tasks:
+
+From tasks to workers:
+
+where ψj (zNj ) is the local factor contributed by worker j due to eliminating qj , which couples
+all the tasks zNj labeled by j ; here we suppress the dependency of ψj on θ and L for notational
+simplicity. A key perspective is that we can treat p(z |L, θ) as a discrete Markov random ﬁeld, and
+re-interpret the bipartite assignment graph as a factor graph [13], with the tasks mapping to variable
+nodes and workers to factor nodes. This interpretation motivates us to use a standard sum-product
+belief propagation method, approximating p(zi |L, θ) with “beliefs” bi (zi ) using messages mi→j
+i→j (zi ) ∝ (cid:89)
+and mj→i between the variable nodes (tasks) and factor nodes (workers),
+j→i (zi ) ∝ (cid:88)
+mt+1
+j (cid:48)∈Mi/j
+mt+1
+(zi ) ∝ (cid:89)
+ψj (zNj )
+zNj/i
+mt+1
+bt+1
+j→i (zi ).
+i
+j∈Mi
+i (zi ). One immediate
+At the end of T iterations, the labels are estimated via ˆz t
+i = arg maxzi bt
+difference between BP (5)-(7) and the KOS message passing (2) is that the messages and beliefs in
+(5)-(7) are probability tables on zi , i.e., mi→j = [mi→j (+1), mi→j (−1)], while the messages in
+(2) are real values. For binary labels, we will connect the two by rewriting the updates (5)-(7) in
+terms of their (real-valued) log-odds, a standard transformation used in error-correcting codes.
+The BP updates above appear computationally challenging, since step (6) requires eliminating a
+high-order potential ψ(zNj ), costing O(2γj ) in general. However, note that ψ(zNj ) in (4) depends
+on zNj only through cj , so that (with a slight abuse of notation) it can be rewritten as ψ(cj , γj ). This
+structure enables us to rewrite the BP updates in a more efﬁcient form (in terms of the log-odds):
+Theorem 3.1.
+
+(cid:89)
+mt
+j (cid:48)→i (zi ),
+i(cid:48)∈Nj
+
+Calculating the beliefs:
+
+mt+1
+i(cid:48)→j (zi(cid:48) ),
+
+(5)
+
+(6)
+
+(7)
+
+,
+
+,
+
+.
+
+Let
+
+ˆxi = log
+
+Lij y t
+j (cid:48)→i ,
+
+xi→j = log
+
+y t+1
+j→i = log
+
+mj→i (+1)
+mi→j (−1)
+
+mi→j (+1)
+bi (+1)
+and
+yj→i = Lij log
+mi→j (−1)
+bi (−1)
+(cid:80)γj −1
+(cid:88)
+Then, sum-product BP (5)-(7) can be expressed as
+(cid:80)γj −1
+k=0 ψ(k + 1, γj ) et+1
+xt+1
+k
+i→j =
+= (cid:80)
+k=0 ψ(k , γj ) et+1
+j (cid:48)∈Mi\j
+k
+i→j , where the terms ek for k = 0, . . . , Nj − 1, are the
+(cid:80)
+(cid:81)
+and ˆxt+1
+Lij y t+1
+j∈Mi
+i
+elementary symmetric polynomials in variables {exp(Li(cid:48) j xi(cid:48)→j )}i(cid:48)∈Nj\i ,
+is, ek =
+that
+i(cid:48)∈s exp(Li(cid:48) j xi(cid:48)→j ). In the end, the true labels are decoded as ˆz t
+i ].
+i = sign[ ˆxt
+s : |s|=k
+The terms ek can be efﬁciently calculated by divide & conquer and the fast Fourier transform in
+O(γj (log γj )2 ) time (see appendix), making (8) much more efﬁcient than (6) initially appears.
+Similar to sum-product, one can also derive a max-product BP to ﬁnd the joint maximum a posteriori
+conﬁguration, ˆz = arg maxz p(z |L, θ), which minimizes the block-wise error rate prob[∃i : zi (cid:54)=
+ˆzi ] instead of the bit-wise error rate. Max-product BP can be organized similarly to (8), with the
+slightly lower computational cost of O(γj log γj ); see appendix for details and Tarlow et al. [14]
+for a general discussion on efﬁcient max-product BP with structured high-order potentials. In this
+work, we focus on sum-product since the bit-wise error rate is more commonly used in practice.
+
+(8)
+
+,
+
+3.1.1 The Choice of Algorithmic Priors and connection to KOS and Majority Voting
+
+Before further discussion, we should be careful to distinguish between the prior on qj used in our
+algorithm (the algorithmic prior) and, assuming the model is correct, the true distribution of the qj
+in the data generating process (the data prior); the algorithmic and data priors often do not match.
+In this section, we discuss the form of ψ(cj , γj ) for different choices of algorithmic priors, and in
+particular show that KOS and majority voting can be treated as special cases of our belief propaga-
+tion (8) with the most “uninformative” and most “informative” algorithmic priors, respectively. For
+more general priors that may not yield a closed form for ψ(cj , γj ), one can calculate ψ(cj , γj ) by
+numerical integration and store them in a (γ + 1) × γ table for later use, where γ = maxj∈[M ] γj .
+
+4
+
+Beta Priors. If p(qj |θ) ∝ qα−1
+(1 − qj )β−1 , we have ψ(cj , γj ) ∝ B (α + cj , β + γj − cj ), where
+j
+B (·, ·) is the Beta function. Note that ψ(cj , γj ) in this case equals (up to a constant) the likelihood
+˜qk ) = pk , k ∈ [K ], where 0 ≤ ˜qk ≤ 1, 0 ≤ pk ≤ 1 and (cid:80)
+of a Beta-binomial distribution.
+Discrete Priors. If p(qj |θ) has non-zero probability mass on only ﬁnite points, that is, prob(qj =
+(cid:80)
+k pk = 1, then we have ψ(cj , γj ) =
+k (1 − ˜qk )γj −cj . One can show that log ψ(cj , γj ) in this case is a log-sum-exp function.
+k pk ˜q cj
+Haldane Prior. The Haldane prior [15] is a special discrete prior that equals either 0 or 1 with equal
+probability, that is, prob[qj = 0] = prob[qj = 1] = 1/2. One can show that in this case we have
+ψ(0, γj ) = ψ(γj , γj ) = 1 and ψ(cj , γj ) = 0 otherwise.
+Claim 3.2. The BP update in (8) with Haldane prior is equivalent to KOS update in (2).
+Proof. Just substitute the ψ(cj , γj ) of Haldane prior shown above into the BP update (8).
+The Haldane prior can also be treated as a Beta(, ) prior with  → 0+ , or equivalently an improper
+prior p(qj ) ∝ q−1
+(1 − qj )−1 , whose normalization constant is inﬁnite. One can show that the
+j
+Haldane prior is equivalent to putting a ﬂat prior on the log-odds log[qj /(1 − qj )]; also, it has
+the largest variance (and hence is “most uninformative”) among all the possible distributions of qj .
+Therefore, although appearing to be extremely dichotomous, it is well known in Bayesian statistics
+as an uninformative prior of binomial distributions. Other choices of objective priors include the
+uniform prior Beta(1, 1) and Jeffery’s prior Beta(1/2, 1/2) [16], but these do not yield the same
+simple linear message passing form as the Haldane prior.
+Unfortunately, the use of Haldane prior in our problem suffers an important symmetry breaking is-
+sue: if the prior is symmetric, i.e., p(qj |θ) = p(1 − qj |θ), the true marginal posterior distribution of
+zj is also symmetric, i.e., p(zj |L, θ) = [1/2; 1/2], because jointly ﬂipping the sign of any conﬁgu-
+ration does not change its likelihood. This makes it impossible to break the ties when decoding zj .
+Indeed, it is not hard to observe that xi→j = yj→i = 0 (corresponding to symmetric probabilities)
+is a ﬁxed point of the KOS update (2). The mechanism of KOS for breaking the symmetry seems to
+rely solely on initializing to points that bias towards majority voting, and the hope that the symmetric
+distribution is an unstable ﬁxed point. In experiments, we ﬁnd that the use of symmetric priors usu-
+ally leads to degraded performance when the degree of the assignment graph is low, corresponding
+to the phase transition phenomenon discussed in Karger et al. [1]. This suggests that it is beneﬁcial
+to use asymmetric priors with E[qj |θ ] > 1/2, to incorporate the prior knowledge that the majority of
+workers are non-adversarial. Interestingly, it turns out that majority voting uses such an asymmetric
+prior, but unfortunately corresponding to another unrealistic extreme.
+Deterministic Priors. A deterministic prior is a special discrete distribution that equals a single
+point deterministically, i.e., prob[qj = ˜q |θ ] = 1, where 0 ≤ ˜q ≤ 1. One can show that log ψ in this
+case is a linear function, that is, log ψ(cj , γj ) = cj logit( ˜q) + const.
+Claim 3.3. The BP update (8) with deterministic priors satisfying ˜q > 1/2 terminates at the ﬁrst
+iteration and ﬁnds the same solution as majority voting.
+Proof. Just note that log ψ(cj , γj ) = cj logit( ˜q) + const, and logit( ˜q) > 0 in this case.
+The deterministic priors above have the opposite properties to the Haldane prior: they can be also
+treated as Beta(α, β ) priors, but with α → +∞ and α > β ; these priors have the smallest variance
+(equal to zero) among all the possible qj priors.
+In this work, we propose to use priors that balance between KOS and majority voting. One reason-
+able choice is Beta(α, 1) prior with α > 1 [17]. In experiments, we ﬁnd that a typical choice of
+Beta(2, 1) performs surprisingly well even when it is far from the true prior.
+
+3.1.2 The Two-Coin Models and Further Extensions
+
+We previously assumed that workers’ abilities are parametrized by a single parameter qj . This is
+likely to be restrictive in practice, since the error rate may depend on the true label value: false
+positive and false negative rates are often not equal. Here we consider the more general case, where
+the ability of worker j is speciﬁed by two parameters, the sensitivitiy sj and speciﬁcity tj [2, 4],
+sj = prob[Lij = +1|zi = +1],
+tj = prob[Lij = −1|zi = −1].
+
+5
+
+A typical prior on sj and tj are two independent Beta distributions. One can show that ψ(zNj ) in
+this case equals a product of two Beta functions, and depends on zNj only through two integers, the
+true positive and true negative counts. An efﬁcient BP algorithm similar to (8) can be derived for
+the general case, by exploiting the special structure of ψ(zNj ). See the Appendix for details.
+One may also try to derive a two-coin version of KOS, by assigning two independent Haldane priors
+on sj and tj ; it turns out that the extended version is exactly the same as the standard KOS in (2). In
+this sense, the Haldane prior is too restrictive for the more general case. Several further extensions
+of the BP algorithm that are not obvious for KOS, for example the case when known features of the
+tasks or other side information are available, are discussed in the appendix due to space limitations.
+
+(9)
+
+(10)
+
+µi (Lij ) + α,
+
+µi (−Lij ) + β ),
+
+3.2 Mean Field Method and Connection of EM
+We next present a mean ﬁeld method for computing the marginal p(zi |L, θ) in (3), and show its
+(cid:81)
+i∈[N ] µi (zi ) (cid:81)
+close connection to EM. In contrast to the derivation of BP, here we directly work on the mixed joint
+posterior p(z , q |L, θ). Let us approximate p(z , q |L, θ) with a fully factorized distribution b(z , q) =
+KL[b(z , q) || p(z , q |L, θ)] = −Eb [log p(z , q |L, θ)] − (cid:88)
+H (µi ) − (cid:88)
+j∈[M ] νj (qj ). The best b(z , q) should minimize the KL divergence,
+H (νj ).
+j∈[M ]
+i∈[N ]
+where Eb [·] denotes the expectation w.r.t. b(z , q), and H (·) the entropy functional. Assuming the
+algorithmic prior of Beta(α, β ), one crucial property of the KL objective in this case is that the
+optimal {ν ∗
+j (qj )} is guaranteed to be a Beta distribution as well. Using a block coordinate descent
+Updating µi : µi (zi ) ∝ (cid:89)
+method that alternatively optimizes {µi (zi )} and {νj (qj )}, the mean ﬁeld (MF) update is
+j b1−δij
+(cid:88)
+(cid:88)
+aδij
+,
+j
+j∈Mi
+Updating νj : νj (qj ) ∼ Beta(
+i∈Nj
+i∈Nj
+where aj = exp(Eνj [ln qj ]) and bj = exp(Eνj [ln(1 − qj )]). The aj and bj can be exactly calculated
+by noting that E[ln x] = Digamma(α) − Digamma(α + β ) if x ∼ Beta(α, β ). One can also instead
+calculate the ﬁrst-order approximation of aj and bj : by Taylor expansion, one have ln(1 + x) ≈ x;
+taking x = (qj − ¯qj )/ ¯qj , where ¯qj = Eνj [qj ], and substituting it into the deﬁnition of aj and bj ,
+(cid:80)
+Updating µi : µi (zi ) ∝ (cid:89)
+one get aj ≈ ¯qj and bj ≈ 1 − ¯qj ; it gives an approximate MF (AMF) update,
+µi (Lij ) + α
+i∈Nj
+j (1 − ¯qj )1−δij , Updating νj : ¯qj =
+¯qδij
+. (11)
+|Nj | + α + β
+j∈Mi
+The update (11) differs from EM (1) only in replacing α− 1 and β − 1 with α and β , corresponding to
+replacing the posterior mode of the Beta distribution with its posterior mean. This simple (perhaps
+trivial) difference plays a role of Laplacian smoothing, and provides insights for improving the
+performance of EM. For example, note that the ˆqj in the M-step of EM could be updated to 0 or 1 if
+α = 1 or β = 1, and once this happens, the ˆqj is locked at its current value, causing EM to trapped
+at a local maximum. Update (11) can prevent ¯qj from becoming 0 or 1, avoiding the degenerate
+case. One can of course interpret (11) as EM with prior parameters α(cid:48) = α + 1, and β (cid:48) = β + 1;
+under this interpretation, it is advisable to choose priors α(cid:48) > 1 and β (cid:48) > 1 (corresponding to a less
+common or intuitive “informative” prior).
+We should point out that it is widely known that EM can be interpreted as a coordinate descent on
+variational objectives [18, 11]; our derivation differs in that we marginalize, instead of maximize,
+over qj . Our ﬁrst-order approximation scheme is also similar to the method by Asuncion [19]. One
+can also extend this derivation to two-coin models with independent Beta priors, yielding the EM
+update in Dawid and Skene [2]. On the other hand, discrete priors do not seem to lead to interesting
+algorithms in this case.
+
+4 Experiments
+
+In this section, we present numerical experiments on both simulated and real-world Amazon Me-
+chanical Turk datasets. We implement majority voting (MV), KOS in (2), BP in (8), EM in (1) and
+
+6
+
+Figure 1: The performance of the algorithms as the degrees of the assignment graph vary; the left
+degree (cid:96) denotes the number of workers per task, and the right degree γ denotes the number of tasks
+per worker. The true data prior is prob[qj = 0.5] = prob[qj = 0.9] = 1/2.
+
+(a) Beta prior (ﬁxed α/(α + β ) = 0.6)
+
+(b) Beta prior (ﬁxed α + β = 1)
+
+(c) Spammer-hammer prior
+
+(d) Adversary-spammer-hammer prior
+
+Figure 2: The performance on data generated with different qj priors on (9,9)-regular random graphs.
+(a) Beta prior with ﬁxed α
+α+β = 0.6. (b) Beta prior with ﬁxed α + β = 1. (c) Spammer-hammer
+prior, prob[qj = 0.5] = 1− prob[qj = 0.9] = p0 , with varying p0 . (d) Adversary-spammer-hammer
+prior, prob[qj = 0.1] = p0 , prob[qj = 0.5] = prob[qj = 0.9] = (1 − p0 )/2 with varying p0 .
+with yj→i = 1 and EM with µi (zi ) = (cid:80)
+its variant AMF in (11). The exact MF (9)-(10) was implemented, but is not reported because its
+performance is mostly similar to AMF (11) in terms of error rates. We initialize BP (including KOS)
+I[Lij = zi ]/|Mi |, both of which reduce to major-
+j∈Mi
+ity voting at the 0-th iteration; for KOS, we also implemented another version that exactly follows
+the setting of Karger et al. [1], which initializes yj→i by Normal(1, 1) and terminates at the 10-th
+iteration; the best performance of the two versions was reported. For EM with algorithmic prior
+Beta(α, β ), we add a small constant (0.001) on α and β to avoid possible numerical NaN values.
+We also implemented a max-product version of BP, but found it performed similarly to sum-product
+BP in terms of error rates. We terminate all the iterative algorithms at a maximum of 100 iterations
+or with 10−6 message convergence tolerance. All results are averaged on 100 random trials.
+Simulated Data. We generate simulated data by drawing the abilities qj from Beta priors or the
+adversary-spammer-hammer priors, that equals 0.1, 0.5, or 0.9 with certain probabilities; the as-
+signment graphs are randomly drawn from the set of ((cid:96), γ )-regular bipartite graphs with 1000 task
+nodes using the conﬁguration method [20]. For the simulated datasets, we also calculated the oracle
+lower bound in Karger et al. [1] that assumes the true qj are known, as well as a BP equipped with
+an algorithmic prior equal to the true prior used to generate the data, which sets a tighter (perhaps
+approximate) “Bayesian oracle” lower bound for all the algorithms that do not know qj . We ﬁnd that
+BP and AMF with a typical asymmetric prior Beta(2, 1) perform mostly as well as the “Bayesian
+oracle” bound, eliminating the necessity to search for more accurate algorithmic priors.
+In Fig. 1, we show that the error rates of the algorithms generally decay exponentially w.r.t.
+the
+degree (cid:96) and log(γ ) of the assignment graph on a spammer-hammer model. Perhaps surprisingly,
+we ﬁnd that the BP, EM and AMF with the asymmetric algorithmic prior beta(2, 1) scale similarly to
+KOS, which has been theoretically shown to be order-optimal compared to the oracle lower bound.
+On the other hand, BP with symmetric algorithmic priors, such as the Haldane prior Beta(0+ , 0+ ) of
+KOS and the uniform prior Beta(1, 1), often result in degraded performance when the degrees of the
+
+7
+
+510152025−2.5−2−1.5−1−0.5(cid:1)(ﬁxedγ=5)Log−error2510−3−2.5−2−1.5−1γ(ﬁxed(cid:1)=15)51015−2.5−2−1.5−1−0.5(cid:1)((cid:1)=γ)  KOSMVOracleBP−TrueBP−Beta(2,1)BP−Beta(1,1)EM−Beta(2,1)AMF−Beta(2,1)12345678910−2.5−2−1.5−1−0.5α+βLog−error  KOSMVOracleBP−TrueBP−Beta(2,1)EM−Beta(2,1)AMF−Beta(2,1)0.550.60.650.7−2.5−1.5−0.5α/(α+β)0.40.60.8−2−1.5−1−0.5Percentage of Spammers00.10.2−1.5−1−0.5Percentage of Adversaries(a). The bluebird dataset
+
+(b) The rte dataset
+
+(c). The temp dataset
+
+Figure 3: The results on Amazon Mechanical Turk datasets. Averaged on 100 random subsamples.
+
+assignment graphs are low, supporting our discussion in Section 3.1.1. Indeed, BP with symmetric
+algorithmic priors often fails to converge in the low-degree setting.
+Fig. 2 shows the performance of the algorithms when varying the true priors of the data. We ﬁnd in
+Fig. 2(b) and (d) that the performance of EM with Beta(2, 1) tends to degrade when the fraction of
+adversaries increases, probably because the ˆqj is more likely to be incorrectly updated to and stuck
+on 0 or 1 in these cases; see the discussion in Section 3.2. In all cases, we ﬁnd that BP and AMF (and
+MF) perform mostly equally well, perhaps indicating both Bethe and mean-ﬁeld approximations are
+reasonably good on the joint distribution p(z , q |L, θ) in terms of error rates. Our implementation
+of EM (on both simulated data and the real data below) seems to perform better than previously
+reported results, probably due to our careful choice on the prior and initialization.
+Real Data. We tested our methods on three publicly available Amazon Mechanical Turk datasets.
+The symmetric assumption of qj = sj = tj is likely to be violated in practice, especially on vision
+datasets where a human’s perception decides on whether some object is present. Therefore we also
+implemented the two-coin version of BP and AMF(EM) with the algorithmic priors of sj and tj
+taken as two independent Beta(2, 1) (referred to as BP-Beta2(2,1) and similar).
+We ﬁrst tested on the bluebird dataset of Welinder et al. [6], including 108 tasks and 39 workers
+on a fully connected bipartite assignment graph, where the workers are asked whether the presented
+images contain Indigo Bunting or Blue GrosBeak. Fig. 3(a) shows the performance when ﬁxed
+numbers of annotators are subsampled for each task. On this dataset, all methods, including KOS,
+BP and AMF(EM), work poorly under the symmetric assumption, while the two-coin versions of
+BP and AMF(EM) are signiﬁcantly better, achieving equivalent performance to the algorithm by
+Welinder et al. [6] based on an advanced high dimensional model. This suggests that the symmetric
+assumption is badly violated on this dataset, probably caused by the non-expert workers with high
+sensitivities but low speciﬁcities, having trouble identifying Indigo Bunting from Blue GrosBeak.
+We then tested on two natural language processing datasets in [21], the rte dataset with 800 tasks and
+164 workers, and the temp dataset with 462 tasks and 76 workers. As seen in Fig. 3(b)-(c), both the
+symmetric and the two-coin versions of BP and AMF(EM) performed equally well, all achieving
+almost the same performance as the SpEM algorithm reported in [4]. The KOS algorithm does
+surprisingly poorly, probably due to the assignment graphs not having locally tree-like structures.
+
+5 Conclusion
+
+We have presented a spectrum of inference algorithms, in particular a novel and efﬁcient BP algo-
+rithm, for crowdsourcing problems and clariﬁed their connections to existing methods. Our explo-
+ration provides new insights into the existing KOS, MV and EM algorithms, and more importantly,
+for separating the modeling factors and algorithmic factors in crowdsourcing problems, which pro-
+vides guidance for both implementations of the current algorithms, and for designing even more
+efﬁcient algorithms in the future. Numerical experiments show that BP, EM and AMF, and exact
+MF, when implemented carefully, all perform impressively in term of their error rate scaling. Further
+directions include applying our methodology to more advanced models, e.g., incorporating variation
+in task difﬁculties, and theoretical analysis of the error rates of BP, EM and MF that matches the
+empirical behavior in Fig. 1.
+Acknowledgements. Work supported in part by NSF IIS-1065618 and two Microsoft Research
+Fellowships. We thank P. Welinder and S. Belongie for providing the data and code.
+
+8
+
+51015200.10.20.30.40.5Number of Workers per TaskError Rate2468100.10.20.30.40.5Number of Workers per Task2468100.10.20.30.4Number of Workers per Task  KOSMVBP-Beta(2,1)EM-Beta(2,1)AMF-Beta(2,1)BP-Beta2(2,1)EM-Beta2(2,1)AMF-Beta2(2,1)Welinderetal.2010References
+[1] D.R. Karger, S. Oh, and D. Shah. Iterative learning for reliable crowdsourcing systems. In
+Neural Information Processing Systems (NIPS), 2011.
+[2] A.P. Dawid and A.M. Skene. Maximum likelihood estimation of observer error-rates using the
+em algorithm. Applied Statistics, pages 20–28, 1979.
+[3] P. Smyth, U. Fayyad, M. Burl, P. Perona, and P. Baldi. Inferring ground truth from subjective
+labelling of venus images. Advances in neural information processing systems, pages 1085–
+1092, 1995.
+[4] V.C. Raykar, S. Yu, L.H. Zhao, G.H. Valadez, C. Florin, L. Bogoni, and L. Moy. Learning
+from crowds. The Journal of Machine Learning Research, 11:1297–1322, 2010.
+[5] J Whitehill, P Ruvolo, T Wu, J Bergsma, and J Movellan. Whose vote should count more:
+In Advances in Neural
+Optimal integration of labels from labelers of unknown expertise.
+Information Processing Systems, pages 2035–2043. 2009.
+[6] P. Welinder, S. Branson, S. Belongie, and P. Perona. The multidimensional wisdom of crowds.
+In Neural Information Processing Systems Conference (NIPS), 2010.
+[7] V.C. Raykar and S. Yu. Eliminating spammers and ranking annotators for crowdsourced label-
+ing tasks. Journal of Machine Learning Research, 13:491–518, 2012.
+[8] Fabian L. Wauthier and Michael I. Jordan. Bayesian bias mitigation for crowdsourcing. In
+Advances in Neural Information Processing Systems 24, pages 1800–1808. 2011.
+[9] B. Carpenter. Multilevel bayesian models of categorical data annotation. Unpublished
+manuscript, 2008.
+[10] D. Koller and N. Friedman. Probabilistic graphical models: principles and techniques. MIT
+press, 2009.
+[11] M. Wainwright and M. Jordan. Graphical models, exponential families, and variational infer-
+ence. Found. Trends Mach. Learn., 1(1-2):1–305, 2008.
+[12] Y. Weiss and W.T. Freeman. On the optimality of solutions of the max-product belief-
+Information Theory, IEEE Transactions on, 47
+propagation algorithm in arbitrary graphs.
+(2):736 –744, Feb 2001.
+[13] F.R. Kschischang, B.J. Frey, and H.A. Loeliger. Factor graphs and the sum-product algorithm.
+Information Theory, IEEE Transactions on, 47(2):498–519, 2001.
+[14] D. Tarlow, I.E. Givoni, and R.S. Zemel. Hopmap: Efﬁcient message passing with high order
+potentials. In Proc. of AISTATS, 2010.
+[15] A. Zellner. An introduction to Bayesian inference in econometrics, volume 17. John Wiley and
+sons, 1971.
+[16] R.E. Kass and L. Wasserman. The selection of prior distributions by formal rules. Journal of
+the American Statistical Association, pages 1343–1370, 1996.
+[17] F. Tuyl, R. Gerlach, and K. Mengersen. A comparison of bayes-laplace, jeffreys, and other
+priors. The American Statistician, 62(1):40–44, 2008.
+[18] Radford Neal and Geoffrey E. Hinton. A view of the EM algorithm that justiﬁes incremental,
+sparse, and other variants. In M. Jordan, editor, Learning in Graphical Models, pages 355–368.
+Kluwer, 1998.
+[19] A. Asuncion. Approximate mean ﬁeld for Dirichlet-based models.
+Topic Models, 2010.
+[20] B. Bollob ´as. Random graphs, volume 73. Cambridge Univ Pr, 2001.
+[21] R. Snow, B. O’Connor, D. Jurafsky, and A.Y. Ng. Cheap and fast—but is it good?: evaluating
+non-expert annotations for natural language tasks. In Proceedings of the Conference on Empir-
+ical Methods in Natural Language Processing, pages 254–263. Association for Computational
+Linguistics, 2008.
+
+In ICML Workshop on
+
+9
+
+

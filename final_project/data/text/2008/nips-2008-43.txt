@@ -1,0 +1,1124 @@
+Particle Filter-based Policy Gradient in POMDPs
+
+Pierre-Arnaud Coquelin
+CMAP, Ecole Polytechnique
+coquelin@cmapx.polytechnique.fr
+
+Romain Deguest∗
+CMAP, Ecole Polytechnique
+deguest@cmapx.polytechnique.fr
+
+R ´emi Munos
+INRIA Lille - Nord Europe, SequeL project,
+remi.munos@inria.fr
+
+Abstract
+
+Our setting is a Partially Observable Markov Decision Process with continuous
+state, observation and action spaces. Decisions are based on a Particle Filter for
+estimating the belief state given past observations. We consider a policy gradient
+approach for parameterized policy optimization. For that purpose, we investigate
+sensitivity analysis of the performance measure with respect to the parameters of
+the policy, focusing on Finite Difference (FD) techniques. We show that the naive
+FD is subject to variance explosion because of the non-smoothness of the resam-
+pling procedure. We propose a more sophisticated FD method which overcomes
+this problem and establish its consistency.
+
+1
+
+Introduction
+
+We consider a Partially Observable Markov Decision Problem (POMDP) (see e.g. (Lovejoy, 1991;
+Kaelbling et al., 1998)) deﬁned by a state process
+(Xt )t≥1 ∈ X , an observation process (Yt )t≥1 ∈
+Y , a decision (or action) process (At )t≥1 ∈ A which depends on a policy (mapping from all possible
+observation histories to actions), and a reward function r : X → R. Our goal is to ﬁnd a policy
+π that maximizes a performance measure J (π), function of future rewards, for example in a ﬁnite
+horizon setting:
+J (π) def= E£ nX
+r(Xt )¤.
+t=1
+Other performance measures (such as in inﬁnite horizon with discounted rewards) could be handled
+as well. In this paper, we consider the case of continuous state, observation, and action spaces.
+The state process is a Markov decision process taking its values in a (measurable) state space X ,
+with initial probability measure µ ∈ M(X ) (i.e. X1 ∼ µ), and which can be simulated using a
+transition function F and independent random numbers, i.e. for all t ≥ 1,
+
+(1)
+
+Xt+1 = F (Xt , At , Ut ), with Ut
+
+i.i.d.∼ ν,
+
+(2)
+
+where F : X × A × U → X and (U, σ(U ), ν ) is a probability space. In many practical situations
+U = [0, 1]p and Ut is a p-uple of pseudo random numbers. For simplicity, we adopt the notations
+F (x0 , a0 , u) def= Fµ (u), where Fµ is the ﬁrst transition function (i.e. X1 = Fµ (U0 ) with U0 ∼ ν ).
+The observation process (Yt )t≥1 lies in a (measurable) space Y and is linked with the state process
+by the conditional probability measure P(Yt ∈ dyt |Xt = xt ) = g(xt , yt ) dyt , where g : X × Y →
+[0, 1] is the marginal density function of Yt given Xt . We assume that observations are conditionally
+independent given the state process. Here also, we assume that we can simulate an observation
+using a transition function G and independent random numbers, i.e. ∀t ≥ 1, Yt = G(Xt , Vt ),
+
+∗Also afﬁliated to Columbia University
+
+1
+
+i.i.d.∼ ν (for the sake of simplicity we consider the same probability space (U, σ(U ), ν )).
+where Vt
+Now, the action process (At )t≥1 depends on a policy π which assigns to each possible observation
+history Y1:t (where we adopt the usual notation “ 1 : t ” to denote the collection of integers s such that
+1 ≤ s ≤ t), an action At ∈ A.
+In this paper we will consider policies that depend on the belief state (also called ﬁltering distri-
+bution) conditionally to past observations. The belief state, written bt , belongs to M(X ) (the space
+of all probability measures on X ) and is deﬁned by bt (dxt , Y1:t ) def= P(Xt ∈ dxt |Y1:t ), and will be
+written bt (dxt ) or even bt for simplicity when there is no risk of confusion. Because of the Markov
+property of the state dynamics, the belief state bt (·, Y1:t ) is the most informative representation about
+the current state Xt given the history of past observations Y1:t . It represents sufﬁcient statistics for
+designing an optimal policy in the class of observations-based policies.
+
+The temporal and causal dependencies of the dynamics of a generic POMDP using belief-based
+policies is summarized in Figure 1 (left): at time t, the state Xt is unknown, only Yt is observed,
+which enables (at least in theory) to update bt based on the previous belief bt−1 . The policy π takes
+as input the belief state bt and returns an action At (the policy may be deterministic or stochastic).
+However, since the belief state is an inﬁnite dimensional ob ject, and thus cannot be represented in
+a computer, we ﬁrst simplify the class of policies that we con sider here to be deﬁned over a ﬁnite
+dimensional space of belief-features f : M(X ) → RK which represents relevant statistics of the
+ﬁltering distribution. We write bt (fk ) for the value of the k-th feature (among K ) (where we use the
+usual notation b(f ) def= RX f (x)b(dx) for any function f deﬁned on X and measure b ∈ M(X )),
+and denote bt (f ) the vector (of size K ) with components bt (fk ). Examples of features are: f (x) = x
+(mean value), f (x) = x′x (for the covariance matrix). Other more complex features (e.g. entropy
+measure) could be used as well. Such a policy π : RK → A selects an action At = π(bt (f )), which
+in turn, yields a new state Xt+1 .
+vation processes (where a Viterbi algo-
+Except for simple cases, such as in ﬁnite-state ﬁnite-obser
+rithm could be applied (Rabiner, 1989)), and the case of linear dynamics and Gaussian noise (where
+a Kalman ﬁlter could be used), there is no closed-form repres entation of the belief state. Thus bt
+must be approximated in our general setting. A popular method for approximating the ﬁltering
+distribution is known as Particle Filters (PF) (also called Interacting Particle Systems or Sequen-
+tial Monte-Carlo). Such particle-based approaches have been used in many applications (see e.g.
+(Doucet et al., 2001) and (Del Moral, 2004) for a Feynman-Kac framework) for example for pa-
+rameter estimation in Hidden Markov Models and control (Andrieu et al., 2004) and mobile robot
+localization (Fox et al., 2001). An PF approximates the belief state bt ∈ M(X ) by a set of parti-
+cles (x1:N
+) (points of X ), which are updated sequentially at each new observation by a transition-
+t
+N PN
+selection procedure. In particular, the belief feature bt (f ) is approximated by 1
+t ), and
+i=1 f (xi
+the policy is thus a function that takes as input the activation of the feature f at the position of
+N PN
+the particles: At = π( 1
+t )). For such methods, the general scheme for POMDPs using
+i=1 f (xi
+Particle Filter-based policies is described in Figure 1 (right).
+In this paper, we consider a class of policies πθ parameterized by a (multi-dimensional) parameter
+θ and we search for the value of θ that maximizes the resulting criterion J (πθ ), now written J (θ)
+for simplicity. We focus on a policy gradient approach: the POMDP is replaced by an optimization
+problem on the space of policy parameters, and a (stochastic) gradient ascent on J (θ) is considered.
+For that purpose (and this is the object of this work) we investigate the estimation of ∇J (θ) (where
+the gradient ∇ refers to the derivative w.r.t. θ), with an emphasis on Finite-Difference techniques.
+There are many works about such policy gradient approach in the ﬁeld of Reinforcement Learning,
+see e.g. (Baxter & Bartlett, 1999), but the policies considered are generally not based on the result of
+an PF. Here, we explicitly consider a class of policies that are based on a belief state constructed by a
+PF. Our motivations for investigating this case are based on two facts: (1) the belief state represents
+sufﬁcient statistics for optimality, as mentioned above. ( 2) PFs are a very popular and efﬁcient tool
+for constructing the belief state in continuous domains.
+
+After recalling the general approach for evaluating the performance of a PF-based policy (Section 2),
+we describe (in Section 3.1) a naive Finite-Difference (FD) approach (deﬁned by a step size h) for
+estimating ∇J (θ). We discuss the bias and variance tradeoff and explain the problem of variance
+explosion when h is small. This problem is a consequence of the discontinuity of the resampling
+operation w.r.t. the parameter θ . Our contribution is detailed in Section 3.2: We propose a modi ﬁed
+
+2
+
+FD estimate for ∇J (θ) which (along the random sample path) has bias O(h2 ) and variance O(1/N ),
+thus overcomes the drawback of the previous naive method. An algorithm is described and illustrated
+in Section 4 on a simple problem where the optimal policy exhibits a tradeoff between greedy reward
+optimization and localization.
+
+r t−1
+
+X
+
+t−1
+
+Y
+t−1
+
+b
+
+t−1
+
+r t
+
+X t
+
+Yt
+
+tb
+
+r t+1
+
+Reward
+
+X
+
+t+1
+
+State
+
+Y
+t+1
+
+Observation
+
+b
+
+t+1
+
+Belief state
+
+b     (f)
+t−1
+πθ
+A
+
+t−1
+
+b  (f )
+t
+πθ
+
+A t
+
+t+1b     (f )
+πθ
+
+A
+
+t+1
+
+Belief features
+
+Policy
+
+Action
+
+r
+t−1
+
+X
+
+t−1
+
+Y
+t−1
+
+x
+
+1:N
+t−1
+
+1:N
+f(        )
+x
+t−1
+πθ
+A
+
+t−1
+
+r t
+
+X t
+
+Yt
+
+x
+
+1:N
+t
+
+1:N
+f(        )
+x
+t
+πθ
+A t
+
+r t+1
+
+Reward
+
+X
+
+t+1
+
+State
+
+Y
+t+1
+
+x
+
+1:N
+t+1
+
+Observation
+
+Particles
+
+1:N
+f(        )
+x
+t+1
+πθ
+A
+
+t+1
+
+Features
+
+Policy
+
+Action
+
+Figure 1: Left ﬁgure: Causal and temporal dependencies in a P OMDP. Right ﬁgure: PF-based
+N PN
+scheme for POMDPs where the belief feature bt (f ) is approximated by 1
+t ).
+i=1 f (xi
+2 Particle Filters (PF)
+We ﬁrst describe a generic PF for estimating the belief state based on past observations. In Sub-
+section 2.1 we detail how to control a real-world POMDP and in Subsection 2.2 how to estimate
+the performance of a given policy in simulation. In both cases, we assume that the models of the
+dynamics (state, observation) are known. The basic PF, called Bootstrap Filter, see (Doucet et al.,
+def= PN
+2001) for details, approximates the belief state bn by an empirical distribution bN
+i=1 wi
+n δxi
+n
+n
+n . It consists in iterating the two
+(where δ denotes a Dirac distribution) made of N particles x1:N
+following steps: at time t, given observation yt ,
+
+• Transition step: (also called importance sampling or mutation) a successor particles
+is generated according to the state dynamics from the previous population
+population ex1:N
+t
+def= g(ex1:N
+,yt )
+t−1 . The (importance sampling) weights w1:N
+are evaluated,
+x1:N
+t
+PN
+t
+j=1 g(exj
+t ,yt )
+• Selection step: Resample (with replacement) N particles x1:N
+from the set ex1:N
+according
+t
+t
+def= exk1:N
+where k1:N
+. We write x1:N
+to the weights w1:N
+are the selection indices.
+t
+t
+t
+t
+t
+Resampling is used to avoid the problem of degeneracy of the algorithm, i.e. that most of the weights
+decreases to zero. It consists in selecting new particle positions such as to preserve a consistency
+N PN
+property (i.e. PN
+t ) = E[ 1
+t )]). The simplest version introduced in (Gordon
+i=1 φ(xi
+tφ(exi
+i=1 wi
+by an independent sampling from the set 1 : N
+et al., 1993) chooses the selection indices k1:N
+t
+t = j ) = wj
+t , for all 1 ≤
+, i.e. P(k i
+according to a multinomial distribution with parameters w1:N
+t
+i ≤ N . The idea is to replicate the particles in proportion to their weights. Many variants have been
+proposed in the literature, among which the strati ﬁed resam pling method (Kitagawa, 1996) which is
+optimal in terms of variance, see e.g. (Capp ´e et al., 2005).
+n (f ) to bn (f ) (e.g. Law of Large Numbers or Central Limit Theorems) are
+Convergence issues of bN
+discussed in (Del Moral, 2004) or (Douc & Moulines, 2008). For our purpose we note that under
+weak conditions on the feature f , we have the consistency property: bN (f ) → b(f ), almost surely.
+
+2.1 Control of a real system by an PF-based policy
+We describe in Algorithm 1 how one may use an PF-based policy πθ for the control of a real-world
+iid∼ µ.
+system. Note that from our deﬁnition of Fµ , the particles are initialized with: ex1:N
+1
+2.2 Estimation of J (θ) in simulation
+Now, for the purpose of policy optimization, one should be capable of evaluating the performance
+of a policy in simulation. J (θ), deﬁned by (1), may be estimated in simulation provided that
+
+3
+
+Algorithm 1 Control of a real-world POMDP
+for t = 1 to n do
+Observe: yt ,
+Particle transition step:
+Set ex1:N
+t−1 ) with u1:N
+t−1 , at−1 , u1:N
+t = F (x1:N
+t−1
+Particle resampling step:
+t = exk1:N
+are given by the selection step according to the weights w1:N
+where k1:N
+Set x1:N
+t
+t
+t
+t
+N PN
+Select action: at = πθ ( 1
+t )),
+i=1 f (xi
+end for
+
+t = g(ex1:N
+iid∼ ν . Set w1:N
+,yt )
+t
+PN
+j=1 g(exj
+t ,yt )
+
+,
+
+.
+
+the dynamics of the state and observation are known. Making explicit the dependency w.r.t.
+the
+random sample path, written ω (which accounts for the state and observation stochastic dynam-
+ics and the random numbers used in the PF-based policy), we write J (θ) = Eω [Jω (θ)], where
+Jω (θ) def= Pn
+t=1 r(Xt,ω (θ)), making the dependency of the state w.r.t. ω and θ explicit.
+Algorithm 2 describes how to evaluate an PF-based policy in simulation. The function returns an
+ω (θ), of Jω (θ). Using previously mentioned asymptotic convergence results
+estimate, written J N
+ω (θ) = Jω (θ), almost surely (a.s.). In order to approximate J (θ), one
+for PF, one has limN→∞ J N
+ωm (θ) (for 1 ≤ m ≤ M ), and calculate
+would perform several calls to the algorithm, receiving J N
+M PM
+their empirical mean 1
+ωm (θ), which tends to J (θ) a.s., when M , N → ∞.
+m=1 J N
+Algorithm 2 Estimation of Jω (θ) in simulation
+for t = 1 to n do
+Deﬁne state:
+xt = F (xt−1 , at−1 , ut−1 ) with ut−1 ∼ ν ,
+Deﬁne observation:
+yt = G(xt , vt ) with vt ∼ ν ,
+Particle transition step:
+t−1 ) with u1:N
+Set ex1:N
+t−1 , at−1 , u1:N
+t = F (x1:N
+t−1
+Particle resampling step:
+t = exk1:N
+are given by the selection step according to the weights w1:N
+Set x1:N
+where k1:N
+t
+t
+t
+t
+N PN
+Select action: at = πθ ( 1
+t )),
+i=1 f (xi
+end for
+ω (θ) def= Pn
+Return J N
+t=1 r(xt ).
+
+t = g(ex1:N
+iid∼ ν . Set w1:N
+,yt )
+t
+PN
+j=1 g(exj
+t ,yt )
+
+,
+
+,
+
+3 A policy gradient approach
+
+Now we want to optimize the value of the parameter in simulation. Then, once a “good” parameter
+θ∗ is found, we would use Algorithm 1 to control the real system using the corresponding PF-based
+policy πθ∗ . Gradient approaches have been studied in the ﬁeld of contin uous space Hidden Markov
+Models in (Fichoud et al., 2003; C ´erou et al., 2001; Doucet & Tadic, 2003). The authors have
+used a likelihood ratio approach to evaluate ∇J (θ). Such methods suffer from high variance, in
+particular for problems with small noise. In order to reduce the variance, it has been proposed in
+(Poyadjis et al., 2005) to use a marginal particle ﬁlter inst ead of a simple path-based particle ﬁlter.
+This approach is efﬁcient in terms of variance reduction but
+its computational complexity is O(N 2 ).
+Here we investigate a pathwise (i.e. along the random sample path ω ) sensitivity analysis of Jω (θ)
+(w.r.t. θ) for the purpose of (stochastic) gradient optimization. We start with a naive Finite Difference
+(FD) approach and show the problem of variance explosion. Then we provide an alternative, called
+common indices FD, which overcomes this problem.
+
+In the sequel, we make the assumptions that all relevant functions (F , g , f , π ) are continuously
+differentiable w.r.t. their respective variables. Note that although this is not explicitly mentioned, all
+such functions may depend on time.
+
+4
+
+3.1 Naive Finite-Difference (FD) method
+Let us consider the derivative of J (θ) component-wisely, writing ∂J (θ) the derivative of J (θ) w.r.t. a
+one-dimensional parameter. If the parameter θ is multi-dimensional, the derivative will be calculated
+def= J (θ+h)−J (θ−h)
+in each direction. For h > 0 we deﬁne the centered ﬁnite-difference quotient
+.
+Ih
+2h
+Since J (θ) is differentiable then limh→0 Ih = ∂J (θ). Consequently, a method for approximating
+∂J (θ) would consist in estimating Ih for a sufﬁciently small h. We know that J (θ) can be numeri-
+M PM
+cally estimated by 1
+ωm (θ). Thus, it seems natural to estimate Ih by
+m=1 J N
+ωm′ (θ − h)i
+2h h 1
+MX
+MX
+1
+def=
+I N ,M
+J N
+h
+M
+m=1
+m′=1
+where we used independent random numbers to evaluate J (θ + h) and J (θ − h). From the con-
+sistency of the PF, we deduce that limh→0 limM ,N→∞ I N ,M
+= ∂J (θ). This naive FD estimate
+h
+exhibits the following bias-variance tradeoff (see (Coquelin et al., 2008) for the proof):
+Proposition 1 (Bias-variance trade-off). Assume that J (θ) is three times continuously differentiable
+in a small neighborhood of θ , then the asymptotic (when N → ∞) bias of the naive FD estimate
+I N ,M
+is of order O(h2 ) and its variance is O(N −1M −1h−2 ).
+h
+
+J N
+ωm (θ + h) −
+
+1
+M
+
+In order to reduce the bias, one should choose a small h, but then the variance would blow up.
+Additional computational resource (larger number of particles N ) will help controlling the vari-
+ance. However, in practice, e.g. for stochastic optimization, this leads to an intractable amount of
+computational effort since any consistent FD-based optimization algorithm (e.g. such as the Kiefer-
+Wolfowitz algorithm) will need to consider a sequence of steps h that decreases with the number of
+gradient iterations. But if the number of particles is bounded, the variance term will diverge, which
+may prevent the stochastic gradient algorithm from converging to a local optimum.
+
+In order to reduce the variance of the previous estimator when h is small, one may use common
+random numbers to estimate both J (θ + h) and J (θ − h) (i.e. ωm = ωm′ ). The variance then
+reduces to O(N −1M −1h−1 ) (see e.g. (Glasserman, 2003)), which still explodes for small h.
+Now, under the additional assumption that along almost all random sample path ω , the function
+ω (θ) is a.s. continuous, then the variance would reduce to O(N −1M −1 ) (see Section (7.1)
+θ 7→ J N
+of (Glasserman, 2003)). Unfortunately, this is not the case here because of the discontinuity of the
+(taking values in
+PF resampling operation w.r.t. θ . Indeed, for a ﬁxed ω , the selection indices k1:N
+t
+a ﬁnite set 1 : N ) are usually a non-smooth function of the weights w1:N
+, which depend on θ .
+t
+Therefore the naive FD method using PF cannot be applied in general because of variance explosion
+of the estimate when h is small, even when using common random number.
+
+3.2 Common-indices Finite-Difference method
+Let us consider Jω (θ) = Pn
+t=1 r(Xt,ω (θ)) making explicit the dependency of the state w.r.t. θ and a
+let us ﬁx
+random sample path ω . Under our assumptions, the gradient ∂Jω (θ) is well deﬁned. Now,
+ω . For clarity, we now omit to write the ω dependency when no confusion is possible. The function
+θ 7→ Xt (θ) (for any 1 ≤ t < n) is smooth because all transition functions are smooth, the policy is
+smooth, and the belief state bt is smooth w.r.t. θ . Underlying the belief feature bt,θ (f ) dependency
+w.r.t. θ , we write:
+
+smooth
+smooth
+smooth
+7−→ Jω (θ).
+7−→ Xt (θ)
+7−→ bt,θ (f )
+θ
+As already mentioned, the problem with the naive FD method is that the PF estimate bN
+t,θ (f ) =
+N PN
+1
+t (θ)) of bt,θ (f ) is not smooth w.r.t. θ because it depends on the selection indices
+i=1 f (xi
+1:t (θ) which, taken as a function of θ (through the weights), is not continuous. We write
+k1:N
+NX
+i=1
+So a natural idea to recover continuity in a FD method would consists in using exactly the same
+selection indices for quantities related to θ + h and θ − h. However, using the same indices means
+using the same weights during the selection procedure for both trajectories. But this would lead to
+a wrong estimator because the weights strongly depends on θ through the observation function g .
+
+non-smooth
+7−→ bN
+t,θ (f ) =
+
+smooth
+7−→ J N
+ω (θ).
+
+θ
+
+1
+N
+
+f (xi
+t (θ))
+
+5
+
+t,θ′ (f ) def=
+bN
+
+Our idea is thus to use the same selection indices but use a likelihood ratio in the belief feature
+estimation. More precisely, let us write k1:N
+(θ) the selection indices obtained for parameter θ , and
+t
+consider a parameter θ ′ in a small neighborhood of θ . Then, an PF estimate for bt,θ′ (f ) is
+t (θ , θ ′ ) def= Qt
+NX
+s (θ ′ ), ys (θ ′ ))
+t (θ , θ ′ )
+s=1 g(xi
+li
+t (θ ′ )), with li
+f (xi
+Qt
+PN
+j=1 lj
+s=1 g(xi
+t (θ , θ ′ )
+s (θ), ys (θ))
+i=1
+1:t (θ ′ ) have
+being the likelihood ratios computed along the particle paths, and where the particles x1:N
+been generated using the same selection indices k1:N
+1:t (θ) (and the same random sample path ω ) as
+those used for θ . The next result states the consistency of this estimate and is our main contribution
+(see (Coquelin et al., 2008) for the proof).
+Proposition 2. Under weak conditions on f (see e.g. (Del Moral & Miclo, 2000)), there exists a
+neighborhood of θ , such that for any θ ′ in this neighborhood, bN
+t,θ′ (f ) deﬁned by (3) is a consistent
+estimator of bt,θ′ (f ), i.e. limN→∞ bN
+t,θ′ (f ) = bt,θ′ (f ) almost surely.
+
+(3)
+
+Thus, for any perturbed value θ ′ around θ , we may run an PF where in the resampling step, we
+use the same selection indices k1:N
+1:n (θ) as those obtained for θ . Thus the mapping θ ′ 7→ bN
+t,θ′ (f ) is
+smooth. We write:
+
+θ ′ smooth
+smooth
+ω (θ ′ ).
+7−→ bN
+7−→ J N
+t,θ′ (f ) deﬁned by (3)
+From the previous proposition we deduce that J N
+ω (θ) is a consistent estimator for Jω (θ).
+A possible implementation for the gradient estimation is described by Algorithm 3. The algo-
+rithm works by updating 3 families of state, observation, and particle populations, denoted by
+’+’, ’-’, and ’o’ for the values of the parameter θ + h, θ − h, and θ respectively. For the
+performance measure deﬁned by (1), the algorithm returns th e common indices FD estimator:
+2h Pn
+def= 1
+t=1 r(x+
+t ) − r(x−
+t ) where x+
+1:n and x−
+1:n are upper and lower trajectories simulated
+∂hJ N
+ω
+under the random sample path ω . Note that although the selection indices are the same, the particle
+populations ’+’, ’-’, and ’o’ are different, but very close (when h is small). Hence the likelihood
+converge to 1 when h → 0, which avoids a source of variance when h is small.
+ratios l1:N
+t
+M PM
+def= 1
+The resulting estimator ∂M
+for J (θ) would calculate an average over M
+h J N
+m=1 ∂hJ N
+ω
+ωm
+sample paths ω1:M of the return of Algorithm 3 called M times. This estimator overcomes the
+drawbacks of the naive FD estimate: Its asymptotic bias is of order O(h2 ) (like any centered FD
+scheme) but its variance is of order O(N −1M −1 ) (the Central Limit Theorem applies to the belief
+ω as well). Since the variance does not degenerate when h is small,
+feature estimator (3) thus to ∂hJ N
+one should choose h as small as possible to reduce the mean-squared estimation error.
+The complexity of Algorithm 3 is linear in the number of particles N . Note that in the current
+implementation we used 3 populations of particles per derivative. Of course, we could consider a
+non-centered FD scheme approximating the derivative with J (θ+h)−J (θ)
+, which is of ﬁrst order but
+h
+which only requires 2 particle populations. If the parameter is multidimensional, the full gradient
+estimate could be obtained by using K + 1 populations of particles. Of course, in gradient ascent
+methods, such FD gradient estimate may be advantageously combined with clever techniques such
+as simultaneous perturbation stochastic approximation (Spall, 2000), conjugate or second-order gra-
+dient approaches.
+Note that when h → 0, our estimator converges to an Inﬁnitesimal Perturbation Analysis
+(IPA)
+estimator (Glasserman, 1991). The same ideas as those presented above could be used to derive an
+IPA estimator. The advantage of IPA is that it would use one population of particles only (for the
+full gradient) which may be interesting when the number of parameters K is large. However, the
+main drawback is that this approach would require to compute analytically the derivatives of all the
+functions w.r.t. their respective variables, which may be time consuming for the programmer.
+
+4 Numerical Experiment
+Because of space constraints, our purpose here is simply to illustrate numerically the theoretical
+ﬁndings of previous FD methods (in terms of bias-variance co ntributions) rather than to provide a
+full example of POMDP policy optimization. We consider a very simple navigation task for a 2d
+robot. The robot is deﬁned by its coordinates xt ∈ R2 . The observation is a noisy measurement
+
+6
+
+Algorithm 3 Common-indices Finite Difference estimate of ∂Jω
+Initialize likelihood ratios:
+Set l1:N ,+
+= 1, l1:N ,−
+= 1,
+0
+0
+for t = 1 to n do
+State processes: Sample ut−1 ∼ ν and
+t−1 , a−
+t = F (x−
+t−1 , ut−1 ), set x−
+t−1 , a+
+t = F (x+
+t−1 , ut−1 ), set x+
+t−1 , ut−1 ),
+Set xo
+t−1 , ao
+t = F (xo
+Observation processes: Sample vt ∼ ν and
+t , vt ), set y−
+t = G(x−
+t , vt ), set y+
+t = G(x+
+Set yo
+t , vt ),
+t = G(xo
+iid∼ ν and
+Particle transition step: Draw u1:N
+t−1
+Set ex1:N ,o
+= F (x1:N ,o
+t−1 ),
+t−1 , u1:N
+t−1 , ao
+t
+t−1 ), set ex1:N ,−
+= F (x1:N ,+
+Set ex1:N ,+
+, a+
+t−1 , u1:N
+t−1
+t
+t
+t = g(ex1:N,o
+,yo
+t )
+Set w1:N
+,
+t
+PN
+j=1 g(exj,o
+,yo
+t )
+t
+= g(ex1:N,−
+= g(ex1:N,+
+,y+
+t )
+l1:N ,+
+, set l1:N ,−
+Set l1:N ,+
+t
+t
+t−1
+t
+t
+g(ex1:N,o
+g(ex1:N,o
+,yo
+t )
+t
+t
+Particle resampling step:
+,
+be the selection indices obtained from the weights w1:N
+Let k1:N
+t
+t
+= exk1:N
+= exk1:N
+= exk1:N
+,+
+,−
+,o
+Set x1:N ,o
+, set x1:N ,+
+, set x1:N ,−
+t
+t
+t
+t
+t
+t
+t
+t
+t
+= lk1:N
+= lk1:N
+,+
+,−
+Set l1:N ,+
+, set l1:N ,−
+t
+t
+t
+t
+t
+t
+Actions:
+t = πθ ¡ 1
+t )¢,
+N PN
+i=1 f (xi,o
+Set ao
+t = πθ+h ¡ PN
+li,+
+Set a+
+tPN
+i=1
+j=1 lj,+
+t
+end for
+def= Pn
+Return: ∂hJ N
+ω
+t=1
+
+)¢, set a−
+t = πθ−h ¡ PN
+i=1
+
+, a−
+t−1 ),
+t−1 , u1:N
+
+= F (x1:N ,−
+t−1
+
+li,−
+tPN
+j=1 lj,−
+t
+
+r(x+
+t )−r(x
+2h
+
+−
+t )
+
+.
+
+−
+t )
+,y
+,yo
+t )
+
+l1:N ,−
+t−1
+
+,
+
+f (xi,−
+t
+
+)¢,
+
+,
+
+,
+
+f (xi,+
+t
+
+def= ||xt ||2 + vt , where vt
+iid∼ N (0, σ2
+of the squared distance to the origin (the goal): yt
+y ) (σ2
+y is
+the variance of the noise). At each time step, the agent may choose a direction at (with ||at || = 1),
+which results in moving the state, of a step d, in the corresponding direction: xt+1 = xt + dat + ut ,
+i.i.d.∼ N (0, σ2
+where ut
+x I ) is an additive noise. The initial state x1 is drawn from ν , a uniform
+distribution over the square [−1, 1]2 . We consider a class of policies that depend on a single feature
+belief: the mean of the belief state (i.e. f (x) = x). The PF-based policy thus uses the barycenter of
+N PN
+def= 1
+t . Let us write m⊥ the +90o rotation of a vector m. We
+the particle population mt
+i=1 xi
+consider policies πθ (m) = −(1−θ)m+θm⊥
+||−(1−θ)m+θm⊥ || parameterized by θ ∈ [0, 1]. The chosen action is thus
+at = πθ (mt ). If the robot was well localized (i.e. mt close to xt ), then the policy πθ=0 would move
+the robot towards the direction of the goal, whereas πθ=1 would move it in an orthogonal direction.
+The performance measure (to be minimized) is deﬁned as J (θ) = E[||xn ||2 ], where n is a ﬁxed time.
+We plot in Figure 2 the performance and gradient estimation obtained when running Algorithms 2
+and 3, respectively. We used the numerical values: N = 103 , M = 102 , h = 10−6 , n = 10,
+σx = 0.05, σy = 0.05, d = 0.1.
+It is interesting to note that in this problem, the performance is optimal for θ∗ ≃ 0.3 (which is slightly
+better than for θ = 0). θ = 0 would correspond to the best feed-back policy if the state was perfectly
+known. However, moving in an direction orthogonal to the goal helps improving localization. Here,
+the optimal policy exhibits a tradeoff between greedy optimization and localization.
+
+Bias / Variance NFD
+Bias / Variance CIFD
+
+h = 100
+0.57 / 6.05 × 10−3
+0.428 / 0.022
+
+h = 10−2
+0.31 / 0.13
+0.00192 / 0.019
+
+h = 10−4
+unreliable / 25.3
+0.00247 / 0.02
+
+h = 10−6
+unreliable / 6980
+0.00162 / 0.0188
+
+The table above shows the (empirically measured) bias and variance of the naive FD (NFD) (using
+common random numbers) method and the common indices FD (CIFD) method, for a speci ﬁc value
+θ = 0.5 (with N = 103 , M = 500). As predicted, the variance of the NFD approach makes this
+method inapplicable, whereas that of the CIFD is reasonable.
+
+7
+
+0.8
+
+0.7
+
+0.6
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+e
+t
+a
+m
+i
+t
+s
+e
+ 
+e
+c
+n
+a
+m
+r
+o
+f
+r
+e
+P
+
+1.4
+
+1.2
+
+1
+
+0.8
+
+0.6
+
+0.4
+
+0.2
+
+0
+
+−0.2
+
+−0.4
+
+e
+t
+a
+m
+i
+t
+s
+e
+ 
+t
+n
+e
+i
+d
+a
+r
+G
+
+0.1
+
+0
+
+0.9
+
+1
+
+−0.6
+
+0
+
+0.3
+
+0.7
+
+0.8
+
+0.2
+
+0.1
+
+0.6
+0.5
+0.4
+parameter θ
+
+0.6
+0.5
+0.4
+parameter θ
+ωm (θ) of J (θ) and conﬁdence intervals ±pVar[J N
+M PM
+Figure 2: Left: Estimator 1
+ω (θ)]/M .
+m=1 J N
+ωm (θ) of ∂J (θ) and conﬁdence intervals ±pVar[∂hJ N
+M PM
+Right: Estimator 1
+ω (θ)]/M .
+m=1 ∂hJ N
+
+0.9
+
+0.7
+
+0.8
+
+0.1
+
+0.2
+
+0.3
+
+1
+
+4th
+
+References
+Andrieu, C., Doucet, A., Singh, S., & Tadic, V. (2004). Particle methods for change detection, identiﬁcation
+and control. Proceedings of the IEEE, 92, 423–438.
+Baxter, J., & Bartlett, P. (1999). Direct gradient-based reinforcement learning. Journal of Artiﬁcial Inteligence
+Reseach.
+Capp ´e, O., Douc, R., & Moulines, E. (2005). Comparaison of resampling schemes for particle ﬁltering.
+International Symposium on Image and Signal Processing and Analysis.
+C ´erou, F., LeGland, F., & Newton, N. (2001). Stochastic particle methods for linear tangent ﬁltering equations ,
+231–240. IOS Press, Amsterdam.
+Coquelin, P., Deguest, R., & Munos, R. (2008). Sensitivity analysis in particle ﬁlters. Application to policy
+optimization in POMDPs (Technical Report). INRIA, RR-6710.
+Del Moral, P. (2004). Feynman-kac formulae, genealogical and interacting particle systems with applications.
+Springer.
+Del Moral, P., & Miclo, L. (2000). Branching and interacting particle systems. approximations of feynman-kac
+formulae with applications to non-linear ﬁltering. S ´eminaire de probabilit ´es de Strasbourg, 34, 1–145.
+Douc, R., & Moulines, E. (2008). Limit theorems for weighted samples with applications to sequential monte
+carlo methods. To appear in Annals of Statistics.
+Doucet, A., Freitas, N. D., & Gordon, N. (2001). Sequential monte carlo methods in practice. Springer.
+Doucet, A., & Tadic, V. (2003). Parameter estimation in general state-space models using particle methods.
+Ann. Inst. Stat. Math.
+Fichoud, J., LeGland, F., & Mevel, L. (2003). Particle-based methods for parameter estimation and tracking :
+numerical experiments (Technical Report 1604). IRISA.
+Fox, D., Thrun, S., Burgard, W., & Dellaert, F. (2001). Particle ﬁlter s for mobile robot localization. Sequential
+Monte Carlo Methods in Practice. New York: Springer.
+Glasserman, P. (1991). Gradient estimation via perturbation analysis. Kluwer.
+Glasserman, P. (2003). Monte carlo methods in ﬁnancial engineering . Springer.
+Gordon, N., Salmond, D., & Smith, A. F. M. (1993). Novel approach to nonlinear and non-gaussian bayesian
+state estimation. Proceedings IEE-F (pp. 107–113).
+Kaelbling, L. P., Littman, M. L., & Cassandra, A. R. (1998). Planning and acting in partially observable
+stochastic domains. Artiﬁcial Intelligence , 101, 99–134.
+Kitagawa, G. (1996). Monte-Carlo ﬁlter and smoother for non-Gaussia n nonlinear state space models. J.
+Comput. Graph. Stat., 5, 1–25.
+Lovejoy, W. S. (1991). A survey of algorithmic methods for partially observable Markov decision processes.
+Annals of Operations Research, 28, 47–66.
+Poyadjis, G., Doucet, A., & Singh, S. (2005). Particle methods for optimal ﬁlter derivative: Application to
+parameter estimation. IEEE ICASSP.
+Rabiner, L. R. (1989). A tutorial on hidden Markov models and selected applications in speech recognition.
+Proceedings of the IEEE, 77, 257–286.
+Spall, J. C. (2000). Adaptive stochastic approximation by the simultaneous perturbation method. IEEE trans-
+action on automatic control, 45, 1839–1853.
+
+8
+
+

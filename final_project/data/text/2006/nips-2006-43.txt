@@ -1,0 +1,457 @@
+Learning to Traverse Image Manifolds
+
+Piotr Doll ´ar, Vincent Rabaud and Serge Belongie
+University of California, San Diego
+{pdollar,vrabaud,sjb}@cs.ucsd.edu
+
+Abstract
+
+We present a new algorithm, Locally Smooth Manifold Learning (L SM L), that
+learns a warping function from a point on an manifold to its neighbors. Important
+characteristics of L SM L include the ability to recover the structure of the manifold
+in sparsely populated regions and beyond the support of the provided data. Appli-
+cations of our proposed technique include embedding with a natural out-of-sample
+extension and tasks such as tangent distance estimation, frame rate up-conversion,
+video compression and motion transfer.
+
+1 Introduction
+
+A number of techniques have been developed for dealing with high dimensional data sets that fall
+on or near a smooth low dimensional nonlinear manifold. Such data sets arise whenever the number
+of modes of variability of the data are much fewer than the dimension of the input space, as is the
+case for image sequences. Unsupervised manifold learning refers to the problem of recovering the
+structure of a manifold from a set of unordered sample points. Manifold learning is often equated
+with dimensionality reduction, where the goal is to ﬁnd an embedding or ‘unrolling’ of the manifold
+into a lower dimensional space such that certain relationships between points are preserved. Such
+embeddings are typically used for visualization, with the projected dimension being 2 or 3.
+Image manifolds have also been studied in the context of measuring distance between images un-
+dergoing known transformations. For example, the tangent distance [20, 21] between two images is
+computed by generating local approximations of a manifold from known transformations and then
+computing the distance between these approximated manifolds. In this work, we seek to frame the
+problem of recovering the structure of a manifold as that of directly learning the transformations
+a point on a manifold may undergo. Our approach, Locally Smooth Manifold Learning (L SM L),
+attempts to learn a warping function W with d degrees of freedom that can take any point on the
+manifold and generate its neighbors. L SM L recovers a ﬁrst order approximation of W , and by mak-
+ing smoothness assumptions on W can generalize to unseen points.
+We show that L SM L can recover the structure of the manifold where data is given, and also in
+regions where it is not, including regions beyond the support of the original data. We propose a
+number of uses for the recovered warping function W , including embedding with a natural out-of-
+sample extension, and in the image domain discuss how it can be used for tasks such as computation
+of tangent distance, image sequence interpolation, compression, and motion transfer. We also show
+examples where L SM L is used to simultaneously learn the structure of multiple “parallel” manifolds,
+and even generalize to data on new manifolds. Finally, we show that by exploiting the manifold
+smoothness, L SM L is robust under conditions where many embedding methods have difﬁculty.
+Related work is presented in Section 2 and the algorithm in Section 3. Experiments on point sets
+and results on images are shown in Sections 4 and 5, respectively. We conclude in Section 6.
+
+2 Related Work
+
+Related work can be divided into two categories. The ﬁrst is the literature on manifold learning,
+which serves as the foundation for this work. The second is work in computer vision and computer
+graphics addressing image warping and generative models for image formation.
+A number of classic methods exist for recovering the structure of a manifold. Principal component
+analysis (PCA) tries to ﬁnd a linear subspace that best captures the variance of the original data.
+Traditional methods for nonlinear manifolds include self organizing maps, principal curves, and
+variants of multi-dimensional scaling (MD S) among others, see [11] for a brief introduction to these
+techniques. Recently the ﬁeld has seen a number of interesting developments in nonlinear manifold
+learning. [19] introduced a kernelized version of (PCA). A number of related embedding methods
+have also been introduced, representatives include LL E [17], I SOMA P [22], and more recently SDE
+[24]. Broadly, such methods can be classiﬁed as spectral embedding techniques [24]; the embed-
+dings they compute are based on an eigenvector decomposition of an n × n matrix that represents
+geometrical relationships of some form between the original n points. Out-of-sample extensions
+have been proposed [3]. The goal of embedding methods (to ﬁnd structure preserving embeddings)
+differs from the goals of L SM L (learn to traverse the manifold).
+Four methods that we share inspiration with are [6, 13, 2, 16]. [6] employs a novel charting based
+technique to achieve increased robustness to noise and decreased probability of pathological behav-
+ior vs. L LE and I SOMA P; we exploit similar ideas in the construction of L SM L but differ in motiva-
+tion and potential applicability. [2] proposed a method to learn the tangent space of a manifold and
+demonstrated a preliminary illustration of rotating a small bitmap image by about 1◦ . Work by [13]
+is based on the notion of learning a model for class speciﬁc variation, the method reduces to com-
+puting a linear tangent subspace that models variability of each class. [16] shares one of our goals
+as it addresses the problem of learning Lie groups, the inﬁnitesimal generators of certain geometric
+transformations.
+In image analysis, the number of dimensions is usually reduced via approaches like PCA [15], epit-
+omic representation [12], or generative models like in the realMOVES system developed by Di
+Bernardo et al. [1]. Sometimes, a precise model of the data, like for faces [4] or eyes [14], is even
+used to reduce the complexity of the data. Another common approach is simply to have instances of
+an object in different conditions: [5] start by estimating feature correspondences between a novel in-
+put with unknown pose and lighting and a stored labeled example in order to apply an arbitrary warp
+between pictures. The applications range from video texture synthesis [18] and facial expression
+extrapolation [8, 23] to face recognition [10] and video rewrite [7].
+
+3 Algorithm
+
+Let D be the dimension of the input space, and assume the data lies on a smooth d-dimensional
+manifold (d (cid:28) D). For simplicity assume that the manifold is diffeomorphic with a subset of Rd ,
+meaning that it can be endowed with a global coordinate system (this requirement can easily be
+relaxed) and that there exists a continuous bijective mapping M that converts coordinates y ∈ Rd
+to points x ∈ RD on the manifold. The goal of most dimensionality reduction techniques given a
+set of data points xi is to ﬁnd an embedding yi = M−1 (xi ) that preserves certain properties of the
+original data like the distances between all points (classical MD S) or the distances or angles between
+nearby points (e.g. spectral embedding methods).
+Instead, we seek to learn a warping function W that can take a point on the manifold and return
+any neighboring point on the manifold, capturing all the modes of variation of the data. Let us use
+W (x, ) to denote the warping of x, with  ∈ Rd acting on the degrees of freedom of the warp
+according to the formula M: W (x, ) = M(y + ), where y = M−1 (x). Taking the ﬁrst order
+approximation of the above gives: W (x, ) ≈ x + H(x), where each column H·k (x) of the matrix
+H(x) is the partial derivative of M w.r.t. yk : H·k (x) = ∂ /∂ykM(y). This approximation is valid
+given  small enough, hence we speak of W being an inﬁnitesimal warping function.
+We can restate our goal of learning to warp in terms of learning a function Hθ : RD → RD×d
+parameterized by a variable θ . Only data points xi sampled from one or several manifolds are given.
+For each xi , the set N i of neighbors is then computed (e.g. using variants of nearest neighbor such
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+Figure 1: Overview. Twenty points (n=20) that lie on 1D curve (d=1) in a 2D space (D=2) are shown in (a).
+Black lines denote neighbors, in this case the neighborhood graph is not connected. We apply L SM L to train H
+(with f = 4 RB Fs). H maps points in R2 to tangent vectors; in (b) tangent vectors computed over a regularly
+spaced grid are displayed, with original points (blue) and curve (gray) overlayed. Tangent vectors near original
+points align with the curve, but note the seam through the middle. Regularization ﬁxes this problem (c), the
+resulting tangents roughly align to the curve along its entirety. We can traverse the manifold by taking small
+steps in the direction of the tangent; (d) shows two such paths, generated starting at the red plus and traversing
+outward in large steps (outer curve) and ﬁner steps (inner curve). This generates a coordinate system for the
+curve resulting in a 1D embedding shown in (e). In (f) two parallel curves are shown, with n=8 samples each.
+Training a common H results in a vector ﬁeld that more accurately ﬁts each curve than training a separate H
+for each (if the structure of the two manifolds was very different this need not be the case).
+
+error1 (θ) = min
+{ij }
+
+as kNN or NN), with the constraint that two points can be neighbors only if they come from the
+same manifold. To proceed, we assume that if xj is a neighbor of xi , there then exists an unknown
+ij such that W (xi , ij ) = xj to within a good approximation. Equivalently: Hθ (xi )ij ≈ xj − xi .
+We wish to ﬁnd the best θ in the squared error sense (the ij being additional free parameters that
+X
+nX
+(cid:13)(cid:13)Hθ (xi )ij − (xj − xi )(cid:13)(cid:13)2
+must be optimized over). The expression of the error we need to minimize is therefore:
+2
+j∈N i
+i=1
+Minimizing the above error function can be interpreted as trying to ﬁnd a warping function that can
+transform a point into its neighbors. Note, however, that the warping function has only d degrees of
+freedom while a point may have many more neighbors. This intuition allows us to rewrite the error
+in an alternate form. Let ∆i be the matrix where each column is of the form (xj − xi ) for each
+neighbor of xi . Let ∆i = U iΣiV i>
+be the thin singular value decomposition of ∆i . Then, one can
+nX
+(cid:13)(cid:13)Hθ (xi )E i − U iΣi(cid:13)(cid:13)2
+show [9] that error1 is equivalent to the following:
+F
+i=1
+Here, the matrices E i are the additional free parameters. Minimizing the above can be interpreted
+as searching for a warping function that directly explains the modes of variation at each point. This
+form is convenient since we no longer have to keep track of neighbors. Furthermore, if there is no
+noise and the linearity assumption holds there are at most d non-zero singular values. In practice we
+use the truncated SVD, keeping at most 2d singular values, allowing for signiﬁcant computational
+savings.
+We now give the remaining details of L SM L for the general case [9]. For the case of images, we
+present an efﬁcient version in Section 5 which uses some basic domain knowledge to avoid solving
+a large regression. Although potentially any regression technique is applicable, a linear model is
+particularly easy to work with. Let f i be f features computed over xi . We can then deﬁne Hθ (xi ) =
+[Θ1 f i · · · ΘD f i ]> , where each Θk is a d × f matrix. Re-arranging error2 gives:
+k·Σi(cid:13)(cid:13)(cid:13)2
+(cid:13)(cid:13)(cid:13)f i>
+DX
+nX
+Θk >
+E i − U i
+2
+i=1
+k=1
+Solving simultaneously for E and Θ is complex, but if either E or Θ is ﬁxed, solving for the
+remaining variable becomes a least squares problem (an equation of the form AX B = C can be
+rewritten as B> ⊗ A · vec(X ) = vec(C ), where ⊗ denotes the Kronecker product and vec the
+
+errorlin (θ) = min
+{E i }
+
+error2 (θ) = min
+{E i }
+
+(1)
+
+(2)
+
+(3)
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 2: Robustness. L SM L used to recover the embedding of the S -curve under a number of sampling
+conditions. In each plot we show the original points along with the computed embedding (rotated to align
+vertically), correspondence is indicated by coloring/shading (color was determined by the y-coordinate of the
+embedding). In each case L SM L was run with f = 8, d = 2, and neighbors computed by NN with  = 1
+(the height of the curve is 4). The embeddings shown were recovered from data that was: (a) densely sampled
+(n=500) (b) sparsely sampled (n=100), (c) highly structured (n=190), and (d) noisy (n=500, random Gaussian
+noise with σ = .1). In each case L SM L recovered the correct embedding. For comparison, LL E recovered good
+embeddings for (a) and (c) and I SOMA P for (a),(b), and (c). The experiments were repeated a number of times
+yielding similar results. For a discussion see the text.
+
+matrix vectorization function). To solve for θ , we use an alternating minimization procedure. In all
+experiments in this paper we perform 30 iterations of the above procedure, and while local minima
+do not seem to be to prevalent, we randomly restart the procedure 5 times. Finally, nowhere in
+the construction have we enforced that the learned tangent vectors be orthogonal (such a constraint
+would only be appropriate if the manifold was isometric to a plane). To avoid numerically unstable
+nX
+DX
+(cid:13)(cid:13)Θk (cid:13)(cid:13)2
+(cid:13)(cid:13)E i(cid:13)(cid:13)2
+solutions we regularize the error:
+error0
+F + λθ
+lin (θ) = errorlin (θ) + λE
+F
+i=1
+k=1
+For the features we use radial basis functions (RB Fs) [11], the number of basis functions, f , being an
+additional parameter. Each basis function is of the form f j (x) = exp(−kx − µj k2
+2 /2σ2 ) where the
+centers µj are obtained using K-means clustering on the original data with f clusters and the width
+parameter σ is set to be twice the average of the minimum distance between each cluster and its
+nearest neighbor center. The feature vectors are then simply deﬁned as f i = [f 1 (xi ) · · · f p (xi )]> .
+The parameter f controls the smoothness of the ﬁnal mapping Hθ ; larger values result in mappings
+that better ﬁt local variations of the data, but whose generalization abilities to other points on the
+manifold may be weaker. This is exactly analogous to the standard supervised setting and techniques
+like cross validation could be used to optimize over f .
+
+(4)
+
+4 Experiments on Point Sets
+
+We begin with a discussion on the intuition behind various aspects of L SM L. We then show exper-
+iments demonstrating the robustness of the method, followed by a number of applications. In the
+ﬁgures that follow we make use of color/shading to indicate point correspondences, for example
+when we show the original point set and its embedding.
+L SM L learns a function H from points in RD to tangent directions that agree, up to a linear combina-
+tion, with estimated tangent directions at the original training points of the manifold. By constraining
+H to be smooth (through use of a limited number of RB Fs), we can compute tangents at points not
+seen during training, including points that may not lie on the underlying manifold. This general-
+ization ability of H will be central to the types of applications considered. Finally, given multiple
+non-overlapping manifolds with similar structure, we can train a single H to correctly predict the
+tangents of each, allowing information to be shared. Fig. 1 gives a visual tutorial of these different
+concepts.
+L SM L appears quite robust. Fig. 2 shows L SM L successfully applied for recovering the embedding of
+the “S -curve” under a number of sampling conditions (similar results were obtained on the “Swiss-
+roll”). After H is learned, the embedding is computed by choosing a random point on the manifold
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 3: Reconstruction. Reconstruction examples are used to demonstrate quality and generalization of
+H. (a) Points sampled from the Swiss-roll manifold (middle), some recovered tangent vectors in a zoomed-
+in region (left) and embedding found by L SM L (right). Here n = 500 f = 20, d = 2, and neighbors were
+computed by NN with  = 4 (height of roll is 20). Reconstruction of Swiss-roll (b), created by a backprojection
+from regularly spaced grid points in the embedding (traversal was done from a single original point located at
+the base of the roll, see text for details). Another reconstruction (c), this time using all points and extending
+the grid well beyond the support of the original data. The Swiss-roll is extended in a reasonable manner both
+inward (occluded) and outward. (d) Reconstruction of unit hemisphere (L SM L trained with n = 100 f = 6,
+d = 2, NN with  = .3) by traversing outward from topmost point, note reconstruction in regions with no
+points.
+
+and establishing a coordinate system by traversing outward (the same procedure can be used to
+embed novel points, providing a natural out-of-sample extension). Here we compare only to LL E
+and I SOMA P using published code. The densely sampled case, Fig. 2(a), is comparatively easy and
+a number of methods have been shown to successfully recover an embedding. On sparsely sampled
+data, Fig. 2(b), the problem is more challenging; LL E had problems for n < 250 (lowering LL E’s
+regularization parameter helped somewhat). Real data need not be uniformly sampled, see Fig. 2(c).
+In the presence of noise Fig. 2(d), I SOMA P and LL E performed poorly. A single outlier can distort
+the shortest path computed by I SOMA P, and LL E does not directly use global information necessary
+to disambiguate noise. Other methods are known to be robust [6], and in [25] the authors propose a
+method to “smooth” a manifold as a preprocessing step for manifold learning algorithms; however
+a full comparison is outside the scope of this work.
+Having learned H and computed an embedding, we can also backproject from a point y ∈ Rd to a
+point x on the manifold by ﬁrst ﬁnding the coordinate of the closest point yi in the original data,
+then traversing from xi by j = yj − yi
+j along each tangent direction j (see Fig. 1(d)). Fig. 3(a)
+shows tangents and an embedding recovered by L SM L on the Swiss-roll. In Fig. 3(b) we backpro-
+ject from a grid of points in R2 ; by linking adjacent sets of points to form quadrilaterals we can
+display the resulting backprojected points as a surface. In Fig. 3(c), we likewise do a backprojection
+(this time keeping all the original points), however we backproject grid points well below and above
+the support of the original data. Although there is no ground truth here, the resulting extension of
+the surface seems “natural”. Fig. 3(d) shows the reconstruction of a unit hemisphere by traversing
+outward from the topmost point. There is no isometric mapping (preserving distance) between a
+hemisphere and a plane, and given a sphere there is actually not even a conformal mapping (pre-
+serving angles). In the latter case an embedding is not possible, however, we can still easily recover
+H for both (only hemisphere results are shown).
+
+5 Results on Images
+Before continuing, we consider potential applications of H in the image domain, including tangent
+distance estimation, nonlinear interpolation, extrapolation, compression, and motion transfer. We re-
+fer to results on point-sets to aid visualization. Tangent distance estimation: H computes the tangent
+and can be used directly in invariant recognition schemes such as [21]. Compression: Fig. 3(b,d)
+suggest how given a reference point and H nearby points can be reconstructed using d numbers
+(with distortion increasing with distance). Nonlinear interpolation and extrapolation: points can be
+generated within and beyond the support of given data (cf . Fig. 3); of potential use in tasks such as
+frame rate up-conversion, reconstructing dropped frames and view synthesis. Motion transfer: for
+certain classes of manifolds with “parallel” structure (cf . Fig. 1(f)), a recovered warp may be used
+on an entirely novel image. These applications will depend not only on the accuracy of the learned
+H but also on how close a set of images is to a smooth manifold.
+
+-
+
+-
+
+-
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Figure 4: The translation manifold. Here F i = X i ; s = 17, d = 2 and 9 sets of 6 translated images each
+were used (not including the cameraman). (a) Zero padded, smoothed test image x. (b) Visualization of learned
+Θ, see text for details. (c) Hθ (x) computed via convolution. (d) Several transformations obtained after multiple
+steps along manifold for different linear combinations of Hθ (x). Some artifacts due to error propagation start
+to appear in the top ﬁgures.
+
+errorimg (Θ) = min
+{E i }
+
+The key insight to working with images is that although images can live in very high dimensional
+spaces (with D ≈ 106 quite common), we do not have to learn a transformation with that many
+parameters. Let x be an image and H·k (x), k ∈ [1, d], be the d tangent images. Here we assume
+that each pixel in H·k (x) can be computed based only on the information in s × s patch centered
+on the corresponding pixel in x. Thus, instead of learning a function RD → RD×d we learn a
+function Rs2 → Rd , and to compute H we apply the per patch function at each of the D locations
+in the image. The resulting technique scales independently of D , in fact different sized images can
+be used. The per patch assumption is not always suitable, most notably for transformations that are
+based only on image coordinate and are independent of appearance.
+The approach of Section 3 needs to be slightly modiﬁed to accommodate patches. We rewrite each
+image xi ∈ RD as a s2 × D matrix X i where each row contains pixels from one patch in xi (in
+training we sub-sample patches). Patches from all the images are clustered to obtain the f RB Fs;
+each X i is then transformed to a f × D matrix F i that contains the features computed for each
+patch. The per patch linear model can now be written as Hθ (xi ) = (ΘF i )> , where Θ is a d × f
+matrix (compare with the D Θs needed without the patch assumption). The error function, which is
+Θ>E i − U iΣi(cid:13)(cid:13)(cid:13)2
+(cid:13)(cid:13)(cid:13)F i>
+nX
+minimized in a similar way [9], becomes:
+F
+i=1
+We begin with the illustrative example of translation (Fig. 4). Here, RB Fs were not used, instead
+F i = X i . The learned Θ is a 2 × s2 matrix, which can be visualized as two s × s images as in Fig.
+4(b). These resemble derivative of Gaussian ﬁlters, which are in fact the inﬁnitesimal generates for
+translation [16]. Computing the dot product of each column of Θ with each patch can be done using
+a convolution. Fig. 4 shows applications of the learned transformations, which resemble translations
+with some artifacts.
+Fig. 5 shows the application of L SM L for learning out-of-plane rotation of a teapot. On this size
+problem training L SM L (in MAT LAB) takes a few minutes; convergence occurs within about 10
+iterations of the minimization procedure. Hθ (x) for novel x can be computed with f convolutions
+(to compute cross correlation) and is also fast. The outer frames in Fig. 5 highlight a limitation
+of the approach: with every successive step error is introduced; eventually signiﬁcant error can
+accumulate. Here, we used a step size which gives roughly 10 interpolated frames between each
+pair of original frames. With out-of-plane rotation, information must be created and the problem
+becomes ambiguous (multiple manifolds can intersect at a single point), hence generalization across
+images is not expected to be good.
+In Fig. 6, results are shown on an eye manifold with 2 degrees of freedom. L SM L was trained on
+sparse data from video of a single eye; Hθ was used to synthesize views within and also well outside
+the support of the original data (cf . Fig. 6(c)). In Fig. 6(d), we applied the transformation learned
+from one person’s eye to a single image of another person’s eye (taken under the same imaging
+conditions). L SM L was able to start from the novel test image and generate a convincing series of
+
+(5)
+
+Figure 5: Manifold generated by out-of-plane rotation of a teapot (data from [24], sub-sampled and
+smoothed). Here, d = 1, f = 400 and roughly 3000 patches of width s = 13 were sampled from 30 frames.
+Bottom row shows the ground truth images; dashed box contains 3 of 30 training images, representing ∼ 8◦
+of physical rotation. The top row shows the learned transformation applied to the central image. By observing
+the tip, handle and the two white blobs on the teapot, and comparing to ground truth data, we can observe the
+quality of the learned transformation on seen data (b) and unseen data (d), both starting from a single frame (c).
+The outmost ﬁgures (a)(e) shows failure for large rotations.
+
+Figure 6: Traversing the eye manifold. L SM L trained on one eye moving along ﬁve different lines (3 vertical
+and 2 horizontal). Here d = 2, f = 600, s = 19 and around 5000 patches were sampled; 2 frames were
+considered neighbors if they were adjacent in time. Figure (a) shows images generated from the central image.
+The inner 8 frames lie just outside the support of the training data (not shown), the outer 8 are extrapolated
+beyond its support. Figure (b) details Hθ (x) for two images in a warping sequence: a linear combination can
+lead the iris/eyelid to move in different directions (e.g. the sum would make the iris go up). Figure (c) shows
+extrapolation far beyond the training data, i.e. an eye wide open and fully closed. Finally, Figure(d) shows how
+the eye manifold we learned on one eye can be applied on a novel eye not seen during training.
+
+transformations. Thus, motion transfer was possible - Hθ trained on one series of images generalized
+to a different set of images.
+
+6 Conclusion
+
+In this work we presented an algorithm, Locally Smooth Manifold Learning, for learning the struc-
+ture of a manifold. Rather than pose manifold learning as the problem of recovering an embedding,
+we posed the problem in terms of learning a warping function for traversing the manifold. Smooth-
+ness assumptions on W allowed us to generalize to unseen data. Proposed uses of L SM L include
+tangent distance estimation, frame rate up-conversion, video compression and motion transfer.
+We are currently engaged in scaling the implementation to handle large datasets; the goal is to
+integrate L SM L into recognition systems to provide increased invariance to transformations.
+
+~~···~~···(a)(b)(c)(d)(e)Figure5:Manifoldgeneratedbyout-of-planerotationofateapot(datafrom[23],sub-sampledandsmoothed).Here,d=1,f=400androughly3000patchesofwidths=13weresampledfrom30frames.Bottomrowshowsthegroundtruthimages;dashedboxcontains3of30trainingimages,representing∼8◦ofphysicalrotation.Thetoprowshowsthelearnedtransformationappliedtothecentralimage.Byobservingthetip,handleandthetwowhiteblobsontheteapot,andcomparingtogroundtruthdata,wecanobservethequalityofthelearnedtransformationonseendata(b)andunseendata(d),bothstartingfromasingleframe(c).Theoutmostﬁgures(a)(e)showsfailureforlargerotations.Fig.5showstheapplicationofLSMLforlearningout-of-planerotationofateapot.OnthissizeproblemtrainingLSML(inMATLAB)takesafewminutes;convergenceoccurswithinabout10iterationsofthemini-mizationprocedure.Hθ(x)fornovelxcanbecomputedwithfconvolutions(tocomputecrosscorrelation)andisalsofast.TheouterframesinFig.5highlightalimitationoftheapproach:witheverysuccessivesteperrorisintroduced;eventuallysigniﬁcanterrorcanaccumulate.Here,weusedastepsizewhichgivesroughly10interpolatedframesbetweeneachpairoforiginalframes.Without-of-planerotation,informationmustbecreatedandtheproblembecomesambiguous(multiplemanifoldscanintersectatasinglepoint),hencegeneralizationacrossimagesisnotexpectedtobegood.QQQQQQQQQQQQQQQQQQQQQQQQ+QQQQQQQQk?6QQQQQQQQs-3(a)(b)(c)(d)Figure6:Traversingtheeyemanifold.LSMLtrainedononeeyemovingalongﬁvedifferentlines(3verticaland2horizontal).Hered=2,f=600,s=19andaround5000patchesweresampled;2frameswereconsideredneighborsiftheywereadjacentintime.Figure(a)showsimagesgeneratedfromthecentralimage.Theinner8framesliejustoutsidethesupportofthetrainingdata(notshown),theouter8areextrapolatedbeyonditssupport.Figure(b)detailsHθ(x)fortwoimagesinawarpingsequence:alinearcombinationcanleadtheiris/eyelidtomoveindifferentdirections(e.g.thesumwouldmaketheirisgoup).Figure(c)showsextrapolationfarbeyondthetrainingdata,i.e.aneyewideopenandfullyclosed.Finally,Figure(d)showshowtheeyemanifoldwelearnedononeeyecanbeappliedonanoveleyenotseenduringtraining.QQQQQQQQQQQQQQQQQQQQQQQQ+QQQQQQQQk?6QQQQQQQQs-3(a)(b)(c)(d)Figure1:Traversingtheeyemanifold.LSMLtrainedononeeyemovingalongﬁvedifferentlines(3verticaland2horizontal).Hered=2,f=600,s=19andaround5000patchesweresampled;2frameswereconsideredneighborsiftheywereadjacentintime.Figure(a)showsimagesgeneratedfromthecentralimage.Theinner8framesliejustoutsidethesupportofthetrainingdata(notshown),theouter8areextrapolatedbeyonditssupport.Figure(b)detailsHθ(x)fortwoimagesinawarpingsequence:alinearcombinationcanleadtheiris/eyelidtomoveindifferentdirections(e.g.thesumwouldmaketheirisgoup).Figure(c)showsextrapolationfarbeyondthetrainingdata,i.e.aneyewideopenandfullyclosed.Finally,Figure(d)showshowtheeyemanifoldwelearnedononeeyecanbeappliedonanoveleyenotseenduringtraining.Acknowledgements
+
+This work was funded by the following grants and organizations: NSF Career Grant #0448615,
+Alfred P. Sloan Research Fellowship, NSF IGERT Grant DGE-0333451, and UCSD Division of
+Calit2. We would like to thank Sameer Agarwal, Kristin Branson, Matt Tong, and Neel Joshi for
+valuable input and Anna Shemorry for helping us make it through the deadline.
+
+References
+[1] E. Di Bernardo, L. Goncalves and P. Perona.US Patent 6,552,729: Automatic generation of animation of
+synthetic characters., 2003.
+[2] Y. Bengio and M. Monperrus. Non-local manifold tangent learning. In NIPS. 2005.
+[3] Y. Bengio, J.F. Paiement, P. Vincent, O. Delalleau, N. Le Roux, and M. Ouimet. Out-of-sample extensions
+for LLE, isomap, MDS, eigenmaps, and spectral clustering. In NIPS, 2004.
+[4] D. Beymer and T. Poggio. Face recognition from one example view. In ICCV, page 500, Washington,
+DC, USA, 1995. IEEE Computer Society.
+[5] Volker Blanz and Thomas Vetter. Face recognition based on ﬁtting a 3D morphable model. PAMI,
+25(9):1063–1074, 2003.
+[6] M. Brand. Charting a manifold. In NIPS, 2003.
+[7] Christoph Bregler, Michele Covell, and Malcolm Slaney. Video rewrite: driving visual speech with audio.
+In SIGGRAPH, pages 353–360, 1997.
+[8] E. Chuang, H. Deshpande, and C. Bregler. Facial expression space learning. In Paciﬁc Graphics, 2002.
+[9] P. Doll ´ar, V. Rabaud, and S. Belongie. Learning to traverse image manifolds. Technical Report CS2007-
+0876, UCSD CSE, Jan. 2007.
+[10] G. J. Edwards, T. F. Cootes, and C. J. Taylor. Face recognition using active appearance models. ECCV,
+1998.
+[11] T. Hastie, R. Tibshirani, and J. Friedman. The Elements of Statistical Learning. Springer, 2001.
+[12] N. Jojic, B. Frey, and A. Kannan. Epitomic analysis of appearance and shape. In ICCV, 2003.
+[13] D. Keysers, W. Macherey, J. Dahmen, and H. Ney. Learning of variability for invariant statistical pattern
+recognition. ECML, 2001.
+[14] T. Moriyama, T. Kanade, J. Xiao, and J. F. Cohn. Meticulously detailed eye region model. PAMI, 2006.
+[15] H. Murase and S.K. Nayar. Visual learning and recognition of 3D objects from appearance. IJCV, 1995.
+[16] R. Rao and D. Ruderman. Learning Lie groups for invariant visual perception. In NIPS, 1999.
+[17] L. K. Saul and S. T. Roweis. Think globally, ﬁt locally: unsupervised learning of low dimensional
+manifolds. JMLR, 2003.
+[18] A. Sch ¨odl, R. Szeliski, D.H. Salesin, and I. Essa. Video textures. In SIGGRAPH, 2000.
+[19] B. Sch ¨olkopf, A. Smola, and K. M ¨uller. Nonlinear component analysis as a kernel eigenvalue problem.
+Neur. Comp., 1998.
+[20] P. Simard, Y. LeCun, and J. S. Denker. Efﬁcient pattern recognition using a new transformation distance.
+In NIPS, 1993.
+[21] P. Simard, Y. LeCun, J. S. Denker, and B. Victorri. Transformation invariance in pattern recognition-
+tangent distance and tangent propagation. In Neural Networks: Tricks of the Trade, 1998.
+[22] J. B. Tenenbaum, V. de Silva, and J. C. Langford. A global geometric framework for nonlinear dimen-
+sionality reduction. Science, 290, 2000.
+[23] Joshua B. Tenenbaum and William T. Freeman. Separating style and content with bilinear models. Neural
+Computation, 12(6):1247–1283, 2000.
+[24] K. Q. Weinberger and L. K. Saul. Unsupervised learning of image manifolds by semideﬁnite program-
+ming. In CVPR04.
+[25] Z. Zhang and Zha. Local linear smoothing for nonlinear manifold learning. Technical report, 2003.
+
+

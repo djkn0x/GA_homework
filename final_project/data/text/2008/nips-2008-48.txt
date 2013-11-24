@@ -1,0 +1,940 @@
+From Online to Batch Learning with
+Cutoff-Averaging
+
+Anonymous Author(s)
+Afﬁliation
+Address
+email
+
+Abstract
+
+We present cutoff averaging, a technique for converting any conservative online
+learning algorithm into a batch learning algorithm. Most online-to-batch conver-
+sion techniques work well with certain types of online learning algorithms and not
+with others, whereas cutoff averaging explicitly tries to adapt to the characteristics
+of the online algorithm being converted. An attractive property of our technique
+is that it preserves the efﬁciency of the original online alg orithm, making it appro-
+priate for large-scale learning problems. We provide a statistical analysis of our
+technique and back our theoretical claims with experimental results.
+
+1
+
+Introduction
+
+Batch learning (also called statistical learning) and online learning are two different supervised
+machine-learning frameworks. In both frameworks, a learning problem is primarily deﬁned by an
+instance space X and a label set Y , and the goal is to assign labels from Y to instances in X . In batch
+learning, we assume that there exists a probability distribution over the product space X × Y , and
+that we have access to a training set drawn i.i.d. from this distribution. A batch learning algorithm
+uses the training set to generate an output hypothesis, which is a function that maps instances in
+X to labels in Y . We expect a batch learning algorithm to generalize, in the sense that its output
+hypothesis should accurately predict the labels of previously unseen examples, which are sampled
+from the distribution.
+
+On the other hand, in the online learning framework, we typically make no statistical assumptions
+regarding the origin of the data. An online learning algorithm receives a sequence of examples and
+processes these examples one-by-one. On each online-learning round, the algorithm receives an
+instance and predicts its label using an internal hypothesis, which it keeps in memory. Then, the
+algorithm receives the correct label corresponding to the instance, and uses the new instance-label
+pair to update and improve its internal hypothesis. There is no notion of statistical generalization,
+as the algorithm is only expected to accurately predict the labels of examples it receives as input.
+The sequence of internal hypotheses constructed by the online algorithm from round to round plays
+a central role in this paper, and we refer to this sequence as the online hypothesis sequence.
+
+Online learning algorithms tend to be computationally efﬁc ient and easy to implement. However,
+many real-world problems ﬁt more naturally in the batch lear ning framework. As a result, we are
+sometimes tempted to use online learning algorithms as if they were batch learning algorithms. A
+common way to do this is to present training examples one-by-one to the online algorithm, and
+use the last hypothesis constructed by the algorithm as the output hypothesis. We call this tech-
+nique the last-hypothesis online-to-batch conversion technique. The appeal of this technique is that
+it maintains the computational efﬁciency of the original on line algorithm. However, this heuris-
+tic technique generally comes with no theoretical guarantees, and the online algorithm’s inherent
+disregard for out-of-sample performance makes it a risky practice.
+
+1
+
+In addition to the last-hypothesis heuristic, various principled techniques for converting online al-
+gorithms into batch algorithms have been proposed. Each of these techniques essentially wraps the
+online learning algorithm with an additional layer of instructions that endow it with the ability to
+generalize. One approach is to use the online algorithm to create the online hypothesis sequence, and
+then to choose a single good hypothesis from this sequence. For instance, the longest survivor tech-
+nique [8] (originally called the pocket algorithm) chooses the hypothesis that survives the longest
+number of consecutive online rounds before it is replaced. The validation technique [12] uses a
+validation set to evaluate each online hypothesis and chooses the hypothesis with the best empirical
+performance. Improved versions of the validation technique are given in [2, 3], where the wasteful
+need for a separate validation set is resolved. All of these techniques follow the single hypothesis
+approach. We note in passing that a disadvantage of the various validation techniques [12, 2, 3] is
+that their running time scales quadratically with the number of examples. We typically turn to online
+algorithms for their efﬁciency, and often a quadratic runni ng time can be problematic.
+
+Another common online-to-batch conversion approach, which we call the ensemble approach, uses
+the online algorithm to construct the online hypothesis sequence, and combines the hypotheses in
+the sequence by taking a majority [7] or by averaging [2, Sec. 2.A]. When using linear hypotheses,
+averaging can be done on-the- ﬂy, while the online algorithm is constructing the online hypothesis
+sequence. This preserves the computational efﬁciency of th e online algorithm. Taking the majority
+or the average over a rich set of hypotheses promotes robustness and stability. Moreover, since we
+do not truly know the quality of each online hypothesis, building an ensemble allows us to hedge
+our bets, rather than committing to a single online hypothesis.
+
+Sometimes the ensemble approach outperforms the single hypothesis approach, while other times
+we see the opposite behavior (see Sec. 4 and [9]). Ideally, we would like a conversion technique
+that enjoys the best of both worlds: when a single good online hypothesis can be clearly identi ﬁed,
+it should be chosen as the output hypothesis, but when a good hypothesis cannot be identi ﬁed, we
+should play it safe and construct an ensemble.
+
+A ﬁrst step in this direction was taken in [10, 5], where the co nversion technique selectively chooses
+which subset of online hypotheses to include in the ensemble. For example, the sufﬁx averaging
+conversion [5] sets the output hypothesis to be the average over a sufﬁx of the online hypothesis
+sequence, where the sufﬁx length is determined by minimizin g a theoretical upper-bound on the
+generalization ability of the resulting hypothesis. One extreme of this approach is to include the
+entire online hypothesis sequence in the ensemble. The other extreme reduces to the last-hypothesis
+heuristic. By choosing the sufﬁx that gives the best theoret
+ical guarantee, sufﬁx averaging automat-
+ically balances the trade-off between these two extremes. Regretfully, this technique suffers from
+a computational efﬁciency problem. Speci ﬁcally, the sufﬁx
+averaging technique only chooses the
+sufﬁx length after the entire hypothesis sequence has been c onstructed. Therefore, it must store
+the entire sequence in memory before it constructs the output hypothesis, and its memory footprint
+grows linearly with training set size. This is in sharp contrast to the last-hypothesis heuristic, which
+uses no memory aside from the memory used by the online algorithm itself. When the training set
+is massive, storing the entire online hypothesis sequence in memory is impossible.
+
+In this paper, we present and analyze a new conversion technique called cutoff averaging. Like
+sufﬁx averaging, it attempts to enjoy the best of the single h ypothesis approach and of the ensemble
+approach. One extreme of our technique reduces to the simple averaging conversion technique,
+while the other extreme reduces to the longest-survivor conversion technique. Like sufﬁx averaging,
+we search for the sweet-spot between these two extremes by explicitly minimizing a tight theoretical
+generalization bound. The advantage of our technique is that much of it can be performed on-the- ﬂy,
+as the online algorithm processes the data. The memory required by cutoff averaging scales with
+square-root the number of training examples in the worst case, and is far less in the typically case.
+
+This paper is organized as follows. In Sec. 2 we formally present the background for our approach.
+In Sec. 3 we present the cutoff averaging technique and provide a statistical generalization analysis
+for it. Finally, we demonstrate the merits of our approach with a set of experiments in Sec. 4.
+
+2
+
+2 Preliminaries
+
+Recall that X is an instance domain and that Y is a set of labels, and let H be a hypothesis class,
+where each h ∈ H is a mapping from X to Y . For example, we may be faced with a conﬁdence-
+rated binary classi ﬁcation problem, where H is the class of linear separators. In this case, X is a
+subset of the Euclidean space Rn , Y is the real line, and each hypothesis in H is a linear function
+parametrized by a weight vector w ∈ Rn and deﬁned as h(x) = hw, xi. We interpret sign(h(x)) as
+the actual binary label predicted by h, and |h(x)| as the degree of conﬁdence in this prediction.
+The quality of the predictions made by h is measured using a loss function ℓ. We use ℓ(h; (x, y))
+to denote the penalty incurred for predicting the label h(x) when the correct label is actually y .
+Returning to the example of linear separators, a common choice of loss function is the zero-one loss,
+which is simply the indicator function of prediction mistakes. Another popular loss function is the
+hinge loss, deﬁned as
+
+.
+
+.
+
+if yhw, xi ≤ 1
+otherwise
+
+ℓ(h; (x, y)) = (cid:26) 1 − yhw, xi
+0
+As noted above, in batch learning we assume the existence of a probability distribution D over the
+product space X × Y . The input of a batch learning algorithm is a training set, sampled from Dm .
+The risk of a hypothesis h, denoted by ℓ(h; D), is deﬁned as the expected loss incurred by h over
+examples sampled from D . Formally,
+ℓ(h; D) = E(X,Y )∼D [ℓ(h; (X, Y ))]
+We can talk about the zero-one-risk or the hinge-loss-risk, depending on which loss function we
+choose to work with. The goal of a batch learning algorithm for the hypothesis class H and for the
+loss function ℓ is to ﬁnd a hypothesis h⋆ ∈ H whose risk is as close as possible to inf h∈H ℓ(h; D).
+In online learning, the labeled examples take the form of a sequence S = (cid:0)(xi , yi )(cid:1)m
+. We typically
+i=1
+refrain from making any assumptions on the process that generates S ; it could very well be a stochas-
+tic process but it doesn’t have to be. The online algorithm observes the examples in the sequence
+one-by-one, and incrementally constructs the sequence of online hypotheses (hi )m
+i=0 , where each
+hi ∈ H. The ﬁrst hypotheses, h0 , is a default hypothesis, which is deﬁned in advance. Before round
+t begins, the algorithm has already constructed the preﬁx (hi )t−1
+i=0 . At the beginning of round t, the
+algorithm observes xt and makes the prediction ht−1 (xt ). Then, the correct label yt is revealed and
+the algorithm suffers a loss of ℓ(ht−1 ; (xt , yt )). Finally, the algorithm uses the new example (xt , yt )
+to construct the next hypothesis ht . The update rule used to construct ht is the main component of
+the online learning algorithm. In this paper, we make the simplifying assumption that the update
+rule is deterministic, and we note that our derivation can be extended to randomized update rules.
+Since S is not necessarily generated by any distribution D , we cannot deﬁne the risk of an online
+hypothesis. Instead, the performance of an online algorithm is measured using the game-theoretic
+notion of regret. The regret of an online algorithm is deﬁned as
+m
+m
+ℓ(cid:16)ˆh; (xi , yi )(cid:17) .
+Xi=1
+Xi=1
+ℓ(hi−1 ; (xi , yi )) − min
+ˆh∈H
+In words, regret measures how much better the algorithm could have done by using the best ﬁxed
+hypothesis in H on all m rounds. The goal of an online learning algorithm is to minimize regret.
+To make things more concrete, we focus on two online learning algorithms for binary classi ﬁcation.
+The ﬁrst is the classic Perceptron algorithm [13] and the sec ond is a ﬁnite-horizon margin-based
+variant of the Perceptron, which closely resembles algorithms given in [11, 4]. The term ﬁnite-
+horizon indicates that the algorithm knows the total length of the sequence of examples before ob-
+serving any data. The term margin-based indicates that the algorithm is concerned with minimizing
+the hinge-loss, unlike the classic Perceptron, which deals directly with the zero-one loss. Pseudo-
+code for both algorithms is given in Fig. 1. We chose these two particular algorithms because they
+exhibit two extreme behaviors when converted into batch learning algorithms. Speci ﬁcally, if we
+were to present the classic Perceptron with an example-sequence S drawn i.i.d. from a distribution
+D , we would typically see large ﬂuctuations in the zero-one-r isk of the various online hypotheses.
+(see Sec. 4). Due to these ﬂuctuations, the ensemble approac h suits the classic Perceptron very well,
+
+1
+m
+
+1
+m
+
+(1)
+
+3
+
+P ERC E P TRON
+input S = (cid:0)(xi , yi )(cid:1)m
+i=1
+set w0 = (0, . . . , 0)
+for i = 1, . . . , m
+receive xi , predict signhwi−1 , xi i
+receive yi ∈ {−1, +1}
+if sign(cid:0)hwi−1 , xi i(cid:1) 6= yi
+wi ← wi−1 + yixi
+
+F IN I T E -HOR I ZON MARG IN -BA S ED P ERC E P TRON
+input S = (cid:0)(xi , yi )(cid:1)m
+s.t. kxi k2 ≤ R
+i=1
+set w0 = (0, . . . , 0)
+for i = 1, . . . , m
+receive xi , predict signhwi−1 , xi i
+receive yi ∈ {−1, +1}
+if ℓ(wi−1 ; (xi , yi )) > 0
+w′i−1 ← wi−1 + yi xi√mR
+′
+wi ← w
+i−1
+kw
+i−1 k2
+′
+
+Figure 1: Two versions of the Perceptron algorithm.
+
+and typically outperforms any single hypothesis approach. On the other hand, if we were to repeat
+this experiment with the margin-based Perceptron, using hinge-loss-risk, we would typically see a
+monotonic decrease in risk from round to round. A possible explanation for this is the similarity
+between the margin-based Perceptron and some incremental SVM solvers [14]. The last hypothesis
+constructed by the margin-based Perceptron is typically better than any average. This difference
+between the classic Perceptron and its margin-based variant was previously observed in [9]. Ideally,
+we would like a conversion technique that performs well in both cases.
+
+From a theoretical standpoint, the purpose of an online-to-batch conversion technique is to turn an
+online learning algorithm with a regret bound into a batch learning algorithm with a risk bound. We
+state a regret bound for the margin-based Perceptron, so that we can demonstrate this idea in the
+next section.
+Theorem 1. Let S = (cid:0)(xi , yi )(cid:1)m
+be a sequence of examples such that xi ∈ Rn and y ∈ {−1, +1}
+i=1
+and let ℓ denote the hinge loss. Let H be the set of linear separators deﬁned by weight vectors in
+the unit L2 ball. Let (hi )m
+i=0 be the online hypothesis sequence generated by the margin-based
+Perceptron (see Fig. 1) when it processes S . Then, for any ˆh ∈ H,
+m Pm
+m Pm
+i=1 ℓ(cid:0)ˆh; (xi , yi )(cid:1) ≤ R√m .
+i=1 ℓ(cid:0)hi−1 ; (xi , yi )(cid:1) − 1
+1
+The proof of Thm. 1 is not much different from other regret bounds for Perceptron-like algorithms;
+for completeness we give the proof in [1].
+
+3 Cutoff Averaging
+
+We now present the cutoff averaging conversion technique. This technique can be applied to any
+conservative online learning algorithm that uses a convex hypothesis class H. A conservative al-
+gorithm is one that modi ﬁes its online hypotheses only on rou nds where a positive loss is suffered.
+On rounds where no loss is suffered, the algorithm keeps its current hypothesis, and we say that
+the hypothesis survived the round. The survival time of each distinct online hypothesis is the num-
+ber of consecutive rounds it survives before the algorithm suffers a loss and replaces it with a new
+hypothesis.
+
+Like the conversion techniques mentioned in Sec. 1, we start by applying the online learning algo-
+rithm to an i.i.d. training set, and obtaining the online hypothesis sequence (hi )m−1
+i=0 . Let k be an
+arbitrary non-negative integer, which we call the cutoff parameter. Ultimately, our technique will
+set k automatically, but for the time-being, assume k is a predeﬁned constant. Let Θ ⊆ (hi )m−1
+i=0 be
+the set of distinct hypotheses whose survival time is greater than k . The cutoff averaging technique
+deﬁnes the output hypothesis h⋆ as a weighted average over the hypotheses in Θ, where the weight
+of a hypothesis with survival time s is proportional to s − k . Intuitively, each hypothesis must qual-
+ify for the ensemble, by suffering no loss for k consecutive rounds. The cutoff parameter k sets the
+bar for acceptance into the ensemble. Once a hypothesis is included in the ensemble, its weight is
+determined by the number of additional rounds it perseveres after qualifying.
+
+4
+
+We present a statistical analysis of the cutoff averaging technique. We use capital-letter notation
+throughout our analysis to emphasize that our input is stochastic and that we are essentially ana-
+lyzing random variables. First, we represent the sequence of examples as a sequence of random
+variables (cid:0)(Xi , Yi )(cid:1)m
+. Once this sequence is presented to the online algorithm, we obtain the on-
+i=1
+i=1 , which is a sequence of random functions. Note that each random
+line hypothesis sequence (Hi )m
+j=1 . Therefore, the risk
+function Hi is deterministically deﬁned by the random variables
+((Xj , Yj ))i
+j=1 . Since (Xi+1 , Yi+1 ) is sampled from D
+of Hi is also a deterministic function of ((Xj , Yj ))i
+independently of ((Xj , Yj ))i
+j=1 , we observe that
+ℓ(Hi ; D) = E(cid:2)ℓ(cid:0)Hi ; (Xi+1 , Yi+1 )(cid:1)(cid:12)(cid:12)(cid:0)(Xj , Yj )(cid:1)i
+j=1 (cid:3) .
+In words, the risk of the random function Hi equals the conditional expectation of the online loss
+suffered on round i + 1, conditioned on the random examples 1 through i. This simple observation
+relates statistical risk with online loss, and is the key to converting regret bounds into risk bounds.
+(Bi )m−1
+i=0 as follows
+if i ≥ k and Hi−k = Hi−k+1 = . . . = Hi
+
+Deﬁne the sequence of binary random variables
+Bi = (cid:26) 1
+0
+Now deﬁne the output hypothesis
+
+if i = 0
+otherwise
+
+(2)
+
+or
+
+.
+
+(3)
+
+Bi(cid:19)−1 m−1
+k = (cid:18) m−1
+Xi=0
+Xi=0
+H ⋆
+Note that we automatically include the default hypothesis H0 in the deﬁnition of H ⋆
+k . This technical
+detail makes our analysis more elegant, and is otherwise irrelevant. Also note that setting k = 0
+results in Bi = 1 for all i, and would reduce our conversion technique to the standard averaging
+conversion technique. At the other extreme, as k increases, our technique approaches the longest
+survivor conversion technique.
+
+BiHi .
+
+(4)
+
+The following theorem bounds the risk of H ⋆
+k using the online loss suffered on rounds where Bi = 1.
+The theorem holds only when the loss function ℓ is convex in its ﬁrst argument and bounded in [0, C ].
+Note that this is indeed the case for the margin-based Perceptron and the hinge loss function. Since
+the margin-based Perceptron enforces kwi k ≤ 1, and assuming that kxi k ≤ R, it follows from the
+Cauchy-Schwartz inequality that ℓ ∈ [0, R + 1]. If the loss function is not convex, the theorem does
+not hold, but note that we can still bound the average risk of the hypotheses in the ensemble.
+Theorem 2. Let k be a non-negative constant and let ℓ be a convex loss function such that
+ℓ(h; (x, y)) ∈ [0, C ]. An online algorithm is given m ≥ 4 independent samples from D and
+i=0 . Deﬁne Bi and H ⋆
+constructs the online hypothesis sequence (Hi )m
+k as above, let Li =
+Bi−1 ℓ(cid:0)Hi−1 ; (Xi , Yi )(cid:1) for all i and let ¯L = (P Bi )−1 P Li . For any δ ∈ (0, 1), with proba-
+bility at least 1 − δ , it holds that
+k ; D) < ¯L + s 2C ln( m
+δ ) ¯L
+7C ln( m
+δ )
+ℓ(H ⋆
+.
++
+P Bi
+P Bi
+To prove the theorem, we require the following tail bound, which is a corollary of Freedman’s tail
+bound for martingales [6], similar to [3, Proposition 2].
+Lemma 1. Let (Li )m
+i=1 be a sequence of real-valued random variables and let (Zi )m
+i=1 be a sequence
+of arbitrary random variables such that Li = E[Li |(Zj )i
+j=1 ] and Li ∈ [0, C ] for all i. Deﬁne
+j=1 ] for all i, and deﬁne ¯Lt = Pt
+i=1 Li and ¯Ut = Pt
+Ui = E[Li |(Zj )i−1
+i=1 Ui for all t. For any
+m ≥ 4 and for any δ ∈ (0, 1), with probability at least 1 − δ , it holds that
+¯Ut < ¯Lt + q2C ln( m
+δ ) ¯Lt + 7C ln( m
+δ ) .
+∀ t ∈ {1, . . . , m}
+Due to space constraints, the proof of Lemma 1 is given in [1]. It can also be reverse-engineered
+from [3, Proposition 2]. Equipped with Lemma 1, we now prove Thm. 2.
+
+5
+
+¯U =
+
+Proof of Thm. 2. Deﬁne Ui = E[Li |((Xj , Yj ))i−1
+j=1 ] for all i ∈ {1, . . . , m}, and deﬁne
+Pm
+i=1 Ui . Using Lemma 1, we have that, with probability at least 1 − δ
+¯U < ¯L + q2C ln( m
+δ ) ¯L + 7C ln( m
+δ ) .
+Now notice that, by deﬁnition,
+Ui = EhBi−1 ℓ(cid:0)Hi−1 ; (Xi , Yi )(cid:1) (cid:12)(cid:12) ((Xj , Yj ))i−1
+j=1 i .
+Since Bi is deterministically deﬁned by ((Xj , Yj ))i−1
+j=1 , it can be taken outside of the conditional
+expectation above. Using the observation made in Eq. (2), we have Ui = Bi−1 ℓ(Hi−1 ; D). Overall,
+we have shown that
+m
+Bi−1 ℓ(Hi−1 ; D) < ¯L + q2C ln( m
+δ ) ¯L + 7C ln( m
+Xi=1
+δ ) .
+Using Jensen’s inequality, the left-hand side above is at least (cid:0) Pm
+k ; D).
+i=1 Bi−1 (cid:1)ℓ(H ⋆
+We can now complete the deﬁnition of the cutoff averaging tec hnique. Note that by replacing δ
+with δ/m in Thm. 2 and by using the union bound, we can ensure that Thm. 2 holds uniformly for
+all k ∈ {0, . . . , m − 1} with probability at least 1 − δ . The cutoff averaging technique sets the
+output hypothesis H ⋆ to be hypothesis in {H ⋆
+m−1 } for which Thm. 2 gives the smallest
+0 , . . . , H ⋆
+bound. In other words, k is chosen automatically so as to balance the trade-off between the beneﬁts
+of averaging and those of good empirical performance. If a small number of online hypotheses
+stand out with signi ﬁcantly long survival times, then our te chnique will favor a large k and a sparse
+ensemble. On the other hand, if most of the online hypotheses have medium/short survival times,
+then our technique will favor small values of k and a dense ensemble. Even if ℓ is not convex,
+minimizing the bound in Thm. 2 implicitly minimizes the average risk of the ensemble hypotheses.
+
+If the online algorithm being converted has a regret bound, then the data dependent risk bound
+given by Thm. 2 can be turned into a data independent risk bound. A detailed derivation of such a
+bound exceeds the scope of this paper, and we just sketch the proof in the case of the margin-based
+Perceptron. It trivially holds that the risk of H ⋆ is upper-bounded by the bound given in Thm. 2 for
+k = 0. When Thm. 2 is applied with k = 0, ¯L simply becomes the average loss suffered by the
+online algorithm over the entire training set and P Bi = m. We can now use Thm. 1 to bound ¯L
+by the average loss of any ˆh ∈ H on the sequence (cid:0)(Xi , Yi )(cid:1)m
+. Particularly, we can choose ˆh to
+i=1
+be the hypothesis with the smallest risk in H, namely, ˆh = arg minh∈H ℓ(h; D). The ﬁnal step is
+m P ℓ(ˆh; (Xi , Yi )) and ℓ(ˆh; D), which can be done using any tail
+to bound the difference between 1
+bound for sums of independent bounded random variables, such as Hoeffding’s bound or Bernstein’s
+bound. The result is that, with high probability, ℓ(H ⋆ ; D) ≤ minh∈H ℓ(h; D) + O(m−1/2 ). Similar
+derivations appear in [2, 3].
+
+As mentioned in the introduction, our approach is similar to the sufﬁx averaging conversion tech-
+nique of [5], which also interpolates between an ensemble approach and a single hypothesis ap-
+proach. However, the sufﬁx conversion requires Ω(m) space, which is problematic when m is large.
+In contrast, cutoff averaging requires only O(√m) space. Our technique cannot choose the optimal
+value of k before the entire dataset has been processed, but nevertheless, it does not need to store
+the entire hypothesis sequence. Instead, it can group the online hypotheses based on their survival
+times, and stores only the average hypothesis in each group and the total loss in each group. By
+the time the entire dataset is processed, most of the work has already been done and calculating the
+optimal k and the output hypothesis is straightforward. Using simple combinatorics, the maximal
+number of distinct survival times in a sequence of m hypotheses is O(√m).
+Finally, note that Lemma 1 is a Kolmogorov-type bound, namely, it holds uniformly for every preﬁx
+of the sequence of random variables. Therefore, Thm. 2 actually holds simultaneously for every
+preﬁx of the training set. Since our conversion is mostly cal culated on-the- ﬂy, in parallel with the
+online rounds, we can easily construct intermediate output hypotheses, before the online algorithm
+has a chance to process the entire dataset. Thanks to the Kolmorogorv-type bound, the risk bounds
+for all of these hypotheses all hold simultaneously. We can monitor how the risk bound changes
+as the number of examples increases, and perhaps even use the bound to deﬁne an early stopping
+criterion for the training algorithm. Speci ﬁcally, we coul d stop processing examples when the risk
+bound becomes lower than a predeﬁned threshold.
+
+6
+
+CCAT vs. GCAT
+
+0.5
+
+ 
+
+cutoff
+last
+
+105
+103
+101
+GCAT vs. ECAT
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+ 
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+r
+o
+r
+r
+e
+
+t
+s
+e
+t
+
+r
+o
+r
+r
+e
+
+t
+s
+e
+t
+
+CCAT vs. MCAT
+
+CCAT vs. ECAT
+
+CCAT vs. OTHER
+
+GCAT vs. MCAT
+
+105
+103
+101
+GCAT vs. OTHER
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+105
+103
+101
+MCAT vs. ECAT
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+105
+103
+101
+MCAT vs. OTHER
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+0.5
+
+0.4
+
+0.3
+
+0.2
+
+0.1
+
+105
+103
+101
+ECAT vs. OTHER
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+Figure 2: Test error (zero-one-loss) of last-hypothesis and cutoff averaging, each applied to the stan-
+dard Perceptron, on ten binary classi ﬁcation problems from RCV1. The x-axis represents training
+set size, and is given in log-scale. Each plot represents the average over 10 random train-test splits.
+
+4 Experiments and Conclusions
+
+We conducted experiments using Reuters Corpus Vol. 1 (RCV1), a collection of over 800K news
+articles collected from the Reuters news wire. An average article in the corpus contains 240 words,
+and the entire corpus contains over half a million distinct tokens (not including numbers and dates).
+Each article in the corpus is associated with one or more high-level categories, which are: Cor-
+porate/Industrial (CCAT), Economics (ECAT), Government/Social (GCAT), Markets (MCAT), and
+Other (OTHER). About 20% of the articles in the corpus are associated with more than one high-
+level category. After discarding this 20%, we are left with over 600K documents, each with a single
+high-level label. Each pair of high-level labels deﬁnes the binary classi ﬁcation problem of distin-
+guishing between articles of the two categories, for a total of ten different problems. Each problem
+has different characteristics, due to the different number of articles and the varying degree of homo-
+geneity in each category.
+
+Each article was mapped to a feature vector using a logarithmic bag-of-words representation.
+Namely, the length of each vector equals the number of distinct tokens in the corpus, and each
+coordinate in the vector represents one of these tokens. If a token appears s times in a given article,
+the respective coordinate in the feature vector equals log2 (1 + s).
+We applied the cutoff averaging technique to the classic Perceptron and to the margin-based Per-
+ceptron. We repeated each of our experiments ten times, each time taking a new random split of
+the data into a training set (80%) and a test set (20%), and randomly ordering the training set. We
+trained each algorithm on each dataset in an incremental manner, namely, we started by training the
+algorithm using a short preﬁx of the training sequence, and g radually increased the training set size.
+We paused training at regular intervals, computed the output hypothesis so far, and calculated its test
+loss. This gives us an idea of what would happen on smaller training sets.
+
+Fig. 2 shows the test zero-one loss attained when our technique is applied to the classic Perceptron
+algorithm. It also shows the test zero-one loss of the last-hypothesis conversion technique. Clearly,
+the test loss of the last hypothesis is very unstable, even after averaging over 10 repetitions. In some
+cases, adding training data actually deteriorates the performance of the last hypothesis. If we decide
+to use the last hypothesis technique, our training set size could happen to be such that we end up with
+a bad output hypothesis. On the other hand, the cutoff averaging hypothesis is accurate, stable and
+consistent. The performance of the simple averaging conversion technique is not plotted in Fig. 2,
+but we note that it was only slightly worse than the performance of cutoff averaging. When using
+the classic Perceptron, any form of averaging is beneﬁcial, and our technique successfully identi ﬁes
+this.
+
+Fig. 3 shows the test hinge loss of cutoff averaging, last-hypothesis, and simple averaging, when
+applied to the margin-based Perceptron. In this case, the last hypothesis performs remarkably well
+
+7
+
+CCAT vs. GCAT
+
+CCAT vs. MCAT
+
+CCAT vs. ECAT
+
+CCAT vs. OTHER
+
+GCAT vs. MCAT
+
+s
+s
+o
+l
+-
+e
+g
+n
+i
+h
+t
+s
+e
+t
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+ 
+
+s
+s
+o
+l
+-
+e
+g
+n
+i
+h
+t
+s
+e
+t
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+ 
+
+cutoff
+average
+last
+
+105
+103
+101
+GCAT vs. ECAT
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+105
+103
+101
+GCAT vs. OTHER
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+105
+103
+101
+MCAT vs. ECAT
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+105
+103
+101
+MCAT vs. OTHER
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+0.9
+
+0.7
+
+0.5
+
+0.3
+
+0.1
+
+105
+103
+101
+ECAT vs. OTHER
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+101
+
+103
+
+105
+
+Figure 3: Test hinge-loss of last-hypothesis, averaging, and cutoff averaging, each applied to the
+ﬁnite-horizon margin-based Perceptron, on ten binary clas si ﬁcation problems from RCV1. The x-
+axis represents training set size and each plot represents the average over 10 random train-test splits.
+
+and the simple averaging conversion technique is signi ﬁcan tly inferior for all training set sizes.
+Within 1000 online rounds (0.1% of the data), the cutoff averaging technique catches up to the last
+hypothesis and performs comparably well from then on. Our technique’s poor performance on the
+ﬁrst 0.1% of the data is expected, since the tail bounds we rely on are meaningless with so few
+examples. Once the tail bounds become tight enough, our technique essentially identi ﬁes that there
+is no beneﬁt in constructing a diverse ensemble, and assigns all of the weight to a short sufﬁx of the
+online hypothesis sequence.
+
+We conclude that there are cases where the single-hypothesis approach is called for and there are
+cases where an ensemble approach should be used. If we are fortunate enough to know which case
+applies, we can simply choose the right approach. However, if we are after a generic solution that
+performs well in both cases, we need a conversion technique that automatically balances the trade-
+off between these two extremes. Sufﬁx averaging [5] and cuto ff averaging are two such techniques,
+with cutoff averaging having a signi ﬁcant computational ad vantage.
+
+References
+[1] Anonimous. Technical appendix submitted with this manuscript, 2008.
+[2] N. Cesa-Bianchi, A. Conconi, and C. Gentile. On the generalization ability of online learning
+algorithms. IEEE Transactions on Information Theory, 50(9):2050–2057, September 2004.
+[3] N. Cesa-Bianchi and C. Gentile. Improved risk bounds for online algorithms. NIPS 19, 2006.
+[4] O. Dekel, S. Shalev-Shwartz, and Y. Singer. The Forgetron: A kernel-based perceptron on a
+budget. SIAM Journal on Computing, 37:1342–1372, 2008.
+[5] O. Dekel and Y. Singer. Data-driven online to batch conversions. NIPS 18, 2006.
+[6] D. A. Freedman. On tail probabilities for martingales. Annals of Prob., 3(1):100–118, 1975.
+[7] Y. Freund and R. E. Schapire. Large margin classi ﬁcation using the perceptron algorithm.
+Machine Learning, 37(3):277–296, 1999.
+[8] S. I. Gallant. Optimal linear discriminants. Proc. of ICPR 8, pages 849–852. IEEE, 1986.
+[9] R. Khardon and G. Wachman. Noise tolerant variants of the perceptron algorithm. Journal of
+Machine Learning Research, 8:227–248, 2007.
+[10] Y. Li. Selective voting for perceptron-like learning. Proc. of ICML 17, pages 559–566, 2000.
+[11] Y. Li, H. Zaragoza, R. He, J. ShaweTaylor, and J. Kandola. The perceptron algorithm with
+uneven margins. Proc. of ICML 19, pages 379–386, 2002.
+[12] N. Littlestone. From online to batch learning. Proc. of COLT 2, pages 269–284, 1989.
+[13] F. Rosenblatt. The perceptron: A probabilistic model for information storage and organization
+in the brain. Psychological Review, 65:386–407, 1958.
+[14] T. Zhang. Solving large scale linear prediction problems using stochastic gradient descent
+algorithms. Proc. of ICML 21, 2004.
+
+8
+
+

@@ -1,0 +1,889 @@
+Efﬁcient multiple hyperparameter
+learning for log-linear models
+
+Chuong B. Do
+Chuan-Sheng Foo
+Computer Science Department
+Stanford University
+Stanford, CA 94305
+{chuongdo,csfoo,ang}@cs.stanford.edu
+
+Andrew Y. Ng
+
+Abstract
+In problems where input features have varying amounts of noi se, using distinct
+regularization hyperparameters for different features pr ovides an effective means
+of managing model complexity. While regularizers for neural networks and sup-
+port vector machines often rely on multiple hyperparameter s, regularizers for
+structured prediction models (used in tasks such as sequence labeling or pars-
+ing) typically rely only on a single shared hyperparameter f or all features. In this
+paper, we consider the problem of choosing regularization hyperparameters for
+log-linear models, a class of structured prediction probab ilistic models which in-
+cludes conditional random ﬁelds (CRFs). Using an implicit d ifferentiation trick,
+we derive an efﬁcient gradient-based method for learning Ga ussian regularization
+priors with multiple hyperparameters. In both simulations and the real-world task
+of computational RNA secondary structure prediction, we ﬁn d that multiple hy-
+perparameter learning can provide a signi ﬁcant boost in acc uracy compared to
+using only a single regularization hyperparameter.
+
+Introduction
+1
+In many supervised learning methods, overﬁtting is control
+led through the use of regularization
+penalties for limiting model complexity. The effectiveness of penalty-based regularization for a
+given learning task depends not only on the type of regularization penalty used (e.g., L1 vs L2 ) [29]
+but also (and perhaps even more importantly) on the choice of hyperparameters governing the regu-
+larization penalty (e.g., the hyperparameter λ in an isotropic Gaussian parameter prior, λ||w||2 ).
+When only a single hyperparameter must be tuned, cross-validation provides a simple yet reliable
+procedure for hyperparameter selection. For example, the r egularization hyperparameter C in a
+support vector machine (SVM) is usually tuned by training the SVM with several different values
+of C , and selecting the one that achieves the best performance on a holdout set. In many situations,
+using multiple hyperparameters gives the distinct advantage of allowing models with features of
+varying strength; for instance, in a natural language proce ssing (NLP) task, features based on word
+bigrams are typically noisier than those based on individua l word occurrences, and hence should
+be “more regularized” to prevent overﬁtting. Unfortunatel
+y, for sophisticated models with multiple
+hyperparameters [23], the na¨ıve grid search strategy of directly trying out possible com binations of
+hyperparameter settings quickly grows infeasible as the number of hyperparameters becomes large.
+Scalable strategies for cross-validation–based hyperpar ameter learning that rely on computing
+the gradient of cross-validation loss with respect to the desired hyperparameters arose ﬁrst in the
+neural network modeling community [20, 21, 1, 12]. More recently, similar cross-validation opti-
+mization techniques have been proposed for other supervised learning models [3], including sup-
+port vector machines [4, 10, 16], Gaussian processes [35, 33 ], and related kernel learning meth-
+ods [18, 17, 39]. Here, we consider the problem of hyperparam eter learning for a specialized class
+of structured classi ﬁcation models known as conditional log-linear models (CLLMs), a generaliza-
+tion of conditional random ﬁelds (CRFs) [19].
+
+Whereas standard binary classi ﬁcation involves mapping an o bject x ∈ X to some binary output
+y ∈ Y (where Y = {±1}), the input space X and output space Y in a structured classi ﬁcation task
+generally contain complex combinatorial objects (such as sequences, trees, or matchings). Design-
+ing hyperparameter learning algorithms for structured cla ssi ﬁcation models thus yields a number of
+unique computational challenges not normally encountered in the ﬂat classi ﬁcation setting. In this
+paper, we derive a gradient-based approach for optimizing t he hyperparameters of a CLLM using the
+loss incurred on a holdout set. We describe the required algo rithms speci ﬁc to CLLMs which make
+the needed computations tractable. Finally, we demonstrate on both simulations and a real-world
+computational biology task that our hyperparameter learni ng method can give gains over learning
+ﬂat unstructured regularization priors.
+
+(OPT1)
+
+(OPT2)
+
+wT Cw −
+
+2 Preliminaries
+Conditional log-linear models (CLLMs) are a probabilistic framework for sequence labeling or pars-
+ing problems, where X is an exponentially large space of possible input sequences and Y is an
+exponentially large space of candidate label sequences or parse trees. Let F : X × Y → Rn be
+a ﬁxed vector-valued mapping from input-output pairs to an n-dimensional feature space. CLLMs
+model the conditional probability of y given x as P (y | x; w) = exp(wT F(x, y))/Z (x) where
+Z (x) = Py ′∈Y exp(wT F(x, y ′ )). Given a training set T = (cid:8)(x(i) , y (i) )(cid:9)m
+of i.i.d. labeled input-
+i=1
+output pairs drawn from some unknown ﬁxed distribution D over X × Y , the parameter learning
+problem is typically posed as maximum a posteriori (MAP) estimation (or equivalently, regularized
+logloss minimization):
+w∈Rn   1
+log P (y (i) | x(i) ; w)!,
+m
+Xi=1
+w⋆ = arg min
+2
+where 1
+2 wT Cw (for some positive deﬁnite matrix C) is a regularization penalty used to prevent
+overﬁtting. Here, C is the inverse covariance matrix of a Gaussian prior on the pa rameters w.
+While a number of efﬁcient procedures exist for solving the op timization problem OPT1 [34, 11],
+little attention is usually given to choosing an appropriate regularization matrix C. Generally, C is
+parameterized using a small number of free variables, d ∈ Rk , known as the hyperparameters of the
+model. Given a holdout set H = (cid:8)( ˜x(i) , ˜y (i) )(cid:9) ˜m
+of i.i.d. examples drawn from D , hyperparameter
+i=1
+learning itself can be cast as an optimization problem:
+˜m
+log P (cid:16) ˜y (i) | ˜x(i) ; w⋆ (C)(cid:17).
+Xi=1
+minimize
+−
+d∈Rk
+In words, OPT2 ﬁnds the hyperparameters d whose regularization matrix C leads the parameter
+vector w⋆ (C) learned from the training set to obtain small logloss on holdout data. For many real-
+world applications, C is assumed to take a simple form, such as a scaled identity matrix, C I. While
+this parameterization may be partially motivated by concerns of hyperparameter overﬁtting [28],
+such a choice usually stems from the difﬁculty of hyperparam eter inference.
+In practice, grid-search procedures provide a reliable met hod for determining hyperparam-
+eters to low-precision: one trains the model using several candidate values of C (e.g., C ∈
+(cid:8). . . , 2−2 , 2−1 , 20 , 21 , 22 , . . .(cid:9)), and chooses the C that minimizes holdout logloss. While this strat-
+egy is suitable for tuning a single model hyperparameter, mo re sophisticated strategies are necessary
+when optimizing multiple hyperparameters.
+3 Learning multiple hyperparameters
+In this section, we lay the framework for multiple hyperparameter learning by describing a simple
+yet ﬂexible parameterization of C that arises quite naturally in many practical problems. We then
+describe a generic strategy for hyperparameter adaptation via gradient-based optimization.
+Consider a setting in which predeﬁned subsets of parameter c omponents (which we call reg-
+ularization groups) are constrained to use the same hyperparameters [6]. For in stance, in an
+NLP task, individual word occurrence features may be placed in a separate regularization group
+from word bigram features. Formally, let k be a ﬁxed number of regularization groups, and let
+π : {1, . . . , n} → {1, . . . , k} be a prespeci ﬁed mapping from parameters to regularization groups.
+Furthermore, for a vector x ∈ Rk , deﬁne its expansion x ∈ Rn as x = (xπ(1) , xπ(2) , . . . , xπ(n) ).
+In the sequel, we parameterize C ∈ Rn×n in terms of some hyperparameter vector d ∈ Rk
+as the diagonal matrix, C(d) = diag(exp(d)). Under this representation, C(d) is necessar-
+
+ily positive deﬁnite, so OPT2 can be written as an unconstrai ned minimization over the variables
+ℓT (w) = − Pm
+d ∈ Rk . Speci ﬁcally, let
+i=1 log P (cid:0)y (i) | x(i) ; w(cid:1) denote the training logloss and
+ℓH (w) = − P ˜m
+i=1 log P (cid:0) ˜y (i) | ˜x(i) ; w(cid:1) the holdout logloss for a parameter vector w. Omitting the
+dependence of C on d for notational convenience, we have the optimization problem
+w∈Rn (cid:18) 1
+wT Cw + ℓT (w)(cid:19).
+subject to w⋆ = arg min
+(OPT2’)
+ℓH (w⋆ )
+minimize
+2
+d∈Rk
+For any ﬁxed setting of these hyperparameters, the objectiv e function of OPT2’ can be evaluated by
+(1) using the hyperparameters d to determine the regularization matrix C, (2) solving OPT1 using
+C to determine w⋆ and (3) computing the holdout logloss using the parameters w⋆ . In this next
+section, we derive a method for computing the gradient of the objective function of OPT2’ with
+respect to the hyperparameters. Given both procedures for f unction and gradient evaluation, we may
+apply standard gradient-based optimization (e.g., conjugate gradient or L-BFGS [30]) in order to
+ﬁnd a local optimum of the objective. In general, we observe t hat only a few iterations (∼ 5) are
+usually sufﬁcient to determine reasonable hyperparameter s to low accuracy.
+
+4 The hyperparameter gradient
+Note that the optimization objective ℓH (w⋆ ) is a function of w⋆ . In turn, w⋆ is a function of the hy-
+perparameters d, as implicitly deﬁned by the gradient stationarity conditi on, Cw⋆ + ∇w ℓT (w⋆ ) =
+0. To compute the hyperparameter gradient, we will use both of these facts.
+
+4.1 Deriving the hyperparameter gradient
+First, we apply the chain rule to the objective function of OPT2’ to obtain
+(1)
+∇d ℓH (w⋆ ) = JT
+d ∇w ℓH (w⋆ )
+i /∂ dj . The term ∇w ℓH (w⋆ ) is
+where Jd is the n × k Jacobian matrix whose (i, j )th entry is ∂w⋆
+simply the gradient of the holdout logloss evaluated at w⋆ . For decomposable models, this may
+be computed exactly via dynamic programming (e.g., the forward/backward algorithm for chain-
+structured models or the inside/outside algorithm for grammar-based models).
+Next, we show how to compute the Jacobian matrix Jd . Recall that at the optimum of the smooth
+unconstrained optimization problem OPT1, the partial derivative of the objective with respect to any
+parameter must vanish. In particular, the partial derivative of 1
+2 wT Cw + ℓT (w) with respect to wi
+vanishes when w = w⋆ , so
+
+ℓT (w⋆ ),
+
+0 = CT
+i w⋆ +
+
+∂
+∂wi
+i denotes the ith row of the C matrix. Since (2) uniquely deﬁnes w⋆ (as OPT1 is a
+where CT
+strictly convex optimization problem), we can use implicit differentiation to obtain the needed partial
+derivatives. Speci ﬁcally, we can differentiate both sides of (2) with respect to dj to obtain
+n
+n
+Xp=1 (cid:18)w⋆
+p (cid:19) +
+∂
+∂
+∂
+∂
+∂
+Xp=1
+w⋆
+p
+∂wp
+∂ dj
+∂ dj
+∂wi
+∂ dj
+n
+Xp=1 (cid:18)Cip +
+ℓT (w⋆ )(cid:19) ∂
+∂
+= I{π(i)=j}w⋆
+i exp(dj ) +
+∂wp
+∂ dj
+Stacking (4) for all i ∈ {1, . . . , n} and j ∈ {1, . . . , k}, we obtain the equivalent matrix equation,
+0 = B + (C + ∇2
+(5)
+w ℓT (w⋆ ))Jd
+w ℓT (w⋆ ) is the
+i exp(dj ), and ∇2
+where B is the n × k matrix whose (i, j )th element is I{π(i)=j}w⋆
+Hessian of the training logloss evaluated at w⋆ . Finally, solving these equations for Jd , we obtain
+Jd = −(C + ∇2
+w ℓT (w⋆ ))−1B.
+(6)
+
+Cip + Cip
+
+ℓT (w⋆ )
+
+w⋆
+p ,
+
+(2)
+
+(3)
+
+(4)
+
+0 =
+
+∂
+∂wi
+
+w⋆
+p .
+
+4.2 Computing the hyperparameter gradient ef ﬁciently
+In principle, one could simply use (6) to obtain the Jacobian matrix Jd directly. However, computing
+w ℓT (w⋆ ) in
+w ℓT (w⋆ ))−1 is difﬁcult. Computing the Hessian matrix ∇2
+the n × n matrix (C + ∇2
+a typical CLLM requires approximately n times the cost of a single logloss gradient evaluation.
+Once the Hessian has been computed, typical matrix inversion routines take O(n3 ) time. Even
+more problematic, the Ω(n2 ) memory usage for storing the Hessian is prohibitive as typical log-
+linear models (e.g., in NLP) may have thousands or even millions of features. To deal with these
+
+Input:
+
+Output:
+
+Algorithm 1: Gradient computation for hyperparameter selection.
+, holdout set H = (cid:8)( ˜x(i) , ˜y (i) )(cid:9) ˜m
+training set T = (cid:8)(x(i) , y (i) )(cid:9)m
+i=1
+i=1
+current hyperparameters d ∈ Rk
+hyperparameter gradient ∇d ℓH (w⋆ )
+1. Compute solution w⋆ to OPT1 using regularization matrix C = diag(exp(d)).
+2. Form the matrix B ∈ Rn×k such that (B)ij = I{π(i)=j}w⋆
+i exp(dj ).
+3. Use conjugate gradient algorithm to solve the linear system,
+(C + ∇2
+w ℓT (w⋆ ))x = ∇w ℓH (w⋆ ).
+
+4. Return −BT x.
+
+Figure 1: Pseudocode for gradient computation
+
+(7)
+
+(8)
+
+problems, we ﬁrst explain why (C+∇2
+w ℓT (w⋆ ))v for any arbitrary vector v ∈ Rn can be computed
+in O(n) time, even though forming (C + ∇2
+b wℓT (w⋆ ))−1 is expensive. Using this result, we then
+describe an efﬁcient procedure for computing the holdout hy perparameter gradient which avoids the
+expensive Hessian computation and inversion steps of the direct method.
+First, since C is diagonal, the product of C with any arbitrary vector v is trivially computable in
+O(n) time. Second, although direct computation of the Hessian is inefﬁcient in a generic log-linear
+model, computing the product of the Hessian with v can be done quickly, using any of the following
+techniques, listed in order of increasing implementation effort (and numerical precision):
+1. Finite differencing. Use the following numerical approximation:
+∇w ℓT (w⋆ + rv) − ∇w ℓt (w⋆ )
+∇2
+w ℓT (w⋆ ) · v = lim
+r
+r→0
+2. Complex step derivative [24]. Use the following identity from complex analysis:
+Im {∇w ℓT (w⋆ + i · rv)}
+∇2
+w ℓT (w⋆ ) · v = lim
+r
+r→0
+where Im {·} denotes the imaginary part of its complex argument (in this case, a vector).
+Because there is no subtraction in the numerator of the right -hand expression, the complex-
+step derivative does not suffer from the numerical problems of the ﬁnite-differencing
+method that result from cancellation. As a consequence, much smaller step sizes can be
+used, allowing for greater accuracy.
+3. Analytical computation. Given an existing O(n) algorithm for computing gradients ana-
+lytically, deﬁne the differential operator
+f (w + rv)(cid:12)(cid:12)(cid:12)(cid:12)r=0
+f (w + rv) − f (w)
+∂
+Rv {f (w)} = lim
+∂ r
+r
+r→0
+w ℓT (w⋆ ) · v. By applying stan-
+for which one can verify that Rv {∇w ℓT (w⋆ )} = ∇2
+dard rules for differential operators, Rv {∇w ℓT (w⋆ )} can be computed recursively using
+ine; see [31] for details.
+a modi ﬁed version of the original gradient computation rout
+Hessian-vector products for graphical models were previou sly used in the context of step-size adap-
+tation for stochastic gradient descent [36]. In our experiments, we found that the simplest method,
+ﬁnite-differencing, provided sufﬁcient accuracy for our a
+pplication.
+Given the above procedure for computing matrix-vector prod ucts, we can now use the conjugate
+gradient (CG) method to solve the matrix equation (5) to obtain Jd . Unlike direct methods for
+solving linear systems Ax = b, CG is an iterative method which relies on the matrix A only
+through matrix-vector products Av. In practice, few steps of the CG algorithm are generally needed
+to ﬁnd an approximate solution of a linear system with accept able accuracy. Using CG in this
+way amounts to solving k linear systems, one for each column of the Jd matrix. Unlike the direct
+method of forming the (C + ∇2
+w ℓT (w⋆ )) matrix and its inverse, solving the linear systems avoids
+the expensive Ω(n2 ) cost of Hessian computation and matrix inversion.
+Nevertheless, even this approach for computing the Jacobian matrices still requires the solution
+of multiple linear systems, which scales poorly when the number of hyperparameters k is large.
+
+(9)
+
+=
+
+.
+
+.
+
+,
+
+(a)
+
+y1
+
+xj
+1
+
+y2
+
+xj
+2
+
+· · ·
+
+· · ·
+
+yL
+
+xj
+L
+
+“observed features”
+
+j ∈ {1, . . . , R}
+
+xj
+1
+
+xj
+2
+
+“noise features”
+
+· · ·
+
+xj
+Lxj
+L
+j ∈ {R + 1, . . . , 40}
+
+(b)
+
+0.5
+
+0.45
+
+0.4
+
+0.35
+
+0.3
+
+0.25
+
+0.2
+
+0.15
+
+s
+l
+e
+b
+a
+l
+ 
+t
+c
+e
+r
+r
+o
+c
+n
+i
+ 
+f
+o
+ 
+n
+o
+i
+t
+r
+o
+p
+o
+r
+P
+
+grid
+single
+separate
+grouped
+
+(c)
+
+0.55
+
+0.5
+
+0.45
+
+0.4
+
+0.35
+
+s
+l
+e
+b
+a
+l
+ 
+t
+c
+e
+r
+r
+o
+c
+n
+i
+ 
+f
+o
+ 
+n
+o
+i
+t
+r
+o
+p
+o
+r
+P
+
+grid
+single
+separate
+grouped
+
+0.1
+
+0
+40
+30
+20
+10
+Number of relevant features, R
+
+0.3
+
+0
+
+20
+60
+40
+Training set size, M
+
+80
+
+Figure 2: HMM simulation experiments. (a) State diagram of the HMM used in the simulations. (b)
+Testing set performance when varying R, using M = 10. (c) Testing set performance when varying
+M , using R = 5. In both (b) and (c), each point represents an average over 100 independent runs of
+HMM training/holdout/testing set generation and CRF training and hyperparameter optimization.
+
+However, we can do much better by reorganizing the computations in such a way that the Jacobian
+matrix Jd is never explicitly required. In particular, substituting (6) into (1),
+∇d ℓH (w⋆ ) = −BT (C + ∇2
+w ℓT (w⋆ ))−1∇w ℓH (w⋆ )
+we observe that it sufﬁces to solve the single linear system,
+(C + ∇2
+(11)
+w ℓT (w⋆ ))x = ∇w ℓH (w⋆ )
+and then form ∇d ℓH (w⋆ ) = −BT x. By organizing the computations this way, the number of least
+squares problems that must be solved is substantially reduced from k to only one. A similar trick
+was previously used for hyperparameter adaptation in SVMs [16] and kernel logistic regression [33].
+Figure 1 shows a summary of our algorithm for hyperparameter gradient computation.1
+
+(10)
+
+5 Experiments
+To test the effectiveness of our hyperparameter learning al gorithm, we applied it to two tasks: a sim-
+ulated sequence labeling task involving noisy features, and a real-world application of conditional
+log-linear models to the biological problem of RNA secondary structure prediction.
+Sequence labeling simulation. For our simulation test, we constructed a simple linear-cha in
+hidden Markov model (HMM) with binary-valued hidden nodes, yi ∈ {0, 1}.2 We associated 40
+binary-valued features xj
+i , j ∈ {1, . . . , 40} with each hidden state yi , including R “relevant ” ob-
+served features whose values were chosen based on yi , and (40 − R) “irrelevant ” noise features
+whose values were chosen to be either 0 or 1 with equal probabi lity, independent of yi .3 Figure 2a
+shows the graphical model representing the HMM. For each run , we used the HMM to simulate
+training, holdout, and testing sets of M , 10, and 1000 sequences, respectively, each of length 10.
+Next, we constructed a CRF based on an HMM model similar to that shown in Figure 2a in
+which potentials were included for the initial node y1 , between each yi and yi+1 , and between
+yi and each xj
+i (including both the observed features and the noise features). We then performed
+gradient-based hyperparameter learning using three diffe rent parameter-tying schemes: (a) all hy-
+perparameters constrained to be equal, (b) separate hyperp arameter groups for each parameter of the
+model, and (c) transitions, observed features, and noise features each grouped together. Figure 2b
+shows the performance of the CRF for each of the three paramet er-tying gradient-based optimization
+schemes, as well as the performance of scheme (a) when using the standard grid-search strategy of
+trying regularization matrices C I for C ∈ (cid:8). . . , 2−2 , 2−1 , 20 , 21 , 22 , . . .(cid:9).
+As seen in Figures 2b and 2c, the gradient-based procedure pe rformed either as well as or bet-
+ter than a grid search for single hyperparameter models. Usi ng either a single hyperparameter or
+all separate hyperparameters generally gave similar resul ts, with a slight tendency for the separate
+
+1 In practice, roughly 50-100 iterations of CG were sufﬁcient to obtain hyp erparameter gradients, meaning
+that the cost of running Algorithm 1 was approximately the same as the cost of solving OPT1 for a single ﬁxed
+setting of the hyperparameters. Roughly 3-5 line searches were sufﬁc ient to identify good hyperparameter
+settings; assuming that each line search takes 2-4 times the cost of solving OPT1, the overall hyperparameter
+learning procedure takes approximately 20 times the cost of solving OPT1 once.
+2For our HMM, we set initial state probabilities to 0.5 each, and used self-transition probabilities of 0.6.
+3Speci ﬁcally, we drew each xj
+i independently according to P (xj
+i = v | yi = v) = 0.6, v ∈ {0, 1}.
+
+(a)
+
+(b)
+
+uccguagaaggc
+5’
+3’
+
+RNA sequence
+
+a .
+
+g
+
+.
+a
+.
+a
+.
+
+.
+u
+.
+g
+.
+
+|
+
+|
+
+|
+
+g
+.c
+.
+g
+.c
+.
+.u
+.a
+5’
+3’
+secondary
+structure
+
+Regularization group
+
+hairpin loop lengths
+helix closing base pairs
+symmetric internal loop lengths
+external loop lengths
+bulge loop lengths
+base pairings
+internal loop asymmetry
+explicit internal loop sizes
+terminal mismatch interactions
+single base pair stacking interactions
+1 × 1 internal loop nucleotides
+single base bulge nucleotides
+internal loop lengths
+multi-branch loop lengths
+helix stacking interactions
+
+exp(di )
+fold B
+fold A
+0.456
+0.0832
+0.0947
+0.780
+6.32
+0.0151
+0.401
+0.338
+2.03
+0.451
+7.95
+2.01
+6.90
+4.24
+6.39
+12.8
+132
+50.2
+104
+71.0
+120.
+139
+130.
+136
+35.3
+1990
+2750
+359
+12100
+729
+
+(c)
+
+0.8
+
+0.75
+
+0.7
+
+0.65
+
+0.6
+
+y
+t
+i
+v
+i
+t
+i
+s
+n
+e
+S
+
+0.55
+
+ILM
+
+CONTRAfold (our algorithm)
+
+Mfold
+
+ViennaRNA
+
+PKNOTS
+
+0.5
+
+0.45
+0.4
+
+single (AUC=0.6169, logloss=5916)
+separate (AUC=0.6383, logloss=5763)
+grouped (AUC=0.6406, logloss=5531)
+
+Pfold
+
+0.45
+
+0.5
+
+0.55
+
+0.6
+Specificity
+
+0.65
+
+0.7
+
+0.75
+
+0.8
+
+Figure 3: RNA secondary structure prediction. (a) An illust ration of the secondary structure predic-
+tion task. (b) Grouped hyperparameters learned using our al gorithm for each of the two folds. (c)
+Performance comparison with state-of-the-art methods when using either a single hyperparameter
+(the “original ” CONTRAfold), separate hyperparameters, o r grouped hyperparameters.
+
+hyperparameter model to overﬁt. Enforcing regularization groups, however, gave consistently lower
+error rates, achieving an absolute reduction in generaliza tion error over the next-best model of 6.7%,
+corresponding to a relative reduction of 16.2%.
+RNA secondary structure prediction. We also applied our framework to the problem of RNA
+secondary structure prediction. Ribonucleic acid (RNA) mo lecules are long nucleic acid polymers
+present in the cells of all living organisms. For many types of RNA, three-dimensional (or tertiary)
+structure plays an important role in determining the RNA’s f unction. Here, we focus on the task
+of predicting RNA secondary structure, i.e., the pattern of nucleotide base pairings which form the
+two-dimensional scaffold upon which RNA tertiary structures assemble (see Figure 3a).
+As a starting point, we used CONTRAfold [7], a current state-of-the-art secondary structure
+prediction program based on CLLMs. In brief, the CONTRAfold program models RNA secondary
+structures using a variant of stochastic context-free grammars (SCFGs) which incorporates features
+chosen to closely match the energetic terms found in standard physics-based models of RNA struc-
+ture. These features model the various types of loops that occur in RNAs (e.g., hairpin loops, bulge
+loops, interior loops, etc.). To control overﬁtting, CONTR Afold uses ﬂat L2 regularization. Here,
+we modi ﬁed the existing implementation to perform an “outer
+” optimization loop based on our al-
+gorithm, and chose regularization groups either by (a) enfo rcing a single hyperparameter group, (b)
+using separate groups for each parameter, or (c) grouping ac cording to the type of each feature (e.g.,
+all features for describing hairpin loop lengths were place d in a single regularization group).
+For testing, we collected 151 RNA sequences from the Rfam database [13] for which
+experimentally-determined secondary structures were alr eady known. We divided this dataset into
+two folds (denoted A and B) and performed two-fold cross-val idation. Despite the small size of
+the training set, the hyperparameters learned on each fold w ere nonetheless qualitatively similar,
+indicating the robustness of the procedure (see Figure 3b). As expected, features with small regular-
+ization hyperparameters correspond to properties of RNAs w hich are known to contribute strongly
+to the energetics of RNA secondary structure, whereas many o f the features with larger regulariza-
+tion hyperparameters indicate structural properties whos e presence/absence are either less correlated
+with RNA secondary structure or sufﬁciently noisy that thei r parameters are difﬁcult to determine
+reliably from the training data.
+
+We then compared the cross-validated performance of algori thm with state-of-the-art methods
+(see Figure 3c).4 Using separate or grouped hyperparameters both gave increa sed sensitivity and
+increased speci ﬁcity compared to the original model, which was learned using a single regulariza-
+tion hyperparameter. Overall, the testing logloss (summed over the two folds) decreased by roughly
+6.5% when using grouped hyperparameters and 2.6% when using multiple separate hyperparame-
+ters, while the estimated testing ROC area increased by roughly 3.8% and 3.4%, respectively.
+
+6 Discussion and related work
+In this work, we presented a gradient-based approach for hyp erparameter learning based on mini-
+mizing logloss on a holdout set. While the use of cross-validation loss as a proxy for generalization
+error is fairly natural, in many other supervised learning m ethods besides log-linear models, other
+objective functions have been proposed for hyperparameter optimization.
+In SVMs, approaches
+based on optimizing generalization bounds [4], such as the radius/margin-bound [15] or maximal
+discrepancy criterion [2] have been proposed. Comparable g eneralization bounds are not generally
+known for CRFs; even in SVMs, however, generalization bound-based methods empirically do not
+outperform simpler methods based on optimizing ﬁve-fold cr oss-validation error [8].
+A different method for dealing with hyperparameters, commo n in neural network modeling, is
+the Bayesian approach of treating hyperparameters themsel ves as parameters in the model to be es-
+timated. In an ideal Bayesian scheme, one does not perform hyperparameter or parameter inference,
+but rather integrates over all possible hyperparameters an d parameters in order to obtain a posterior
+distribution over predicted outputs given the training data. This integration can be performed using
+a hybrid Monte Carlo strategy [27, 38]. For the types of large -scale log-linear models we consider in
+this paper, however, the computational expense of sampling-based strategies can be extremely high
+due to slow convergence of MCMC techniques [26].
+Empirical Bayesian (i.e., ML-II) strategies, such as Automatic Relevance Determination
+(ARD) [22], take the intermediate approach of integrating over parameters to obtain the marginal
+likelihood (known as the log evidence), which is then optimized with respect to the hyperparame-
+ters. Computing marginal likelihoods, however, can be quite costly, especially for log-linear models.
+One method for doing this involves approximating the parame ter posterior distribution as a Gaussian
+centered at the posterior mode [22, 37]. In this strategy, however, the “Occam factor” used for hyper-
+parameter optimization still requires a Hessian computation, which does not scale well for log-linear
+models. An alternate approach based on using a modi ﬁcation o f expectation propagation (EP) [25]
+was applied in the context of Bayesian CRFs [32] and later extended to graph-based semi-supervised
+learning [14]. As described, however, inference in these models relies on non-traditional “probit-
+style” potentials for efﬁciency reasons, and known algorit
+hms for inference in Bayesian CRFs are
+limited to graphical models with ﬁxed structure.
+In contrast, our approach works broadly for a variety of log- linear models, including the
+grammar-based models common in computational biology and natural language processing. Fur-
+thermore, our algorithm is simple and efﬁcient, both concep tually and in practice: one iteratively
+optimizes the parameters of a log-linear model using a ﬁxed s etting of the hyperparameters, and then
+one changes the hyperparameters based on the holdout logloss gradient. The gradient computation
+relies primarily on a simple conjugate gradient solver for l inear systems, coupled with the ability
+to compute Hessian-vector products (straightforward in any modern programming language that al-
+lows for operation overloading). As we demonstrated in the context of RNA secondary structure
+prediction, gradient-based hyperparameter learning is a p ractical and effective method for tuning
+hyperparameters when applied to large-scale log-linear mo dels.
+Finally we note that for neural networks, [9] and [5] proposed techniques for simultaneous opti-
+mization of hyperparameters and parameters; these results suggest that similar procedures for faster
+hyperparameter learning that do not require a doubly-neste d optimization may be possible.
+
+References
+[1] L. Andersen, J. Larsen, L. Hansen, and M. Hintz-Madsen. Adaptive regularization of neural classiﬁers.
+In NNSP, 1997.
+[2] D. Anguita, S. Ridella, F. Rivieccio, and R. Zunino. Hyperparameter design criteria for support vector
+classiﬁers. Neurocomputing, 55:109–134, 2003.
+
+4Following [7], we used the maximum expected accuracy algorithm for decoding, which returns a set of
+candidates parses reﬂecting different trade-offs between sensitivity (proportion of true base-pairs called) and
+speciﬁcity (proportion of called base-pairs which are correct).
+
+[3] Y. Bengio. Gradient-based optimization of hyperparameters. Neural Computation, 12:1889–1900, 2000.
+[4] O. Chapelle, V. Vapnik, O. Bousquet, and S. Mukherjee. Choosing multiple parameters for support vector
+machines. Machine Learning, 46(1–3):131–159, 2002.
+[5] D. Chen and M. Hagan. Optimal use of regularization and cross-validation in neural network modeling.
+In IJCNN, 1999.
+[6] C. B. Do, S. S. Gross, and S. Batzoglou. CONTRAlign: discriminative training for protein sequence
+alignment. In RECOMB, pages 160–174, 2006.
+[7] C. B. Do, D. A. Woods, and S. Batzoglou. CONTRAfold: RNA secondary structure prediction without
+physics-based models. Bioinformatics, 22(14):e90–e98, 2006.
+[8] K. Duan, S. S. Keerthi, and A.N. Poo. Evaluation of simple performance measures for tuning SVM
+hyperparameters. Neurocomputing, 51(4):41–59, 2003.
+[9] R. Eigenmann and J. A. Nossek. Gradient based adaptive regularization. In NNSP, pages 87–94, 1999.
+[10] T. Glasmachers and C. Igel. Gradient-based adaptation of general Gaussian kernels. Neural Comp.,
+17(10):2099–2105, 2005.
+[11] A. Globerson, T. Y. Koo, X. Carreras, and M. Collins. Exponentiated gradient algorithms for log-linear
+structured prediction. In ICML, pages 305–312, 2007.
+[12] C. Goutte and J. Larsen. Adaptive regularization of neural netwo rks using conjugate gradient. In ICASSP,
+1998.
+[13] S. Grifﬁths-Jones, S. Moxon, M. Marshall, A. Khanna, S. R. Ed dy, and A. Bateman. Rfam: annotating
+non-coding RNAs in complete genomes. Nucleic Acids Res, 33:D121–D124, 2005.
+[14] A. Kapoor, Y. Qi, H. Ahn, and R. W. Picard. Hyperparameter and kernel learning for graph based semi-
+supervised classiﬁcation. In NIPS, pages 627–634, 2006.
+[15] S. S. Keerthi. Efﬁcient tuning of SVM hyperparameters using rad ius/margin bound and iterative algo-
+rithms. IEEE Transaction on Neural Networks, 13(5):1225–1229, 2002.
+[16] S. S. Keerthi, V. Sindhwani, and O. Chapelle. An efﬁcient method f or gradient-based adaptation of
+hyperparameters in SVM models. In NIPS, 2007.
+[17] K. Kobayashi, D. Kitakoshi, and R. Nakano. Yet faster method to optimize SVR hyperparameters based
+on minimizing cross-validation error. In IJCNN, volume 2, pages 871–876, 2005.
+[18] K. Kobayashi and R. Nakano. Faster optimization of SVR hyperparameters based on minimizing cross-
+validation error. In IEEE Conference on Cybernetics and Intelligent Systems, 2004.
+[19] J. Lafferty, A. McCallum, and F. Pereira. Conditional random ﬁe lds: probabilistic models for segmenting
+and labeling sequence data. In ICML 18, pages 282–289, 2001.
+[20] J. Larsen, L. K. Hansen, C. Svarer, and M. Ohlsson. Design and regularization of neural networks: the
+optimal use of a validation set. In NNSP, 1996.
+[21] J. Larsen, C. Svarer, L. N. Andersen, and L. K. Hansen. Adaptive regularization in neural network
+modeling. In Neural Networks: Tricks of the Trade, pages 113–132, 1996.
+[22] D. J. C. MacKay. Bayesian interpolation. Neural Computation, 4(3):415–447, 1992.
+[23] D. J. C. MacKay and R. Takeuchi. Interpolation models with multiple hyperparameters. Statistics and
+Computing, 8:15–23, 1998.
+[24] J. R. R. A. Martins, P. Sturdza, and J. J. Alonso. The complex-step derivative approximation. ACM Trans.
+Math. Softw., 29(3):245–262, 2003.
+[25] T. P. Minka. Expectation propagation for approximate Bayesian inference. In UAI, volume 17, pages
+362–369, 2001.
+[26] I. Murray and Z. Ghahramani. Bayesian learning in undirected graphical models: approximate MCMC
+algorithms. In UAI, pages 392–399, 2004.
+[27] R. M. Neal. Bayesian Learning for Neural Networks. Springer, 1996.
+[28] A. Y. Ng. Preventing overﬁtting of cross-validation data. In ICML, pages 245–253, 1997.
+[29] A. Y. Ng. Feature selection, L1 vs. L2 regularization, and rotational invariance. In ICML, 2004.
+[30] J. Nocedal and S. J. Wright. Numerical Optimization. Springer, 1999.
+[31] B. A. Pearlmutter. Fast exact multiplication by the Hessian. Neural Comp, 6(1):147–160, 1994.
+[32] Y. Qi, M. Szummer, and T. P. Minka. Bayesian conditional random ﬁelds. In AISTATS, 2005.
+[33] M. Seeger. Cross-validation optimization for large scale hierarchic al classiﬁcation kernel methods. In
+NIPS, 2007.
+[34] F. Sha and F. Pereira. Shallow parsing with conditional random ﬁeld s. In NAACL, pages 134–141, 2003.
+[35] S. Sundararajan and S. S. Keerthi. Predictive approaches for choosing hyperparameters in Gaussian
+processes. Neural Comp., 13(5):1103–1118, 2001.
+[36] S. V. N. Vishwanathan, N. N. Schraudolph, M. W. Schmidt, and K. P. Murphy. Accelerated training of
+conditional random ﬁelds with stochastic gradient methods. In ICML, pages 969–976, 2006.
+[37] M. Wellings and S. Parise. Bayesian random ﬁelds: the Bethe-Lapla ce approximation. In ICML, 2006.
+[38] C. K. I. Williams and D. Barber. Bayesian classiﬁcation with Gaussian processes. IEEE Transactions on
+Pattern Analysis and Machine Intelligence, 20(12):1342–1351, 1998.
+[39] X. Zhang and W. S. Lee. Hyperparameter learning for graph ba sed semi-supervised learning algorithms.
+In NIPS, 2007.
+
+

@@ -1,0 +1,718 @@
+RTRMC: A Riemannian trust-region method for
+low-rank matrix completion
+
+Nicolas Boumal∗
+ICTEAM Institute
+Universit ´e catholique de Louvain
+B-1348 Louvain-la-Neuve
+nicolas.boumal@uclouvain.be
+
+P.-A. Absil
+ICTEAM Institute
+Universit ´e catholique de Louvain
+B-1348 Louvain-la-Neuve
+absil@inma.ucl.ac.be
+
+Abstract
+
+We consider large matrices of low rank. We address the problem of recovering such matrices
+when most of the entries are unknown. Matrix completion ﬁnds applications in recommender
+systems. In this setting, the rows of the matrix may correspond to items and the columns may
+correspond to users. The known entries are the ratings given by users to some items. The
+aim is to predict the unobserved ratings. This problem is commonly stated in a constrained
+optimization framework. We follow an approach that exploits the geometry of the low-rank
+constraint to recast the problem as an unconstrained optimization problem on the Grassmann
+manifold. We then apply ﬁrst- and second-order Riemannian trust-region methods to solve it.
+The cost of each iteration is linear in the number of known entries. Our methods, RTRMC 1
+and 2, outperform state-of-the-art algorithms on a wide range of problem instances.
+
+1
+
+Introduction
+
+We address the problem of recovering a low-rank m-by-n matrix X of which a few entries are observed, possibly
+with noise. Throughout, we assume that r = rank(X ) (cid:28) m ≤ n and note Ω ⊂ {1 . . . m} × {1 . . . n} the set of
+indices of the observed entries of X , i.e., Xij is known iff (i, j ) ∈ Ω. Solving this problem is namely useful in
+recommender systems, where one tries to predict the ratings users would give to items they have not purchased.
+
+1.1 Related work
+
+In the noiseless case, one could state the minimum rank matrix recovery problem as follows:
+rank ˆX , such that ˆXij = Xij ∀(i, j ) ∈ Ω.
+min
+ˆX ∈Rm×n
+This problem, however, is NP hard [CR09]. A possible convex relaxation of (1) introduced by Cand `es and
+Recht [CR09] is to use the nuclear norm of ˆX as objective function, i.e., the sum of its singular values,
+noted (cid:107) ˆX (cid:107)∗ . The SVT method [CCS08] attempts to solve such a convex problem using tools from compressed
+sensing and the ADMiRA method [LB10] does so using matching pursuit-like techniques.
+Alternatively, one may minimize the discrepancy between ˆX and X at entries Ω under the constraint that
+rank( ˆX ) ≤ r for some small constant r . Since any matrix ˆX of rank at most r may be written in the form U W
+(cid:88)
+(cid:0)(U W )ij − Xij
+(cid:1)2
+with U ∈ Rm×r and W ∈ Rr×n , a reasonable formulation of the problem reads:
+min
+.
+min
+U ∈Rm×r
+W ∈Rr×n
+(i,j )∈Ω
+∗Web: http://perso.uclouvain.be/nicolas.boumal/
+
+(1)
+
+(2)
+
+1
+
+(3)
+
+The LMaFit method [WYZ10] does a good job at solving this problem by alternatively ﬁxing either of the
+variables and solving the resulting least-squares problem efﬁciently.
+One drawback of the latter formulation is that the factorization of a matrix ˆX into the product U W is not unique.
+Indeed, for any r-by-r invertible matrix M , we have U W = (U M )(M −1W ). All the matrices U M share the
+same column space. Hence, the optimal value of the inner optimization problem in (2) is a function of col(U )—
+(cid:88)
+(cid:0)(U W )ij − Xij
+(cid:1)2
+the column space of U —rather than U speciﬁcally. Dai et al. [DMK11, DKM10] exploit this to recast (2) on
+the Grassmann manifold G (m, r), i.e., the set of r-dimensional vector subspaces of Rm (see Section 2):
+,
+min
+min
+U ∈G (m,r)
+W ∈Rr×n
+(i,j )∈Ω
+where U ∈ Rm×r is any matrix such that col(U ) = U and is often chosen to be orthonormal. Unfortunately,
+the objective function of the outer minimization in (3) may be discontinuous at points U for which the least-
+squares problem in W does not have a unique solution. Dai et al. proposed ingenious ways to deal with the
+discontinuity. Their focus, though, was on deriving theoretical performance guarantees rather than developing
+fast algorithms.
+Keshavan et al. [KO09, KM10] state the problem on the Grassmannian too, but propose to simultaneously
+(cid:88)
++ λ2 (cid:13)(cid:13)U SV (cid:62)(cid:13)(cid:13)2
+(cid:0)(U SV (cid:62))ij − Xij
+(cid:1)2
+optimize on the row and column spaces, yielding a smaller least-squares problem which is unlikely to not have
+a unique solution, resulting in a smooth objective function. In one of their recent papers [KM10], they solve:
+(4)
+F ,
+(i,j )∈Ω
+where U and V are any orthonormal bases of U and V , respectively, and λ is a regularization parameter. The
+authors propose an efﬁcient SVD-based initial guess for U and V which they reﬁne using a steepest descent
+method, along with strong theoretical guarantees.
+Meyer et al. [MBS11] proposed a Riemannian approach to linear regression on ﬁxed-rank matrices. Their
+regression framework encompasses matrix completion problems. Likewise, Balzano et al. [BNR10] intro-
+duced GROUSE for subspace identiﬁcation on the Grassmannian, applicable to matrix completion. Finally,
+in the preprint [Van11] which became public while we were preparing the camera-ready version of this paper,
+Vandereycken proposes an approach based on the submanifold geometry of the sets of ﬁxed-rank matrices.
+
+min
+U ∈G (m,r),V ∈G (n,r)
+
+min
+S∈Rr×r
+
+1.2 Our contribution and outline of the paper
+
+Dai et al.’s initial formulation (3) has a discontinuous objective function on the Grassmannian. The OptSpace
+formulation (4) on the other hand has a continuous objective and comes with a smart initial guess, but optimizes
+ization term is efﬁciently computable since (cid:13)(cid:13)U SV (cid:62)(cid:13)(cid:13)F = (cid:107)S (cid:107)F , but it penalizes all entries instead of just the
+on a higher-dimensional search space, while it is arguably preferable to keep the dimension of the manifold
+search space low, even at the expense of a larger least-squares problem. Furthermore, the OptSpace regular-
+entries (i, j ) /∈ Ω.
+In an effort to combine the best of both worlds, we equip (3) with a regularization term weighted by λ > 0,
+(cid:88)
+(cid:88)
+(cid:0)(U W )ij − Xij
+(cid:1)2
+which yields a smooth objective function deﬁned over an appropriate search space:
+λ2
+1
+(U W )2
+ij .
+2
+2
+(i,j ) /∈Ω
+(i,j )∈Ω
+Here, we introduced a conﬁdence index Cij > 0 for each observation Xij , which may be useful in applications.
+As we will see, introducing a regularization term is essential to ensure smoothness of the objective and hence
+obtain good convergence properties. It may not be critical for practical problem instances though.
+We further innovate on previous works by using a Riemannian trust-region method, GenRTR [ABG07], as
+optimization algorithm to minimize (5) on the Grassmannian. GenRTR is readily available as a free Matlab
+package and comes with strong convergence results that are naturally inherited by our algorithms.
+In Section 2, we rapidly cover the essential useful tools on the Grassmann manifold. In Section 3, we derive
+expressions for the gradient and the Hessian of our objective function while paying special attention to com-
+plexity. Section 4 sums up the main properties of the Riemannian trust-region method. Section 5 shows a few
+results of numerical experiments demonstrating the effectiveness of our approach.
+
+min
+U ∈G (m,r)
+
+min
+W ∈Rr×n
+
+(5)
+
+C 2
+ij
+
++
+
+2
+
+2 Geometry of the Grassmann manifold
+Our objective function f (10) is deﬁned over the Grassmann manifold G (m, r), i.e., the set of r-dimensional
+vector subspaces of Rm . Absil et al. [AMS08] give a computation-oriented description of the geometry of this
+manifold. Here, we only give a summary of the important tools we use.
+Each point U ∈ G (m, r) is a vector subspace we may represent numerically as the column space of a full-
+rank matrix U ∈ Rm×r : U = col(U ). For numerical reasons, we will only use orthonormal matrices U ∈
+U (m, r) = {U ∈ Rm×r : U (cid:62)U = Ir }. The set U (m, r) is the Stiefel manifold.
+The Grassmannian is a Riemannian manifold, and as such we can deﬁne a tangent space to G (m, r) at each
+dt col(U + tH )(cid:12)(cid:12)t=0 = H . For practical purposes we may, with a
+point U , noted TU G (m, r). The latter is a vector space of dimension dim G (m, r) = r(m − r). A tangent
+vector H ∈ TU G (m, r), where we represent U as the orthonormal matrix U , is represented by a unique
+matrix H ∈ Rm×r verifying U (cid:62)H = 0 and d
+slight abuse of notation we often commit hereafter, write H = H—assuming U is known from the context—
+and TU G (m, r) = {H ∈ Rm×r : U (cid:62)H = 0}. Each tangent space is endowed with an inner product, the
+Riemannian metric, that varies smoothly from point to point. It is inherited from the embedding space of the
+matrix representation of tangent vectors Rm×r : ∀H1 , H2 ∈ TU G (m, r) : (cid:104)H1 , H2 (cid:105)U = Trace(H (cid:62)
+2 H1 ). The
+orthogonal projector from Rm×r onto the tangent space TU G (m, r) is given by:
+PU : Rm×r → TU G (m, r) : H (cid:55)→ PU H = (I − U U (cid:62))H.
+One can also project a vector onto the tangent space of the Stiefel manifold:
+U : Rm×r → TU U (m, r) : H (cid:55)→ P St
+U H = (I − U U (cid:62))H + U skew(U (cid:62)H ),
+P St
+its restriction ¯f (cid:12)(cid:12)U (m,r) to the Stiefel manifold and f : G (m, r) → R such that f (col(U )) = ¯f (cid:12)(cid:12)U (m,r) (U ) is
+where skew(X ) = (X − X (cid:62))/2 extracts the skew-symmetric part of X . This is useful for the computation of
+gradf (U ) ∈ TU G (m, r). Indeed, according to [AMS08, eqs. (3.37) and (3.39)], considering ¯f : Rm×r → R,
+gradf (U ) = grad ¯f (cid:12)(cid:12)U (m,r) (U ) = P St
+well-deﬁned, as will be the case in Section 3, we have (with a slight abuse of notation):
+U grad ¯f (U ).
+(6)
+Similarly, since PU ◦ P St
+U = PU , the Hessian of f at U along H is given by [AMS08, eqs. (5.14) and (5.18)]:
+Hessf (U )[H ] = PU (D(U (cid:55)→ P St
+U grad ¯f (U ))(U )[H ]),
+(7)
+where Dg(X )[H ] is the directional derivative of g at X along H , in the classical sense. For our optimization
+algorithms, it is important to be able to move along the manifold from some initial point U in some prescribed
+direction speciﬁed by a tangent vector H . To this end, we use the retraction:
+RU (H ) = qf (U + H ),
+where qf (X ) ∈ U (m, r) designates the m-by-r Q-factor of the QR decomposition of X ∈ Rm×r .
+
+(8)
+
+3 Computation of the objective function and its derivatives
+
+We seek an m-by-n matrix ˆX of rank not more than r such that ˆX is as close as possible to a given matrix X
+at the entries in the observation set Ω. Furthermore, we are given a weight matrix C ∈ Rm×n indicating the
+conﬁdence we have in each observed entry of X . The matrix C is positive at entries in Ω and zero elsewhere.
+To this end, we consider the following function, where (XΩ )ij equals Xij if (i, j ) ∈ Ω and is zero otherwise:
+λ2
+ˆf : Rm×r × Rr×n → R : (U, W ) (cid:55)→ ˆf (U, W ) =
+(cid:107)U W (cid:107)2
+(cid:107)C (cid:12) (U W − XΩ )(cid:107)2
+1
+(9)
+Ω +
+¯Ω ,
+(cid:44) (cid:80)
+2
+2
+where (cid:12) is the entry-wise product, λ > 0 is a regularization parameter, ¯Ω is the complement of the set Ω and
+(cid:107)M (cid:107)2
+ij . Picking a small but positive λ will ensure that the objective function f (10) is smooth.
+(i,j )∈Ω M 2
+Ω
+For a ﬁxed U , computing the matrix W that minimizes ˆf is a least-squares problem. The mapping between U
+and this (unique) optimal W , noted WU ,
+U (cid:55)→ WU = argmin
+W ∈Rr×n
+
+ˆf (U, W ),
+
+3
+
+is smooth and easily computable—see Section 3.3.
+By virtue of the discussion in Section 1, we know that the mapping U (cid:55)→ ˆf (U, WU ), with U ∈ Rm×r , is
+constant over sets of full-rank matrices U spanning the same column space. Hence, considering these sets as
+equivalence classes U , the following function f over the Grassmann manifold is well-deﬁned:
+f : G (m, r) → R : U (cid:55)→ f (U ) = ˆf (U, WU ),
+(10)
+with any full-rank U ∈ Rm×r such that col(U ) = U . The interpretation is as follows: we are looking for an
+optimal matrix ˆX = U W of rank at most r; we have conﬁdence Cij that ˆXij should equal Xij for (i, j ) ∈ Ω
+and (very small) conﬁdence λ that ˆXij should equal 0 for (i, j ) /∈ Ω.
+
+3.1 Rearranging the objective
+
+Considering (9), it looks like evaluating ˆf (U, W ) will require the computation of the product U W at the entries
+in Ω and ¯Ω, i.e., we would need to compute the whole matrix U W , which cannot cost much less than O(mnr).
+Since applications typically involve very large values of the product mn, this is not acceptable. Alternatively, if
+we restrict ourselves—without loss of generality—to orthonormal matrices U , we observe that
+(cid:107)U W (cid:107)2
+Ω + (cid:107)U W (cid:107)2
+¯Ω = (cid:107)U W (cid:107)2
+F = (cid:107)W (cid:107)2
+F .
+Consequently, for all U in U (m, r), we have ˆf (U, WU ) = ˇf (U, WU ), where
+F − λ2
+λ2
+(cid:107)U W (cid:107)2
+(cid:107)C (cid:12) (U W − XΩ )(cid:107)2
+(cid:107)W (cid:107)2
+1
+ˇf (U, W ) =
+(11)
+U (cid:55)→ ˇf (U, WU ), and observe that f (col(U )) = ¯f (cid:12)(cid:12)U (m,r) (U ) for all U in U (m, r), as in the setting of Section 2.
+Ω +
+Ω .
+2
+2
+2
+This only requires the computation of U W at entries in Ω, at a cost of O(|Ω|r). Finally, let ¯f : Rm×r → R :
+3.2 Gradient and Hessian of the objective
+(cid:1)(X ) = (cid:0)Dg(X )(cid:1)∗
+grad(cid:0)X (cid:55)→ 1/2 (cid:107)g(X )(cid:107)2
+We now derive formulas for the ﬁrst and second order derivatives of f . In deriving these formulas, it is useful
+to note that, for a suitably smooth mapping g ,
+where (cid:0)Dg(X )(cid:1)∗
+(12)
+[g(X )],
+F
+(cid:26)C 2
+is the adjoint of the differential of g at X . For ease of notation, let us deﬁne the following
+m-by-n matrix with the sparsity structure induced by Ω:
+if (i, j ) ∈ Ω,
+ij − λ2
+otherwise.
+0
+We also introduce a sparse residue matrix RU that will come up in various formulas:
+RU = ˆC (cid:12) (U WU − XΩ ) − λ2XΩ .
+Successively using the chain rule, the optimality of WU and (12), we obtain:
+ˇf (U, WU ) · d
+ˇf (U, WU ) = RU W (cid:62)
+d
+∂
+∂
+∂
+ˇf (U, WU ) =
+ˇf (U, WU ) +
+grad ¯f (U ) =
+WU =
+U .
+∂U
+∂W
+∂U
+dU
+dU
+ˇf (U, WU ) = U (cid:62)RU + λ2WU = 0. Then, according to the identity (6) and
+gradf (U ) = grad ¯f (cid:12)(cid:12)U (m,r) (U ) = P St
+Indeed, since WU is optimal,
+∂
+since U (cid:62)RU = −λ2WU , the gradient of f at U = col(U ) on the Grassmannian is given by:
+∂W
+U grad ¯f (U ) = (I − U U (cid:62))RU W (cid:62)
+U + U skew(U (cid:62)RU W (cid:62)
+U )
+= (I − U U (cid:62))RU W (cid:62)
+U − λ2U skew(WU W (cid:62)
+U + λ2U (WU W (cid:62)
+U ) = RU W (cid:62)
+(15)
+U ),
+We now differentiate (15) according to the identity (7) to get a matrix representation of the Hessian of f at U
+along H . We note H a matrix representation of the tangent vector H chosen in accordance with U and
+WU,H (cid:44) D(U (cid:55)→ WU )(U )[H ]
+the derivative of the mapping U (cid:55)→ WU at U along the tangent direction H . Then:
+(cid:104) ˆC (cid:12) (HWU + U WU,H )
+(cid:105)
+Hessf (U )[H ] = (I − U U (cid:62))Dgradf (U )[H ]
+= (I − U U (cid:62))
+
+U ) + λ2U (WU W (cid:62)
+U,H + λ2H (WU W (cid:62)
+U + RU W (cid:62)
+W (cid:62)
+U,H).
+
+ˆCij =
+
+(13)
+
+(14)
+
+(16)
+
+4
+
+3.3 WU and its derivative WU,H
+We still need to provide an explicit formula for WU and WU,H . We assume U ∈ U (m, r) since we use
+orthonormal matrices to represent points on the Grassmannian and U (cid:62)H = 0 since H is a tangent vector at U .
+We use the vectorization operator, vec, that transforms matrices into vectors by stacking their columns—in
+Matlab notation, vec(A) = A(:). Denoting the Kronecker product of two matrices by ⊗, we will use the
+well-known identity for matrices A, Y , B of appropriate sizes [Bro05]:
+vec(AY B ) = (B(cid:62) ⊗ A)vec(Y ).
+We also write IΩ for the orthonormal |Ω|-by-mn matrix such that vecΩ (M ) = IΩvec(M ) is a vector of length
+|Ω| corresponding to the entries Mij for (i, j ) ∈ Ω, taken in order from vec(M ).
+Computing WU comes down to minimizing the least-squares objective ˇf (U, W ) (11) with respect to W . We
+ﬁrst manipulate ˇf to reach a standard form for least-squares, with S = IΩ diag(vec(C )):
+F − λ2
+λ2
+(cid:107)U W (cid:107)2
+(cid:107)C (cid:12) (U W − XΩ )(cid:107)2
+(cid:107)W (cid:107)2
+1
+Ω +
+Ω
+2
+2
+2
+2 − λ2
+λ2
+(cid:107)vecΩ (U W )(cid:107)2
+(cid:107)vec(W )(cid:107)2
+(cid:107)S vec(U W ) − vecΩ (C (cid:12) XΩ )(cid:107)2
+1
+2 +
+2
+2
+2
+2
+(cid:21)(cid:13)(cid:13)(cid:13)(cid:13)2
+(cid:13)(cid:13)(cid:13)(cid:13)(cid:20)S (In ⊗ U )
+(cid:20)vecΩ (C (cid:12) XΩ )
+(cid:21)
+(cid:107)λIΩ (In ⊗ U )vec(W )(cid:107)2
+2 − 1
+(cid:107)S (In ⊗ U )vec(W ) − vecΩ (C (cid:12) XΩ )(cid:107)2
+(cid:107)λIrnvec(W )(cid:107)2
+1
+1
+2 +
+2
+2
+2
+2
+(cid:107)[λIΩ (In ⊗ U )] vec(W )(cid:107)2
+− 1
+vec(W ) −
+1
+λIrn
+0rn
+2
+2
+2
+2
+(cid:107)A2w(cid:107)2
+2 − 1
+(cid:107)A1w − b1(cid:107)2
+1
+=
+2 ,
+2
+2
+where w = vec(W ) ∈ Rrn , 0rn ∈ Rrn is the zero-vector and the deﬁnitions for A1 , A2 and b1 are obvious. If
+1 A1 − A(cid:62)
+A(cid:62)
+2 A2 is positive deﬁnite there is a unique minimizing vector vec(WU ), given by:
+1 A1 − A(cid:62)
+2 A2 )−1A(cid:62)
+vec(WU ) = (A(cid:62)
+1 b1 .
+
+ˇf (U, W ) =
+
+=
+
+=
+
+=
+
+It is easy to compute the following:
+1 A1 = (In ⊗ U (cid:62))(S(cid:62)S )(In ⊗ U ) + λ2 Irn ,
+A(cid:62)
+2 A2 = (In ⊗ U (cid:62))(λ2 I (cid:62)
+ΩIΩ )(In ⊗ U ),
+A(cid:62)
+1 b1 = (In ⊗ U (cid:62))S(cid:62)vecΩ (C (cid:12) XΩ ) = (In ⊗ U (cid:62))vec(C (2) (cid:12) XΩ ).
+A(cid:62)
+Throughout the text, we use the notation M (n) for entry-wise exponentiation, i.e., (M (n) )ij = (Mij )n . Note
+(cid:16)
+(cid:17)
+ΩIΩ = diag(vec( ˆC )). We then deﬁne A ∈ Rrn×rn as:
+that S(cid:62)S − λ2 I (cid:62)
+1 A1 − A(cid:62)
+2 A2 = (In ⊗ U (cid:62))
+A (cid:44) A(cid:62)
+diag(vec( ˆC ))
+
+(In ⊗ U ) + λ2 Irn .
+
+(17)
+
+Observe that the matrix A is block-diagonal, with n symmetric blocks of size r . Each block is indeed positive-
+deﬁnite provided λ > 0 (making A positive-deﬁnite too). Thanks to the sparsity of ˆC , we can compute these n
+blocks with O(|Ω|r2 ) ﬂops. To solve systems in A, we compute the Cholesky factorization of each block, at a
+total cost of O(nr3 ). Once these factorizations are computed, each system only costs O(nr2 ) to solve [TB97].
+(cid:16)
+(cid:17)
+Collecting all equations in this subsection, we obtain a closed-form formula for WU :
+U (cid:62)[C (2) (cid:12) XΩ ]
+vec(WU ) = A−1vec
+,
+H (cid:62)RU + U (cid:62)(cid:0) ˆC (cid:12) (HWU )(cid:1)(cid:17)
+(cid:16)
+where A is a function of U . We would like to differentiate WU with respect to U . Using bilinearity and
+associativity of ⊗ as well as the formula D(Y (cid:55)→ Y −1 )(X )[H ] = −X −1HX −1 [Bro05], some algebra yields:
+vec(WU,H ) = −A−1vec
+
+(18)
+
+(19)
+
+.
+
+5
+
+The most expensive operation involved in computing WU,H ought to be the resolution of a linear system in A.
+Fortunately, we already factored the n small diagonal blocks of A in Cholesky form to compute WU . Conse-
+quently, after computing WU , computing WU,H is cheaper than computing WU (cid:48) for a new U (cid:48) . This means that
+we can beneﬁt from computing this information before we move on to a new candidate on the Grassmannian,
+i.e., it is worth trying second order methods. We summarize the complexities in the next subsection.
+
+3.4 Numerical complexities
+
+By exploiting the sparsity of many of the matrices involved and the special structure of the matrix A appearing
+in the computation of WU and WU,H , it is possible to compute the objective f as well as its gradient and its
+Hessian on the Grassmannian in time essentially linear in the size of the data |Ω|. Memory complexities are also
+linear in |Ω|. We summarize the computational complexities in Table 1. Please note that most computations are
+easily parallelizable, but we do not take advantage of it here.
+
+Table 1: All complexities are essentially linear in |Ω|, the number of observed entries.
+Computation
+Complexity
+By-products
+Formulas
+O(|Ω|r2 + nr3 )
+WU and f (U )
+Cholesky form of A (9), (10), (17), (18)
+O(|Ω|r + (m + n)r2 ) RU and WU W (cid:62)
+(13), (14), (15)
+gradf (U )
+WU,H and Hessf (U )[H ] O(|Ω|r + (m + n)r2 )
+U
+(16), (19)
+
+4 Riemannian trust-region method
+
+We use a Riemannian trust-region (RTR) method [ABG07] to minimize (10), via the freely available Matlab
+package GenRTR (version 0.3.0) with its default parameter values. The package is available at this address:
+http://www.math.fsu.edu/˜cbaker/GenRTR/?page=download.
+At the current iterate U = col(U ), the RTR method uses the retraction RU (8) to build a quadratic model
+mU : TU G (m, r) → R of the lifted objective function f ◦ RU (lift). It then classically minimizes the model
+inside a trust region on this vector space (solve), and retracts the resulting tangent vector H to a candidate
+U + = RU (H ) on the Grassmannian (retract). The quality of U + = col(U + ) is assessed using f and the step
+is accepted or rejected accordingly. Likewise, the radius of the trust region is adapted based on the observed
+quality of the model.
+The model mU of f ◦ RU has the form:
+mU (H ) = f (U ) + (cid:104)gradf (U ), H (cid:105)U +
+(cid:104)A(U )[H ], H (cid:105)U ,
+1
+2
+where A(U ) is some symmetric linear operator on TU G (m, r). Typically, the faster one can compute A(U )[H ],
+the faster one can minimize mU (H ) in the trust region.
+A powerful property of the RTR method is that global convergence of the algorithm toward critical points—local
+minimizers in practice since it is a descent method—is guaranteed independently of A(U ) [ABG07, Thm 4.24,
+Cor. 4.6]. We take advantage of this and ﬁrst set it to the identity. This yields a steepest-descent algorithm
+we later refer to as RTRMC 1. Additionally, if we take A(U ) to be the Hessian of f at U (16), we get a
+quadratic convergence rate, even if we only approximately minimize mU within the trust region using a few
+steps of a well chosen iterative method [ABG07, Thm 4.14]. This means that the RTR method only requires a
+few computations of the Hessian along speciﬁc directions. We call our method using the Hessian RTRMC 2.
+
+5 Numerical experiments
+
+We test our algorithms on both synthetic and real data and compare their performances against OptSpace,
+ADMiRA, SVT, LMaFit and Balanced Factorization in terms of accuracy and computation time. All algorithms
+are run sequentially by Matlab on the same personal computer1 . Table 2 speciﬁes a few implementation details.
+1 Intel Core i5 670 @ 3.60GHz (4), 8Go RAM, Matlab 7.10 (R2010a).
+
+6
+
+Table 2: All Matlab implementations call subroutines in non-Matlab code to efﬁciently deal with the sparsity of
+the matrices involved. PROPACK [Lar05] is a free package for large and sparse SVD computations.
+Method
+Environment
+Comment
+Our method with “approximate Hessian” set to identity,
+Matlab + some C-Mex
+RTRMC 1
+i.e., no second order information. λ = 10−6 . For the
+initial guess U0 , we use the OptSpace trimmed SVD.
+Matlab + some C-Mex
+Same as RTRMC 1 but with exact Hessian.
+RTRMC 2
+C code
+[KO09] with λ = 0. Trimmed SVD + descent on Grass.
+OptSpace
+Matlab with PROPACK [LB10] Matching pursuit based.
+ADMiRA
+Matlab with PROPACK [CCS08] default τ and δ . Nuclear norm minimization.
+SVT
+[WYZ10] Alternating minimization.
+LMaFit
+Matlab + some C-Mex
+Balanced Factorization Matlab + some C-Mex
+[MBS11] One of their Riemannian regression methods.
+
+Our methods (RTRMC 1 and 2) and Balanced Factorization require knowledge of the target rank r . OptSpace,
+ADMiRA and LMaFit include a mechanism to guess the rank, but beneﬁt from knowing it, hence we provide
+the true rank to these methods too. As is, the SVT code does not permit the user to specify the rank.
+We use the root mean square error (RMSE) criterion to assess the quality of reconstruction of X with ˆX :
+√
+RMSE(X, ˆX ) = (cid:107)X − ˆX (cid:107)F /
+mn.
+Scenario 1. We ﬁrst compare convergence behavior of the different methods on synthetic data. We pick
+m = n = 10 000 and r = 10. The dimension of the manifold of m-by-n matrices of rank r is d = r(m + n − r).
+We generate A ∈ Rm×r and B ∈ Rr×n with i.i.d. normal entries of zero mean and unit variance. The target
+matrix is X = AB . We sample 2.5d entries uniformly at random, which yields a sampling ratio of 0.5%.
+Figure 1 is typical and shows the evolution of the RMSE as a function of time (left) and iteration count (right).
+For ˆX = U V with U ∈ Rm×r , V ∈ Rr×n , we compute the RMSE in O((m + n)r2 ) ﬂops using:
+(mn)RMSE(AB , U V )2 = Trace((A(cid:62)A)(BB(cid:62))) + Trace((U (cid:62)U )(V V (cid:62))) − 2Trace((U (cid:62)A)(BV (cid:62))).
+Be wary though that this formula is numerically inaccurate when the RMSE is much smaller than the norm of
+either AB or U V , owing to the computation of the difference of close large numbers.
+
+Scenario 2.
+In this second test, we repeat the previous experience with rectangular matrices: m = 1 000, n =
+30 000, r = 5 and a sampling ratio of 2.6% (5d known entries). We expect RTRMC to perform well on rect-
+angular matrices since the dimension of the Grassmann manifold we optimize on only grows linearly with
+min(m, n), whereas it is the (simple) least-squares problem dimension that grows linearly in max(m, n). Fig-
+ure 2 is typical and shows indeed that RTRMC is the fastest tested algorithm on this test.
+
+Scenario 3. Following the protocol in [KMO09], we test our method on the Jester dataset 1 [GRGP01] of
+ratings of a hundred jokes by 24 983 users. We randomly select 4 000 users and the corresponding continuous
+ratings in the range [−10, 10]. For each user, we extract two ratings at random as test data. We run the different
+matrix completion algorithms with a prescribed rank on the remaining training data, N = 100 times for each
+rank. Table 3 reports the average Normalized Mean Absolute Error (NMAE) on the test data along with a
+√
+conﬁdence interval computed as the standard deviation of the NMAE’s obtained for the different runs divided
+N . All methods but ADMiRA minimize a similar cost function and consequently perform the same.
+by
+
+6 Conclusion
+
+Our contribution is an efﬁcient numerical method to solve large low-rank matrix completion problems. RTRMC
+competes with the state-of-the-art and enjoys proven global and local convergence to local optima, with a
+quadratic convergence rate for RTRMC 2. Our methods are particularly efﬁcient on rectangular matrices. To
+obtain such results, we exploited the geometry of the low-rank constraint and applied techniques from the ﬁeld
+of optimization on manifolds. Matlab code for RTRMC 1 and 2 is available at:
+http://www.inma.ucl.ac.be/˜absil/RTRMC/.
+
+7
+
+Table 3: NMAE’s on the Jester dataset 1 (Scenario 3). All algorithms solve the problem in well under a minute
+for rank 7. All but ADMiRA reach similar results. As a reference, consider that a random guesser would obtain
+a score of 0.33. Goldberg et al. [GRGP01] report a score of 0.187 but use a different protocol.
+ADMiRA
+Bal. Fac.
+LMaFit
+OptSpace
+rank RTRMC 2
+0.1836 ± 2 · 10−4
+0.1799 ± 2 · 10−4
+0.1799 ± 2 · 10−4
+0.1799 ± 2 · 10−4
+0.1799 ± 2 · 10−4
+1
+0.1624 ± 2 · 10−4
+0.1625 ± 2 · 10−4
+0.1624 ± 2 · 10−4
+0.1626 ± 2 · 10−4
+0.1681 ± 2 · 10−4
+3
+0.1584 ± 2 · 10−4
+0.1584 ± 2 · 10−4
+0.1584 ± 2 · 10−4
+0.1584 ± 2 · 10−4
+0.1635 ± 2 · 10−4
+5
+0.1618 ± 2 · 10−4
+0.1580 ± 2 · 10−4
+0.1578 ± 2 · 10−4
+0.1581 ± 2 · 10−4
+0.1578 ± 2 · 10−4
+7
+
+Figure 1: Evolution of the RMSE for the six methods under Scenario 1 (m = n = 10 000, r = 10, |Ω|/(mn) =
+0.5%, i.e., 99.5% of the entries are unknown). For RTRMC 2, we count the number of inner iterations, i.e., the
+number of parallelizable steps. ADMiRA stagnates and SVT diverges. All other methods eventually ﬁnd the
+exact solution.
+
+Figure 2: Evolution of the RMSE for the six methods under Scenario 2 (m = 1 000, n = 30 000, r = 5,
+|Ω|/(mn) = 2.6%). For rectangular matrices, RTRMC is especially efﬁcient owing to the linear growth of the
+dimension of the search space in min(m, n), whereas for most methods the growth is linear in m + n.
+
+Acknowledgments
+This paper presents research results of the Belgian Network DYSCO (Dynamical Systems, Control, and Op-
+timization), funded by the Interuniversity Attraction Poles Programme, initiated by the Belgian State, Science
+Policy Ofﬁce. NB is an FNRS research fellow (Aspirant). The scientiﬁc responsibility rests with its authors.
+
+8
+
+Time[s]RMSERTRMC2RTRMC1ADMiRAOptSpaceLMaFitSVTBal.Fac.Iterationcount0501000255010−810−510−210110−810−510−2101Time[s]RMSERTRMC2RTRMC1ADMiRAOptSpaceLMaFitSVTBal.Fac.Iterationcount0501000255010−810−510−210110−810−510−2101[CR09]
+
+References
+[ABG07] P.-A. Absil, C. G. Baker, and K. A. Gallivan. Trust-region methods on Riemannian manifolds.
+Found. Comput. Math., 7(3):303–330, July 2007.
+[AMS08] P.-A. Absil, R. Mahony, and R. Sepulchre. Optimization Algorithms on Matrix Manifolds. Princeton
+University Press, Princeton, NJ, 2008.
+[BNR10] L. Balzano, R. Nowak, and B. Recht. Online identiﬁcation and tracking of subspaces from highly
+incomplete information. In Communication, Control, and Computing (Allerton), 2010 48th Annual
+Allerton Conference on, pages 704–711. IEEE, 2010.
+[Bro05] M. Brookes. The matrix reference manual. Imperial College London, 2005.
+J.F. Cai, E.J. Cand `es, and Z. Shen. A singular value thresholding algorithm for matrix completion.
+[CCS08]
+Arxiv preprint arXiv:0810.3286, 2008.
+E.J. Cand `es and B. Recht. Exact matrix completion via convex optimization. Foundations of
+Computational Mathematics, 9(6):717–772, 2009.
+[DKM10] W. Dai, E. Kerman, and O. Milenkovic. A Geometric Approach to Low-Rank Matrix Completion.
+Arxiv preprint arXiv:1006.2086, 2010.
+[DMK11] W. Dai, O. Milenkovic, and E. Kerman. Subspace evolution and transfer (SET) for low-rank matrix
+completion. Signal Processing, IEEE Transactions on, PP(99):1, 2011.
+[GRGP01] K. Goldberg, T. Roeder, D. Gupta, and C. Perkins. Eigentaste: A constant time collaborative
+ﬁltering algorithm. Information Retrieval, 4(2):133–151, 2001.
+R.H. Keshavan and A. Montanari. Regularization for matrix completion. In Information Theory
+Proceedings (ISIT), 2010 IEEE International Symposium on, pages 1503–1507. IEEE, 2010.
+[KMO09] R.H. Keshavan, A. Montanari, and S. Oh. Low-rank matrix completion with noisy observations: a
+quantitative comparison. In Communication, Control, and Computing, 2009. Allerton 2009. 47th
+Annual Allerton Conference on, pages 1216–1222. IEEE, 2009.
+R.H. Keshavan and S. Oh. OptSpace: A gradient descent algorithm on the Grassman manifold for
+matrix completion. Arxiv preprint arXiv:0910.5260 v2, 2009.
+R.M. Larsen. PROPACK–Software for large and sparse SVD calculations. Available online. URL
+http://sun. stanford. edu/rmunk/PROPACK, 2005.
+K. Lee and Y. Bresler. ADMiRA: Atomic decomposition for minimum rank approximation. Infor-
+mation Theory, IEEE Transactions on, 56(9):4402–4416, 2010.
+[MBS11] G. Meyer, S. Bonnabel, and R. Sepulchre. Linear regression under ﬁxed-rank constraints: a Rie-
+mannian approach. In 28th International Conference on Machine Learning. ICML, 2011.
+L.N. Trefethen and D. Bau. Numerical linear algebra. Society for Industrial Mathematics, 1997.
+B. Vandereycken. Low-rank matrix completion by riemannian optimization. Technical report,
+ANCHP-MATHICSE, Mathematics Section, ´Ecole Polytechnique F ´ed ´erale de Lausanne, 2011.
+[WYZ10] Z. Wen, W. Yin, and Y. Zhang. Solving a low-rank factorization model for matrix completion by
+a nonlinear successive over-relaxation algorithm. Technical report, Rice University, 2010. CAAM
+Technical Report TR10-07.
+
+[TB97]
+[Van11]
+
+[KM10]
+
+[KO09]
+
+[Lar05]
+
+[LB10]
+
+9
+
+

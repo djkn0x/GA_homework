@@ -1,0 +1,671 @@
+Monte Carlo Sampling for Regret Minimization in
+Extensive Games
+
+Marc Lanctot
+Department of Computing Science
+University of Alberta
+Edmonton, Alberta, Canada T6G 2E8
+lanctot@ualberta.ca
+
+Kevin Waugh
+School of Computer Science
+Carnegie Mellon University
+Pittsburgh PA 15213-3891
+waugh@cs.cmu.edu
+
+Martin Zinkevich
+Yahoo! Research
+Santa Clara, CA, USA 95054
+maz@yahoo-inc.com
+
+Michael Bowling
+Department of Computing Science
+University of Alberta
+Edmonton, Alberta, Canada T6G 2E8
+bowling@cs.ualberta.ca
+
+Abstract
+
+Sequential decision-making with multiple agents and imperfect information is
+commonly modeled as an extensive game. One efﬁcient method for computing
+Nash equilibria in large, zero-sum, imperfect information games is counterfactual
+regret minimization (CFR). In the domain of poker, CFR has proven effective, par-
+ticularly when using a domain-speciﬁc augmentation involving chance outcome
+sampling. In this paper, we describe a general family of domain-independent CFR
+sample-based algorithms called Monte Carlo counterfactual regret minimization
+(MCCFR) of which the original and poker-speciﬁc versions are special cases. We
+start by showing that MCCFR performs the same regret updates as CFR on expec-
+tation. Then, we introduce two sampling schemes: outcome sampling and external
+sampling, showing that both have bounded overall regret with high probability.
+Thus, they can compute an approximate equilibrium using self-play. Finally, we
+prove a new tighter bound on the regret for the original CFR algorithm and re-
+late this new bound to MCCFR’s bounds. We show empirically that, although the
+sample-based algorithms require more iterations, their lower cost per iteration can
+lead to dramatically faster convergence in various games.
+
+1
+
+Introduction
+
+Extensive games are a powerful model of sequential decision-making with imperfect information,
+subsuming ﬁnite-horizon MDPs, ﬁnite-horizon POMDPs, and perfect information games. The past
+few years have seen dramatic algorithmic improvements in solving, i.e., ﬁnding an approximate
+Nash equilibrium, in two-player, zero-sum extensive games. Multiple techniques [1, 2] now exist
+for solving games with up to 1012 game states, which is about four orders of magnitude larger than
+the previous state-of-the-art of using sequence-form linear programs [3].
+Counterfactual regret minimization (CFR) [1] is one such recent technique that exploits the fact that
+the time-averaged strategy proﬁle of regret minimizing algorithms converges to a Nash equilibrium.
+The key insight is the fact that minimizing per-information set counterfactual regret results in min-
+imizing overall regret. However, the vanilla form presented by Zinkevich and colleagues requires
+the entire game tree to be traversed on each iteration. It is possible to avoid a full game-tree traver-
+sal. In their accompanying technical report, Zinkevich and colleagues discuss a poker-speciﬁc CFR
+
+1
+
+variant that samples chance outcomes on each iteration [4]. They claim that the per-iteration cost
+reduction far exceeds the additional number of iterations required, and all of their empirical studies
+focus on this variant. The sampling variant and its derived bound are limited to poker-like games
+where chance plays a prominent role in the size of the games. This limits the practicality of CFR
+minimization outside of its initial application of poker or moderately sized games. An additional
+disadvantage of CFR is that it requires the opponent’s policy to be known, which makes it unsuit-
+able for online regret minimization in an extensive game. Online regret minimization in extensive
+games is possible using online convex programming techniques, such as Lagrangian Hedging [5],
+but these techniques can require costly optimization routines at every time step.
+In this paper, we present a general framework for sampling in counterfactual regret minimization.
+We deﬁne a family of Monte Carlo CFR minimizing algorithms (MCCFR), that differ in how they
+sample the game tree on each iteration. Zinkevich’s vanilla CFR and a generalization of their chance-
+sampled CFR are both members of this family. We then introduce two additional members of this
+family: outcome-sampling, where only a single playing of the game is sampled on each iteration; and
+external-sampling, which samples chance nodes and the opponent’s actions. We show that under a
+reasonable sampling strategy, any member of this family minimizes overall regret, and so can be used
+for equilibrium computation. Additionally, external-sampling is proven to require only a constant-
+factor increase in iterations yet achieves an order reduction in the cost per iteration, thus resulting an
+asymptotic improvement in equilibrium computation time. Furthermore, since outcome-sampling
+does not need knowledge of the opponent’s strategy beyond samples of play from the strategy, we
+describe how it can be used for online regret minimization. We then evaluate these algorithms
+empirically by using them to compute approximate equilibria in a variety of games.
+
+2 Background
+
+An extensive game is a general model of sequential decision-making with imperfect information. As
+with perfect information games (such as Chess or Checkers), extensive games consist primarily of a
+game tree: each non-terminal node has an associated player (possibly chance) that makes the deci-
+sion at that node, and each terminal node has associated utilities for the players. Additionally, game
+states are partitioned into information sets where a player cannot distinguish between two states in
+the same information set. The players, therefore, must choose actions with the same distribution at
+each state in the same information set. We now deﬁne an extensive game formally, introducing the
+notation we use throughout the paper.
+
+Deﬁnition 1 [6, p. 200] a ﬁnite extensive game with imperfect information has the following com-
+ponents:
+• A ﬁnite set N of players. A ﬁnite set H of sequences, the possible histories of actions, such
+that the empty sequence is in H and every preﬁx of a sequence in H is also in H . Deﬁne
+h (cid:118) h(cid:48) to mean h is a preﬁx of h(cid:48) . Z ⊆ H are the terminal histories (those which are not
+a preﬁx of any other sequences). A(h) = {a : ha ∈ H } are the actions available after a
+non-terminal history, h ∈ H \ Z .
+• A function P that assigns to each non-terminal history a member of N ∪ {c}. P is the
+player function. P (h) is the player who takes an action after the history h. If P (h) = c
+then chance determines the action taken after history h.
+• For each player i ∈ N ∪ {c} a partition Ii of {h ∈ H : P (h) = i} with the property that
+A(h) = A(h(cid:48) ) whenever h and h(cid:48) are in the same member of the partition. For Ii ∈ Ii
+we denote by A(Ii ) the set A(h) and by P (Ii ) the player P (h) for any h ∈ Ii . Ii is the
+information partition of player i; a set Ii ∈ Ii is an information set of player i.
+• A function fc that associates with every information set I where P (I ) = c a probability
+measure fc (·|I ) on A(h) (fc (a|I ) is the probability that a occurs given some h ∈ I ), where
+each such probability measure is independent of every other such measure.1
+
+1Traditionally, an information partition is not speciﬁed for chance. In fact, as long as the same chance
+information set cannot be revisited, it has no strategic effect on the game itself. However, this extension allows
+us to consider using the same sampled chance outcome for an entire set of histories, which is an important part
+of Zinkevich and colleagues’ chance-sampling CFR variant.
+
+2
+
+• For each player i ∈ N a utility function ui from the terminal states Z to the reals R. If
+N = {1, 2} and u1 = −u2 , it is a zero-sum extensive game. Deﬁne ∆u,i = maxz ui (z ) −
+minz ui (z ) to be the range of utilities to player i.
+
+In this paper, we will only concern ourselves with two-player, zero-sum extensive games. Further-
+more, we will assume perfect recall, a restriction on the information partitions such that a player
+can always distinguish between game states where they previously took a different action or were
+previously in a different information set.
+
+2.1 Strategies and Equilibria
+
+A strategy of player i, σi , in an extensive game is a function that assigns a distribution over A(Ii )
+to each Ii ∈ Ii . We denote Σi as the set of all strategies for player i. A strategy proﬁle, σ , consists
+of a strategy for each player, σ1 , . . . , σn . We let σ−i refer to the strategies in σ excluding σi .
+Let πσ (h) be the probability of history h occurring if all players choose actions according to σ . We
+can decompose πσ (h) = Πi∈N ∪{c}πσ
+i (h) into each player’s contribution to this probability. Here,
+deﬁne πσ (I ) = (cid:80)
+i (h) is the contribution to this probability from player i when playing according to σ . Let πσ−i (h)
+πσ
+be the product of all players’ contribution (including chance) except that of player i. For I ⊆ H ,
+h∈I πσ (h), as the probability of reaching a particular information set given all
+this notation, we can deﬁne the expected payoff for player i as ui (σ) = (cid:80)
+i (I ) and πσ−i (I ) deﬁned similarly. Finally, let πσ (h, z ) =
+players play according to σ , with πσ
+πσ (z )/πσ (h) if h (cid:118) z , and zero otherwise. Let πσ
+i (h, z ) and πσ−i (h, z ) be deﬁned similarly. Using
+h∈Z ui (h)πσ (h).
+Given a strategy proﬁle, σ , we deﬁne a player’s best response as a strategy that maximizes their
+expected payoff assuming all other players play according to σ . The best-response value for player
+i∈Σi ui (σ (cid:48)
+i , σ−i ). An -Nash equilibrium is an
+i is the value of that strategy, bi (σ−i ) = maxσ (cid:48)
+approximation of a Nash equilibrium; it is a strategy proﬁle σ that satisﬁes
+∀i ∈ N ui (σ) +  ≥ max
+ui (σ (cid:48)
+i , σ−i )
+i∈Σi
+σ (cid:48)
+If  = 0 then σ is a Nash Equilibrium: no player has any incentive to deviate as they are all playing
+best responses. If a game is two-player and zero-sum, we can use exploitability as a metric for
+determining how close σ is to an equilibrium, σ = b1 (σ2 ) + b2 (σ1 ).
+
+(1)
+
+2.2 Counterfactual Regret Minimization
+
+i =
+RT
+
+Regret is an online learning concept that has triggered a family of powerful learning algorithms. To
+deﬁne this concept, ﬁrst consider repeatedly playing an extensive game. Let σ t
+i be the strategy used
+T(cid:88)
+(cid:0)ui (σ∗
+i , σ t−i ) − ui (σ t )(cid:1)
+by player i on round t. The average overall regret of player i at time T is:
+1
+max
+i ∈Σi
+σ∗
+T
+t=1
+i to be the average strategy for player i from time 1 to T . In particular, for each
+(cid:80)T
+Moreover, deﬁne ¯σ t
+information set I ∈ Ii , for each a ∈ A(I ), deﬁne:
+(cid:80)T
+i (I )σ t (a|I )
+t=1 πσt
+i (a|I ) =
+¯σ t
+i (I )
+t=1 πσt
+There is a well-known connection between regret, average strategies, and Nash equilibria.
+i∈{1,2} ≤ , then ¯σT is a 2 equilibrium.
+Theorem 1 In a zero-sum game, if RT
+An algorithm for selecting σ t
+i for player i is regret minimizing if player i’s average overall regret
+(regardless of the sequence σ t−i ) goes to zero as t goes to inﬁnity. Regret minimizing algorithms in
+self-play can be used as a technique for computing an approximate Nash equilibrium. Moreover, an
+algorithm’s bounds on the average overall regret bounds the convergence rate of the approximation.
+Zinkevich and colleagues [1] used the above approach in their counterfactual regret algorithm (CFR).
+The basic idea of CFR is that overall regret can be bounded by the sum of positive per-information-
+set immediate counterfactual regret. Let I be an information set of player i. Deﬁne σ(I→a) to be
+
+.
+
+(2)
+
+(3)
+
+3
+
+(4)
+
+(5)
+
+a strategy proﬁle identical to σ except that player i always chooses action a from information set
+I . Let ZI be the subset of all terminal histories where a preﬁx of the history is in the set I ; for
+z ∈ ZI let z [I ] be that preﬁx. Since we are restricting ourselves to perfect recall games z [I ] is
+vi (σ, I ) = (cid:88)
+unique. Deﬁne counterfactual value vi (σ, I ) as,
+πσ−i (z [I ])πσ (z [I ], z )ui (z ).
+z∈ZI
+(cid:17)
+(cid:16)
+The immediate counterfactual regret is then RT
+i,imm (I ) = maxa∈A(I ) RT
+i,imm (I , a), where
+T(cid:88)
+1
+(I→a) , I ) − vi (σ t , I )
+i,imm (I , a) =
+vi (σ t
+RT
+T
+t=1
+i ≤ (cid:80)
+Let x+ = max(x, 0). The key insight of CFR is the following result.
+Theorem 2 [1, Theorem 3]
+RT
+I ∈Ii
+i ≤ ∆u,i |Ii |(cid:112)|Ai |/
+Using regret-matching2 the positive per-information set immediate counterfactual regrets can be
+√
+driven to zero, thus driving average overall regret to zero. This results in an average overall regret
+T , where |Ai | = maxh:P (h)=i |A(h)|. We return to
+bound [1, Theorem 4]: RT
+this bound, tightening it further, in Section 4.
+This result suggests an algorithm for computing equilibria via self-play, which we will refer to as
+vanilla CFR. The idea is to traverse the game tree computing counterfactual values using Equation 4.
+Given a strategy, these values deﬁne regret terms for each player for each of their information sets
+using Equation 5. These regret values accumulate and determine the strategies at the next iteration
+using the regret-matching formula. Since both players are regret minimizing, Theorem 1 applies
+and so computing the strategy proﬁle ¯σ t gives us an approximate Nash Equilibrium. Since CFR
+only needs to store values at each information set, its space requirement is O(|I |). However, as
+previously mentioned vanilla CFR requires a complete traversal of the game tree on each iteration,
+which prohibits its use in many large games. Zinkevich and colleagues [4] made steps to alleviate
+this concern with a chance-sampled variant of CFR for poker-like games.
+
+RT ,+
+i,imm (I )
+
+3 Monte Carlo CFR
+
+The key to our approach is to avoid traversing the entire game tree on each iteration while still having
+the immediate counterfactual regrets be unchanged in expectation. In general, we want to restrict
+the terminal histories we consider on each iteration. Let Q = {Q1 , . . . , Qr } be a set of subsets of
+be the probability of considering block Qj for the current iteration (where (cid:80)r
+Z , such that their union spans the set Z . We will call one of these subsets a block. On each iteration
+we will sample one of these blocks and only consider the terminal histories in that block. Let qj > 0
+Let q(z ) = (cid:80)
+j=1 qj = 1).
+qj , i.e., q(z ) is the probability of considering terminal history z on the current
+j :z∈Qj
+˜vi (σ, I |j ) = (cid:88)
+iteration. The sampled counterfactual value when updating block j is:
+1
+q(z ) ui (z )πσ−i (z [I ])πσ (z [I ], z )
+z∈Qj ∩ZI
+Selecting a set Q along with the sampling probabilities deﬁnes a complete sample-based CFR algo-
+rithm. Rather than doing full game tree traversals the algorithm samples one of these blocks, and
+then examines only the terminal histories in that block.
+Suppose we choose Q = {Z }, i.e., one block containing all terminal histories and q1 = 1. In
+this case, sampled counterfactual value is equal to counterfactual value, and we have vanilla CFR.
+Suppose instead we choose each block to include all terminal histories with the same sequence of
+chance outcomes (where the probability of a chance outcome is independent of players’ actions as
+i,imm (I , a)/ P
+i (a|I ) =
+2Regret-matching selects actions with probability proportional to their positive regret, i.e., σ t
+RT ,+
+a(cid:48) ∈A(I ) RT ,+
+i,imm (I , a). Regret-matching satisﬁes Blackwell’s approachability criteria. [7, 8]
+
+(6)
+
+4
+
+in poker-like games). Hence qj is the product of the probabilities in the sampled sequence of chance
+outcomes (which cancels with these same probabilities in the deﬁnition of counterfactual value) and
+we have Zinkevich and colleagues’ chance-sampled CFR.
+Sampled counterfactual value was designed to match counterfactual value on expectation. We show
+this here, and then use this fact to prove a probabilistic bound on the algorithm’s average overall
+regret in the next section.
+Lemma 1 Ej∼qj [˜vi (σ, I |j )] = vi (σ, I )
+qj ˜vi (σ, I |j ) = (cid:88)
+Ej∼qj [˜vi (σ, I |j )] = (cid:88)
+Proof:
+(cid:80)
+= (cid:88)
+j
+j
+qj
+j :z∈Qj
+= (cid:88)
+q(z )
+z∈ZI
+z∈ZI
+Equation 8 follows from the fact that Q spans Z . Equation 9 follows from the deﬁnition of q(z ).
+
+qj
+q(z ) πσ−i (z [I ])πσ (z [I ], z )ui (z )
+
+πσ−i (z [I ])πσ (z [I ], z )ui (z ) = vi (σ, I )
+
+(cid:88)
+z∈Qj ∩ZI
+
+πσ−i (z [I ])πσ (z [I ], z )ui (z )
+
+(7)
+
+(8)
+
+(9)
+
+This results in the following MCCFR algorithm. We sample a block and for each information
+set that contains a preﬁx of a terminal history in the block we compute the sampled immediate
+(I→a) , I ) − ˜vi (σ t , I ). We accumulate these
+counterfactual regrets of each action, ˜r(I , a) = ˜vi (σ t
+regrets, and the player’s strategy on the next iteration applies the regret-matching algorithm to the
+accumulated regrets. We now present two speciﬁc members of this family, giving details on how the
+regrets can be updated efﬁciently.
+
+In outcome-sampling MCCFR we choose Q so that each block
+Outcome-Sampling MCCFR.
+contains a single terminal history, i.e., ∀Q ∈ Q, |Q| = 1. On each iteration we sample one terminal
+history and only update each information set along that history. The sampling probabilities, qj must
+specify a distribution over terminal histories. We will specify this distribution using a sampling
+proﬁle, σ (cid:48) , so that q(z ) = πσ (cid:48) (z ). Note that any choice of sampling policy will induce a particular
+i (a|I ) > , then there exists a δ > 0 such
+distribution over the block probabilities q(z ). As long as σ (cid:48)
+that q(z ) > δ , thus ensuring Equation 6 is well-deﬁned.
+The algorithm works by sampling z using policy σ (cid:48) , storing πσ (cid:48) (z ). The single history is then
+traversed forward (to compute each player’s probability of playing to reach each preﬁx of the history,
+i (h)) and backward (to compute each player’s probability of playing the remaining actions of the
+πσ
+i (h, z )). During the backward traversal, the sampled counterfactual regrets at each visited
+history, πσ
+(cid:26) wI · (cid:0)1 − σ(a|z [I ])(cid:1)
+information set are computed (and added to the total regret).
+if (z [I ]a) (cid:118) z
+−wI · σ(a|z [I ])
+otherwise
+
+ui (z )πσ−i (z )πσ
+i (z [I ]a, z )
+πσ (cid:48) (z )
+
+, where wI =
+
+(10)
+One advantage of outcome-sampling MCCFR is that if our terminal history is sampled according to
+the opponent’s policy, so σ (cid:48)
+−i = σ−i , then the update no longer requires explicit knowledge of σ−i as
+it cancels with the σ (cid:48)
+i (z [I ], z )/πσ (cid:48)
+−i . So, wI becomes ui (z )πσ
+i (z ). Therefore, we can use outcome-
+sampling MCCFR for online regret minimization. We would have to choose our own actions so that
+i ≈ σ t
+i , but with some exploration to guarantee qj ≥ δ > 0. By balancing the regret caused by
+σ (cid:48)
+exploration with the regret caused by a small δ (see Section 4 for how MCCFR’s bound depends
+upon δ ), we can bound the average overall regret as long as the number of playings T is known in
+advance. This effectively mimics the approach taking by Exp3 for regret minimization in normal-
+form games [9]. An alternative form for Equation 10 is recommended for implementation. This and
+other implementation details can be found in the paper’s supplemental material or the appendix of
+the associated technical report [10].
+
+˜r(I , a) =
+
+5
+
+External-Sampling MCCFR.
+In external-sampling MCCFR we sample only the actions of the
+opponent and chance (those choices external to the player). We have a block Qτ ∈ Q for each
+qτ = (cid:81)
+fc (τ (I )|I ) (cid:81)
+pure strategy of the opponent and chance, i.e.,, for each deterministic mapping τ from I ∈ Ic ∪
+IN \{i} to A(I ). The block probabilities are assigned based on the distributions fc and σ−i , so
+I ∈IN \{i} σ−i (τ (I )|I ). The block Qτ then contains all terminal histories
+I ∈Ic
+z consistent with τ , that is if ha is a preﬁx of z with h ∈ I for some I ∈ I−i then τ (I ) = a. In
+practice, we will not actually sample τ but rather sample the individual actions that make up τ only
+as needed. The key insight is that these block probabilities result in q(z ) = πσ−i (z ). The algorithm
+iterates over i ∈ N and for each doing a post-order depth-ﬁrst traversal of the game tree, sampling
+actions at each history h where P (h) (cid:54)= i (storing these choices so the same actions are sampled at
+all h in the same information set). Due to perfect recall it can never visit more than one history from
+the same information set during this traversal. For each such visited information set the sampled
+˜r(I , a) = (1 − σ(a|I )) (cid:88)
+counterfactual regrets are computed (and added to the total regrets).
+z∈Q∩ZI
+Note that the summation can be easily computed during the traversal by always maintaining a
+weighted sum of the utilities of all terminal histories rooted at the current history.
+
+ui (z )πσ
+i (z [I ]a, z )
+
+(11)
+
+4 Theoretical Analysis
+
+T .
+
+We now present regret bounds for members of the MCCFR family, starting with an improved bound
+for vanilla CFR that depends more explicitly on the exact structure of the extensive game. Let (cid:126)ai be
+a subsequence of a history such that it contains only player i’s actions in that history, and let (cid:126)Ai be
+(cid:112)|Ii ((cid:126)a)|. Note that (cid:112)|Ii | ≤ Mi ≤ |Ii | with both sides of this bound
+the set of all such player i action subsequences. Let Ii ((cid:126)ai ) be the set of all information sets where
+game to be Mi = (cid:80)
+player i’s action sequence up to that information set is (cid:126)ai . Deﬁne the M -value for player i of the
+(cid:126)ai∈ (cid:126)Ai
+being realized by some game. We can strengthen vanilla CFR’s regret bound using this constant,
+(cid:112)|Ai |/
+which also appears in the bounds for the MCCFR variants.
+√
+i ≤ ∆u,iMi
+Theorem 3 When using vanilla CFR for player i, RT
+We now turn our attention to the MCCFR family of algorithms, for which we can provide probabilis-
+tic regret bounds. We begin with the most exciting result: showing that external-sampling requires
+only a constant factor more iterations than vanilla CFR (where the constant depends on the desired
+conﬁdence in the bound).
+i ≤ (cid:16)
+(cid:17)
+(cid:112)|Ai |/
+Theorem 4 For any p ∈ (0, 1], when using external-sampling MCCFR, with probability at least
+√
+√
+1 − p, average overall regret is bounded by, RT
+2√
+1 +
+∆u,iMi
+T .
+p
+of decisions, the iteration cost of external-sampling is O((cid:112)|H |), while vanilla CFR is O(|H |),
+Although requiring the same order of iterations, note that external-sampling need only traverse a
+fraction of the tree on each iteration. For balanced games where players make roughly equal numbers
+meaning external-sampling MCCFR requires asymptotically less time to compute an approximate
+equilibrium than vanilla CFR (and consequently chance-sampling CFR, which is identical to vanilla
+CFR in the absence of chance nodes).
+(cid:17) (cid:0) 1
+i ≤ (cid:16)
+Theorem 5 For any p ∈ (0, 1], when using outcome-sampling MCCFR where ∀z ∈ Z either
+(cid:112)|Ai |/
+(cid:1) ∆u,iMi
+πσ−i (z ) = 0 or q(z ) ≥ δ > 0 at every timestep, with probability 1 − p, average overall regret
+√
+√
+2√
+1 +
+is bounded by RT
+T
+p
+δ
+The proofs for the theorems in this section can be found in the paper’s supplemental material and
+as an appendix of the associated technical report [10]. The supplemental material also presents a
+slightly complicated, but general result for any member of the MCCFR family, from which the two
+theorems presented above are derived.
+
+6
+
+Game
+OCP
+Goof
+LTTT
+PAM
+
+|H | (106 )
+22.4
+98.3
+70.4
+91.8
+
+|I | (103 )
+2
+3294
+16039
+20
+
+l
+5
+14
+18
+13
+
+M1
+45
+89884
+1333630
+9541
+
+M2
+32
+89884
+1236660
+2930
+
+tvc
+28s
+110s
+38s
+120s
+
+tos
+46µs
+150µs
+62µs
+85µs
+
+tes
+99µs
+150ms
+70ms
+28ms
+
+Table 1: Game properties. The value of |H | is in millions and |I | in thousands, and l = maxh∈H |h|.
+tvc , tos , and tes are the average wall-clock time per iteration4 for vanilla CFR, outcome-sampling
+MCCFR, and external-sampling MCCFR.
+5 Experimental Results
+
+We evaluate the performance of MCCFR compared to vanilla CFR on four different games. Goof-
+spiel [11] is a bidding card game where players have a hand of cards numbered 1 to N , and take
+turns secretly bidding on the top point-valued card in a point card stack using cards in their hands.
+Our version is less informational: players only ﬁnd out the result of each bid and not which cards
+were used to bid, and the player with the highest total points wins. We use N = 7 in our exper-
+iments. One-Card Poker [12] is a generalization of Kuhn Poker [13], we use a deck of size 500.
+Princess and Monster [14, Research Problem 12.4.1] is a pursuit-evasion game on a graph, neither
+player ever knowing the location of the other. In our experiments we use random starting positions,
+a 4-connected 3 by 3 grid graph, and a horizon of 13 steps. The payoff to the evader is the number of
+steps uncaptured. Latent Tic-Tac-Toe is a twist on the classic game where moves are not disclosed
+until after the opponent’s next move, and lost if invalid at the time they are revealed. While all of
+these games have imperfect information and roughly of similar size, they are a diverse set of games,
+varying both in the degree (the ratio of the number of information sets to the number of histories)
+and nature (whether due to chance or opponent actions) of imperfect information. The left columns
+of Table 1 show various constants, including the number of histories, information sets, game length,
+and M-values, for each of these domains.
+We used outcome-sampling MCCFR, external-sampling MCCFR, and vanilla CFR to compute an
+approximate equilibrium in each of the four games. For outcome-sampling MCCFR we used an
+epsilon-greedy sampling proﬁle σ (cid:48) . At each information set, we sample an action uniformly ran-
+domly with probability  and according to the player’s current strategy σ t . Through experimentation
+we found that  = 0.6 worked well across all games; this is interesting because the regret bound
+suggests δ should be as large as possible. This implies that putting some bias on the most likely
+outcome to occur is helpful. With vanilla CFR we used to an implementational trick called pruning
+to dramatically reduce the work done per iteration. When updating one player’s regrets, if the other
+player has no probability of reaching the current history, the entire subtree at that history can be
+pruned for the current iteration, with no effect on the resulting computation. We also used vanilla
+CFR without pruning to see the effects of pruning in our domains.
+Figure 1 shows the results of all four algorithms on all four domains, plotting approximation quality
+as a function of the number of nodes of the game tree the algorithm touched while computing.
+Nodes touched is an implementation-independent measure of computation; however, the results are
+nearly identical if total wall-clock time is used instead. Since the algorithms take radically different
+amounts of time per iteration, this comparison directly answers if the sampling variants’ lower cost
+per iteration outweighs the required increase in the number of iterations. Furthermore, for any
+√
+ﬁxed game (and degree of conﬁdence that the bound holds), the algorithms’ average overall regret
+is falling at the same rate, O(1/
+T ), meaning that only their short-term rather than asymptotic
+performance will differ.
+The graphs show that the MCCFR variants often dramatically outperform vanilla CFR. For example,
+in Goofspiel, both MCCFR variants require only a few million nodes to reach σ < 0.5 where CFR
+takes 2.5 billion nodes, three orders of magnitude more.
+In fact, external-sampling, which has
+the tightest theoretical computation-time bound, outperformed CFR and by considerable margins
+(excepting LTTT) in all of the games. Note that pruning is key to vanilla CFR being at all practical
+in these games. For example, in Latent Tic-Tac-Toe the ﬁrst iteration of CFR touches 142 million
+nodes, but later iterations touch as few as 5 million nodes. This is because pruning is not possible
+
+4As measured on an 8-core Intel Xeon 2.5 GHz machine running Linux x86 64 kernel 2.6.27.
+
+7
+
+Figure 1: Convergence rates of Vanilla CFR, outcome-sampled MCCFR, and external-sampled MC-
+CFR for various games. The y axis in each graph represents the exploitability of the strategies for
+the two players σ (see Section 2.1).
+
+in the ﬁrst iteration. We believe this is due to dominated actions in the game. After one or two
+traversals, the players identify and eliminate dominated actions from their policies, allowing these
+subtrees to pruned. Finally, it is interesting to note that external-sampling was not uniformly the best
+choice, with outcome-sampling performing better in Goofspiel. With outcome-sampling performing
+worse than vanilla CFR in LTTT, this raises the question of what speciﬁc game properties might
+favor one algorithm over another and whether it might be possible to incorporate additional game
+speciﬁc constants into the bounds.
+
+6 Conclusion
+
+In this paper we deﬁned a family of sample-based CFR algorithms for computing approximate equi-
+libria in extensive games, subsuming all previous CFR variants. We also introduced two sampling
+schemes: outcome-sampling, which samples only a single history for each iteration, and external-
+sampling, which samples a deterministic strategy for the opponent and chance. In addition to pre-
+senting a tighter bound for vanilla CFR, we presented regret bounds for both sampling variants,
+which showed that external sampling with high probability gives an asymptotic computational time
+improvement over vanilla CFR. We then showed empirically in very different domains that the re-
+duction in iteration time outweighs the increase in required iterations leading to faster convergence.
+There are three interesting directions for future work. First, we would like to examine how the
+properties of the game effect the algorithms’ convergence. Such an analysis could offer further
+algorithmic or theoretical improvements, as well as practical suggestions, such as how to choose
+a sampling policy in outcome-sampled MCCFR. Second, using outcome-sampled MCCFR as a
+general online regret minimizing technique in extensive games (when the opponents’ strategy is not
+known or controlled) appears promising. It would be interesting to compare the approach, in terms
+of bounds, computation, and practical convergence, to Gordon’s Lagrangian hedging [5]. Lastly,
+it seems like this work could be naturally extended to cases where we don’t assume perfect recall.
+Imperfect recall could be used as a mechanism for abstraction over actions, where information sets
+are grouped by important partial sequences rather than their full sequences.
+
+8
+
+ 0 0.2 0.4 0.6 0.8 1 1.2 1.4 1.6 1.8 2 0 1e+09 2e+09 3e+09 4e+09 5e+09Nodes TouchedGoofspielCFRCFR with pruningMCCFR-outcomeMCCFR-external 0 0.2 0.4 0.6 0.8 1 1.2 1.4 1.6 1.8 0 2e+08 4e+08 6e+08Nodes TouchedLatent Tic-Tac-ToeCFRCFR with pruningMCCFR-outcomeMCCFR-external 0 0.05 0.1 0.15 0.2 0.25 0 2e+08 4e+08 6e+08 8e+08 1e+09Nodes TouchedOne-Card PokerCFRCFR with pruningMCCFR-outcomeMCCFR-external 0 2 4 6 8 10 12 14 16 18 20 0 1e+08 2e+08 3e+08 4e+08 5e+08Nodes TouchedPrincess and MonsterCFRCFR with pruningMCCFR-outcomeMCCFR-externalReferences
+[1] Martin Zinkevich, Michael Johanson, Michael Bowling, and Carmelo Piccione. Regret mini-
+mization in games with incomplete information. In Advances in Neural Information Processing
+Systems 20 (NIPS), 2008.
+[2] Andrew Gilpin, Samid Hoda, Javier Pe ˜na, and Tuomas Sandholm. Gradient-based algorithms
+for ﬁnding Nash equilibria in extensive form games. In 3rd International Workshop on Internet
+and Network Economics (WINE’07), 2007.
+[3] D. Koller, N. Megiddo, and B. von Stengel. Fast algorithms for ﬁnding randomized strategies
+in game trees. In Proceedings of the 26th ACM Symposium on Theory of Computing (STOC
+’94), pages 750–759, 1994.
+[4] Martin Zinkevich, Michael Johanson, Michael Bowling, and Carmelo Piccione. Regret min-
+imization in game with incomplete information. Technical Report TR07-14, University of
+Alberta, 2007. http://www.cs.ualberta.ca/research/techreports/2007/
+TR07-14.php.
+[5] Geoffrey J. Gordon. No-regret algorithms for online convex programs. In In Neural Informa-
+tion Processing Systems 19, 2007.
+[6] Martin J. Osborne and Ariel Rubinstein. A Course in Game Theory. MIT Press, 1994.
+[7] Sergiu Hart and Andreu Mas-Colell. A simple adaptive procedure leading to correlated equi-
+librium. Econometrica, 68(5):1127–1150, September 2000.
+[8] D. Blackwell. An analog of the minimax theorem for vector payoffs. Paciﬁc Journal of Math-
+ematics, 6:1–8, 1956.
+[9] Peter Auer, Nicol `o Cesa-Bianchi, Yoav Freund, and Robert E. Schapire. Gambling in a rigged
+casino: The adversarial multi-arm bandit problem. In 36th Annual Symposium on Foundations
+of Computer Science, pages 322–331, 1995.
+[10] Marc Lanctot, Kevin Waugh, Martin Zinkevich, and Michael Bowling. Monte carlo sam-
+pling for regret minimization in extensive games. Technical Report TR09-15, University of
+Alberta, 2009. http://www.cs.ualberta.ca/research/techreports/2009/
+TR09-15.php.
+[11] S. M. Ross. Goofspiel — the game of pure strategy. Journal of Applied Probability, 8(3):621–
+625, 1971.
+[12] Geoffrey J. Gordon. No-regret algorithms for structured prediction problems. Technical Report
+CMU-CALD-05-112, Carnegie Mellon University, 2005.
+[13] H. W. Kuhn. Simpliﬁed two-person poker. Contributions to the Theory of Games, 1:97–103,
+1950.
+[14] Rufus Isaacs. Differential Games: A Mathematical Theory with Applications to Warfare and
+Pursuit, Control and Optimization. John Wiley & Sons, 1965.
+
+9
+
+

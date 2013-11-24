@@ -1,0 +1,785 @@
+Expectation Propagation in
+Gaussian Process Dynamical Systems
+
+Marc Peter Deisenroth∗
+Department of Computer Science
+Technische Universit ¨at Darmstadt, Germany
+
+Shakir Mohamed∗
+Department of Computer Science
+University of British Columbia, Canada
+
+Abstract
+
+Rich and complex time-series data, such as those generated from engineering sys-
+tems, ﬁnancial markets, videos, or neural recordings are now a common feature
+of modern data analysis. Explaining the phenomena underlying these diverse data
+sets requires ﬂexible and accurate models. In this paper, we promote Gaussian
+process dynamical systems as a rich model class that is appropriate for such an
+analysis. We present a new approximate message-passing algorithm for Bayesian
+state estimation and inference in Gaussian process dynamical systems, a non-
+parametric probabilistic generalization of commonly used state-space models. We
+derive our message-passing algorithm using Expectation Propagation and provide
+a unifying perspective on message passing in general state-space models. We
+show that existing Gaussian ﬁlters and smoothers appear as special cases within
+our inference framework, and that these existing approaches can be improved upon
+using iterated message passing. Using both synthetic and real-world data, we
+demonstrate that iterated message passing can improve inference in a wide range
+of tasks in Bayesian state estimation, thus leading to improved predictions and
+more effective decision making.
+
+1
+
+Introduction
+
+The Kalman ﬁlter and its extensions [1], such as the extended and unscented Kalman ﬁlters [7],
+are principled statistical models that have been widely used for some of the most challenging and
+mission-critical applications in automatic control, robotics, machine learning, and economics. In-
+deed, wherever complex time-series are found, Kalman ﬁlters have been successfully applied for
+Bayesian state estimation. However, in practice, time series often have an unknown dynamical
+structure, and they are high dimensional and noisy, violating many of the assumptions made in es-
+tablished approaches for state estimation. In this paper, we look beyond traditional linear dynamical
+systems and advance the state-of the-art in state estimation by developing novel inference algorithms
+for the class of nonlinear Gaussian process dynamical systems (GPDS).
+GPDSs are non-parametric generalizations of state-space models that allow for inference in time
+series, using Gaussian process (GP) probability distributions over nonlinear transition and measure-
+ment dynamics. GPDSs are thus able to capture complex dynamical structure with few assumptions,
+making them of broad interest. This interest has sparked the development of general approaches for
+ﬁltering and smoothing in GPDSs, such as [8, 3, 5]. In this paper, we further develop inference
+algorithms for GPDSs and make the following contributions: (1) We develop an iterative local mes-
+sage passing framework for GPDSs based on Expectation Propagation (EP) [11, 10], which allows
+for reﬁnement of the posterior distribution and, hence, improved inference. (2) We show that the
+general message-passing framework recovers the EP updates for existing dynamical systems as a
+special case and expose the implicit modeling assumptions made in these models. We show that EP
+in GPDSs encapsulates all GPDS forward-backward smoothers [5] as a special case and transforms
+them into iterative algorithms yielding more accurate inference.
+* Authors contributed equally.
+
+1
+
+2 Gaussian Process Dynamical Systems
+
+Gaussian process dynamical systems are a general class of discrete-time state-space models with
+(1)
+xt = h(xt−1 ) + wt , wt ∼ N (0, Q) ,
+h ∼ GP h ,
+(2)
+g ∼ GP g ,
+v t ∼ N (0, R) ,
+z t = g(xt ) + v t ,
+where t = 1, . . . , T . Here, x ∈ RD is a latent state that evolves over time, and z ∈ RE , E ≥ D ,
+are measurements. We assume i.i.d. additive Gaussian system noise w and measurement noise v .
+The central feature of this model class is that both the measurement function g and the transition
+function h are not explicitly known or parametrically speciﬁed, but instead described by probability
+distributions over these functions. The function distributions are non-parametric Gaussian processes
+(GPs), and we write h ∼ GP h and g ∼ GP g , respectively.
+A GP is a probability distribution p(f ) over functions f that is speciﬁed by a mean function µf
+and a covariance function kf [15]. Consider a set of training inputs X = [x1 , . . . , xn ](cid:62) and
+corresponding training targets y = [y1 , . . . yn ](cid:62) , yi = f (xi ) + w , w ∼ N (0, σ2
+w ). The poste-
+rior predictive distribution at a test input x∗ is Gaussian distributed N (y∗ | µf (x∗ ), σ2
+f (x∗ )) with
+(cid:62)
+(cid:62)
+∗ K −1y and variance σ2
+∗ K −1k∗ , where k∗ = kf (X , x∗ ),
+mean µf (x∗ ) = k
+f (x∗ ) = k∗∗ − k
+k∗∗ = kf (x∗ , x∗ ), and K is the kernel matrix.
+Since the GP is a non-parametric model, its use in GPDSs is desirable as it results in fewer restrictive
+model assumptions, compared to dynamical systems based on parametric function approximators for
+the transition and measurement functions (1)–(2). In this paper, we assume that the GP models are
+trained, i.e., the training inputs and corresponding targets as well as the GP hyperparameters are
+known. For both GP h and GP g in the GPDS, we used zero prior mean functions. As covariance
+functions kh and kg we use squared- exponential covariance functions with automatic relevance
+determination plus a noise covariance function to account for the noise in (1)–(2).
+Existing work for learning GPDSs includes the Gaussian process dynamical model (GPDM) [20],
+which tackles the challenging task of analyzing human motion in (high-dimensional) video se-
+quences. More recently, variational [2] and EM-based [19] approaches for learning GPDS were pro-
+posed. Exact Bayesian inference, i.e., ﬁltering and smoothing, in GPDSs is analytically intractable
+because of the dependency of the states and measurements on previous states through the nonlinear-
+ity of the GP. We thus make use of approximations to infer the posterior distributions p(xt |Z ) over
+latent states xt , t = 1, . . . , T , given a set of observations Z = z 1:T . Existing approximate inference
+approaches for ﬁltering and forward-backward smoothing are based on either linearization, particle
+representations, or moment matching as approximation strategies [8, 3, 5].
+A principled incorporation of the posterior GP model uncertainty into inference in GPDSs is neces-
+sary, but introduces additional uncertainty. In tracking problems where the location of an object is
+not directly observed, this additional source of uncertainty can eventually lead to losing track of the
+latent state. In this paper, we address this problem and propose approximate message passing based
+on EP for more accurate inference. We will show that forward-backward smoothing in GPDSs [5]
+beneﬁts from the iterative reﬁnement scheme of EP, leading to more accurate posterior distributions
+over the latent state and, hence, to more informative predictions and improved decision making.
+
+3 Bayesian State Estimation using Expectation Propagation
+
+Expectation Propagation [10, 11] is a widely-used deterministic algorithm for approximate Bayesian
+inference that has been shown to be highly accurate in many problems, including sparse regression
+product of factors fi (xt ), i.e., p(xt |Z ) = (cid:81)
+models [17], GP classiﬁcation [9], and inference in dynamical systems [13, 6, 18]. EP is derived
+algorithm in which p(xt |Z ) is approximated by a distribution q(xt ) = (cid:81)
+using a factor-graph, in which the distribution over the latent state p(xt |Z ) is represented as the
+i fi (xt ). EP then speciﬁes an iterative message passing
+i qi (xt ), using approx-
+imate messages qi (xt ). In EP, q and the messages qi are members of the exponential family, and
+q is determined such that the the KL-divergence KL(p||q) is minimized. EP is provably robust for
+log-concave messages [17] and invariant under invertible variable transformations [16]. In practice,
+EP has been shown to be more accurate than competing approximate inference methods [9, 17].
+In the context of the dynamical system (1)–(2), we consider factor graphs of the form of Fig. 1 with
+three types of messages: forward, backward, and measurement messages, denoted by the symbols
+
+2
+
+Figure 1: Factor graph (left) and fully factored graph (right) of a general dynamical system.
+
+Algorithm 1 Gaussian EP for Dynamical Systems
+1: Init: Set all factors qi to N (0, ∞I ); Set q(x1 ) = p(x1 ) and marginals q(xt(cid:54)=1 ) = N (0, 1010I )
+2: repeat
+for t = 1 to T do
+3:
+for all factors qi (xt ), where i = (cid:66), (cid:77), (cid:67) do
+4:
+Compute cavity distribution q\i (xt ) = q(xt )/qi (xt ) = N (xt | µ\i , Σ\i ) with
+5:
+Σ\i = (Σ−1
+t − Σ−1
+µ\i = Σ\i (Σ−1
+t µt − Σ−1
+)−1 ,
+i µi )
+i
+Determine moments of fi (xt )q\i (xt ), e.g., via the derivatives of
+log Zi (µ\i , Σ\i ) = log ∫ fi (xt )q\i (xt )dxt
+Update the posterior q(xt ) ∝ N (xt | µt , Σt ) and the approximate factor qi (xt ):
+Σt = Σ\i − Σ\i (∇(cid:62)
+µt = µ\i + Σ\i∇(cid:62)
+m∇m − 2∇s )Σ\i
+m ,
+∇m := d log Zi /dµ\i ,
+∇s := d log Zi /dΣ\i
+qi (xt ) = q(xt )/q\i (xt )
+end for
+8:
+end for
+9:
+10: until Convergence or maximum number of iterations exceeded
+
+(5)
+(6)
+(7)
+
+(3)
+
+6:
+
+7:
+
+(4)
+
+(cid:66), (cid:67), (cid:77), respectively. For EP inference, we assume a fully-factored graph, using which we compute
+the marginal posterior distributions p(x1 |Z ), . . . , p(xT |Z ), rather than the full joint distribution
+p(X |Z ) = p(x1 , . . . , xT |Z ). Both the states xt and measurements z t are continuous variables and
+the messages qi are unnormalized Gaussians, i.e., qi (xt ) = siN (xt | µi , Σi )
+
+3.1
+
+Implicit Linearizations Require Explicit Consideration
+
+Alg. 1 describes the main steps of Gaussian EP for dynamical systems. For each node xt in the
+fully-factored factor graph in Fig. 1, EP computes three messages: a forward, backward, and mea-
+surement message, denoted by q(cid:66) (xt ), q(cid:67) (xt ), and q(cid:77) (xt ), respectively. The EP algorithm updates
+the marginal q(xt ) and the messages qi (xt ) in three steps. First, the cavity distribution q\i (xt ) is
+computed (step 5 in Alg. 1) by removing qi (xt ) from the marginal q(xt ). Second, in the projec-
+tion step, the moments of fi (xt )q\i (xt ) are computed (step 6), where fi is the true factor. In the
+exponential family, the required moments can be computed using the derivatives of the log-partition
+function (normalizing constant) log Zi of fi (xt )q\i (xt ) [10, 11, 12]. Third, the moments of the
+marginal q(xt ) are set to the moments of fi (xt )q\i (xt ), and the message qi (xt ) is updated (step 7).
+We apply this procedure repeatedly to all latent states xt , t = 1, . . . , T , until convergence.
+EP does not directly ﬁt a Gaussian approximation qi to the non-Gaussian factor fi . Instead, EP
+determines the moments of qi in the context of the cavity distribution such that qi = pro j[fi q\i ]/q\i ,
+where pro j[·] is the projection operator, returning the moments of its argument.
+To update the posterior q(xt ) and the messages qi (xt ), EP computes the log-partition function log Zi
+in (4) to complete the projection step. However, for nonlinear transition and measurement models
+
+3
+
+qB(xt)xtqM(xt)qC(xt+1)qM(xt+1)p(xt+1|xt)xt+1qB(xt)xtqM(xt)xt+1qC(xt+1)qM(xt+1)qB(xt+1)qC(xt)(cid:90)
+(cid:90)
+in (1)–(2), computing Zi involves solving integrals of the form
+
+(8)
+
+p(a) =
+
+N (a | m(xt ), S (xt ))N (xt | b, B )dxt ,
+p(a|xt )p(xt )dxt =
+where a = z t for the measurement message, or a = xt+1 for the forward and backward mes-
+sages. In nonlinear dynamical systems m(xt ) is a nonlinear measurement or transition function.
+In GPDSs, m(xt ) and S (xt ) are the corresponding predictive GP means and covariances, respec-
+tively, which are nonlinearly related to xt . Because of the nonlinear dependencies between a and xt ,
+solving (8) is analytically intractable. We propose to approximate p(a) by a Gaussian distribution
+N (a | ˜µ, ˜Σ). This Gaussian approximation is only correct for a linear relationship a = J xt , where
+J is independent of xt . Hence, the Gaussian approximation is an implicit linearization of the func-
+tional relationship between a and xt , effectively linearizing either the transition or the measurement
+models.
+When computing EP updates using the derivatives ∇m and ∇s according to (5), it is crucial to
+explicitly account for the implicit linearization assumption in the derivatives—otherwise, the EP
+updates are inconsistent. For example, in the measurement and the backward message, we directly
+i
+approximate the partition functions Zi , i ∈ {(cid:77), (cid:67)} by Gaussians ˜Zi (a) = N ( ˜µi , ˜Σ
+). The consis-
+tent derivatives d(log ˜Zi )/dµ\i and d(log ˜Zi )/dΣ\i of ˜Zi with respect to the mean and covariance
+of the cavity distribution q are obtained by applying the chain rule, such that
+i(cid:17) ∂ ˜Σi
+(cid:16) ∂ log ˜Zi
+∇m = d log ˜Zi
+)−1J (cid:62)
+∂µ\i = (a − ˜µi )(cid:62) ( ˜Σ
+∈ R1×D ,
+i
+dµ\i = ∂ log ˜Zi
+∂ ˜µi
+∂ ˜µi
+∇s = d log ˜Zi
+∂Σ\i ∈ RD×D ,
+∂ ˜Σi
+dΣ\i = ∂ log ˜Zi
+∂ log ˜Zi
+∂ ˜µi − ˜Σ
+∂Σ\i = 1
+∂ ( ˜µi )(cid:62)
+∂ ˜Σi
+2
+∂Σ\i = J I4J (cid:62)
+∂µ\i = J (cid:62)
+∈ RE×D ,
+∈ RE×E×D×D ,
+∂ ˜Σi
+∂ ˜µi
+(11)
+where I4 ∈ RD×D×D×D is an identity tensor. Note that with the implicit linear model a = J xt ,
+the derivatives ∂ ˜µi /∂Σ\i and ∂ ˜Σ
+/∂µ\i vanish. Although we approximate Zi by a Gaussian ˜Zi ,
+i
+i , which also
+we are still free to choose a method of computing its mean ˜µi and covariance matrix ˜Σ
+inﬂuences the computation of J = ∂ ( ˜µi )/∂µ\i . However, even if ˜µi and ˜Σ
+i are general functions
+of µ\i and Σ\i , the derivatives ∂ ˜µi /∂µ\i and ∂ ˜Σ
+/∂Σ\i must equal the corresponding partial
+i
+derivatives in (11), and ∂ ˜µi /∂Σ\i and ∂ ˜Σ
+/∂µ\i must be set to 0. Hence, the implicit linearization
+i
+expressed by the Gaussian approximation ˜Zi must be explicitly taken into account in the derivatives
+to guarantee consistent EP updates.
+
+(9)
+
+(10)
+
+3.2 Messages in Gaussian Process Dynamical Systems
+
+We now describe each of the messages needed for inference in GPDSs, and outline the approxima-
+tions required to compute the partition function in (4). Updating a message requires a projection
+to compute the moments of the new posterior marginal q(xt ), followed by a Gaussian division to
+update the message itself. For the projection step, we compute approximate partition functions
+\i
+\i
+˜Zi , where i ∈ {(cid:77), (cid:66), (cid:67)}. Using the derivatives d log ˜Zi /dµ
+t and d log ˜Zi /dΣ
+t , we update the
+marginal q(xt ), see (5).
+(cid:90)
+(cid:90)
+Measurement Message For the measurement message in a GPDS, the partition function is
+\(cid:77)
+\(cid:77)
+\(cid:77)
+\(cid:77)
+f(cid:77) (xt )N (xt | µ
+Z(cid:77) (µ
+f(cid:77) (xt )q\(cid:77) (xt )dxt ∝
+, Σ
+t ) =
+t )dxt ,
+, Σ
+t
+t
+f(cid:77) (xt ) = p(z t |xt ) = N (z t | µg (xt ), Σg (xt )),
+(13)
+where f(cid:77) is the true measurement factor, and µg (xt ) and Σg (xt ) are the predictive mean and co-
+variance of the measurement GP GP g . In (12), we made it explicit that Z(cid:77) depends on the moments
+\(cid:77)
+\(cid:77)
+and Σ
+of the cavity distribution q\(cid:77) (xt ). The integral in (12) is of the form (8), but is
+µ
+t
+t
+intractable since solving it corresponds to a GP prediction at uncertain inputs [14], resulting in non-
+Gaussian predictive distributions. However, the mean and covariance of a Gaussian approximation
+˜Z(cid:77) to Z(cid:77) can be computed analytically: either using exact moment matching [14, 3], or approxi-
+mately by expected linearization of the posterior GP [8]; details are given in [4]. The moments of
+
+(12)
+
+4
+
+)dxt ,
+
+) =
+
+f(cid:67) (xt ) =
+
+(14)
+
+(15)
+
+(16)
+
+\(cid:77)
+\(cid:77)
+˜Z(cid:77) are also functions of the mean µ
+t of the cavity distribution. By taking the
+and variance Σ
+t
+linearization assumption of the Gaussian approximation into account explicitly (here, we implicitly
+linearize GP g ) when computing the derivatives, the EP updates remain consistent, see Sec. 3.1.
+(cid:90)
+(cid:90)
+Backward Message To update the backward message q(cid:67) (xt ), we require the partition function
+(cid:90)
+(cid:90)
+\(cid:67)
+\(cid:67)
+\(cid:67)
+\(cid:67)
+f(cid:67) (xt )q\(cid:67) (xt )dxt ∝
+f(cid:67) (xt )N (xt | µ
+Z(cid:67) (µ
+, Σ
+, Σ
+t
+t
+t
+t
+N (xt+1 | µh (xt ), Σh (xt ))q\(cid:66) (xt+1 )dxt+1 .
+p(xt+1 |xt )q\(cid:66) (xt+1 )dxt+1 =
+Here, the true factor f(cid:67) (xt ) in (15) takes into account the coupling between xt and xt+1 , which
+was lost in assuming the full factorization in Fig. 1. The predictive mean and covariance of GP h are
+(cid:90)
+(cid:90)
+denoted µh (xt ) and Σh (xt ), respectively. Using (15) in (14) and reordering the integration yields
+\(cid:67)
+\(cid:67)
+Z(cid:67) (µ
+p(xt+1 |xt )q\(cid:67) (xt )dxtdxt+1 .
+q\(cid:66) (xt+1 )
+) ∝
+, Σ
+t
+t
+\(cid:67)
+We approximate the inner integral in (16), which is of the form (8), by N (xt+1 | ˜µ\(cid:67)
+, ˜Σ
+) by
+\(cid:67)
+\(cid:67)
+\(cid:67)
+moment matching [14], for instance. Note that ˜µ\(cid:67)
+and ˜Σ
+are functions of µ
+. This
+and Σ
+t
+t
+Gaussian approximation implicitly linearizes GP h . Now, (16) can be computed analytically, and
+\(cid:67)
+\(cid:66)
+\(cid:66)
+t+1 | ˜µ\(cid:67)
+, ˜Σ
+we obtain a Gaussian approximation ˜Z(cid:67) = N (µ
+t+1 ) of Z(cid:67) that allows us to
++ Σ
+update the moments of q(xt ) and the message q(cid:67) (xt ).
+Forward Message Similarly, for the forward message, the projection step involves computing the
+(cid:90)
+(cid:90)
+partition function
+(cid:90)
+(cid:90)
+\(cid:66)
+\(cid:66)
+Z(cid:66) (µ
+, Σ
+t
+t
+
+\(cid:66)
+f(cid:66) (xt )N (xt | µ
+t
+p(xt |xt−1 )q\(cid:67) (xt−1 )dxt−1 =
+N (xt | µf (xt−1 ), Σf (xt−1 ))q\(cid:67) (xt−1 )dxt−1 ,
+where the true factor f(cid:66) (xt ) takes into account the coupling between xt−1 and xt , see Fig. 1. Here,
+the true factor f(cid:66) (xt ) is of the form (8). We propose to approximate f(cid:66) (xt ) directly by a Gaussian
+(cid:66)
+(cid:66)
+, ˜Σ
+q(cid:66) (xt ) ∝ N ( ˜µ
+). This approximation implicitly linearizes GP h . We obtain the updated
+posterior q(xt ) by Gaussian multiplication, i.e., q(xt ) ∝ q(cid:66) (xt )q\(cid:66) (xt ). With this approximation
+we do not update the forward message in context, i.e., the true factor f(cid:66) (xt ) is directly approximated
+instead of the product f(cid:66) (xt )q\(cid:66) (xt ), which can result in suboptimal approximation.
+
+f(cid:66) (xt )q\(cid:66) (xt )dxt =
+
+\(cid:66)
+, Σ
+t
+
+)dxt ,
+
+f(cid:66) (xt ) =
+
+) =
+
+(17)
+
+3.3 EP Updates for General Gaussian Smoothers
+
+We can interpret the EP computations in the context of classical Gaussian ﬁltering and smooth-
+ing [1]. During the forward sweep, the marginal q(xt ) = q\(cid:67) (xt ) corresponds to the ﬁlter dis-
+tribution p(xt |z 1:t ). Moreover, the cavity distribution q\(cid:77) (xt ) corresponds to the time update
+p(xt |z 1:t−1 ). In the backward sweep, the marginal q(xt ) is the smoothing distribution p(xt |Z ),
+incorporating the measurements of the entire time series. The mean and covariance of ˜Z(cid:67) can be
+interpreted as the mean and covariance of the time update p(xt+1 |z 1:t ).
+Updating the moments of the posterior q(xt ) via the derivatives of the log-partition function recovers
+exactly the standard Gaussian EP updates in dynamical systems described by Qi and Minka [13].
+For example, when incorporating an updated measurement message, the moments in (5) can also be
+, respectively, where Σxz\(cid:77)
+t − KΣzx\(cid:77)
+\(cid:77)
+\(cid:77)
+\(cid:77)
+z ) and Σt = Σ
+written as µt = µ
+=
+t + K (z t − µ
+t
+t
+\(cid:77)
+\(cid:77)
+] and K = Σxz\(cid:77)
+\(cid:77)
+(Σ\(cid:77)
+z = E[g(xt )] and Σ\(cid:77)
+z )−1 . Here, µ
+z = cov[g(xt )], where
+cov[x
+, z
+t
+t
+t
+xt ∼ q\(cid:77) (xt ). Similarly, the updated moments of q(xt ) with a new backward message via (5)
+\(cid:67)
+\(cid:67)
+\(cid:67)
+(cid:67)
+t+1 )L(cid:62) ,
+t+1 ) and Σt = Σ
+correspond to the updates [13] µt = µ
+t + L(Σt+1 − Σ
+t + L(µt+1 − µ
+\(cid:67)
+\(cid:67)
+\(cid:67)
+\(cid:67)
+\(cid:67)
+t+1 )−1 . Here, we deﬁned µ
+where L = cov[x
+t+1 = E[h(xt )] and Σ
+t+1 = cov[h(xt )],
+, x
+t+1 ](Σ
+t
+where xt ∼ q\(cid:67) (xt ).
+
+5
+
+Table 1: Performance comparison on the synthetic data set. Lower values are better.
+
+EKS
+EP-EKS
+GPEKS
+EP-GPEKS
+GPADS
+EP-GPADS
+NLLx
+−2.04 ± 0.07
+−2.17 ± 0.04
+−1.67 ± 0.22
+−1.87 ± 0.14
++ 1.67 ± 0.37
+−1.91 ± 0.10
+0.03 ± 2.0 × 10−3
+0.03 ± 2.0 × 10−3
+0.04 ± 4.6 × 10−2
+0.04 ± 4.6 × 10−2
+0.04 ± 4 × 10−3
+MAEx
+1.79 ± 0.21
+NLLz
+−0.69 ± 0.11
+−0.73 ± 0.11
+−0.75 ± 0.08
+−0.81 ± 0.07
+1.93 ± 0.28
+−0.77 ± 0.07
+The iterative message-passing algorithm in Alg. 1 provides an EP-based generalization and a uni-
+fying view of existing approaches for smoothing in dynamical systems, e.g., (Extended/Unscented/
+Cubature) Kalman smoothing and the corresponding GPDS smoothers [5]. Computing the messages
+via the derivatives of the approximate log-partition functions log ˜Zi recovers not only standard EP
+updates in dynamical systems [13], but also the standard Kalman smoothing updates [1].
+Using any prediction method (e.g., unscented transformation, linearization), we can compute Gaus-
+sian approximations of (8). This inﬂuences the computation of log ˜Zi and its derivatives with respect
+to the moments of the cavity distribution, see (9)–(10). Hence, our message-passing formulation is
+also general as it includes all conceivable Gaussian ﬁlters/smoothers in (GP)DSs, solely depending
+on the prediction technique used.
+
+4 Experimental Results
+
+We evaluated our proposed EP-based message passing algorithm on three data sets: a synthetic data
+set, a low-dimensional simulated mechanical system with control inputs, and a high-dimensional
+motion-capture data set. We compared to existing state-of-the-art forward-backward smoothers in
+GPDSs, speciﬁcally the GPEKS [8], which is based on the expected linearization of the GP models,
+and the GPADS [5], which uses moment-matching. We refer to our EP generalizations of these
+methods as EP-GPEKS and EP-GPADS.
+In all our experiments, we evaluated the inference methods using test sequences of measurements
+Z = [z 1 , . . . , zT ]. We report the negative log-likelihood of predicted measurements using the
+observed test sequence (NLLz ). Whenever available, we also compared the inferred posterior dis-
+tribution q(X ) ≈ p(X |Z ) of the latent states with the underlying ground truth using the average
+negative log-likelihood (NLLx ) and Mean Absolute Errors (MAEx ). We terminated EP after 100
+iterations or when the average norms of the differences of the means and covariances of q(X ) in
+two subsequent EP iterations were smaller than 10−6 .
+
+4.1 Synthetic Data
+
+We considered the nonlinear dynamical system
+xt+1 = 4 sin(xt ) + w , w ∼ N (0, 0.12 ) ,
+v ∼ N (0, 0.12 ) .
+zt = 4 sin(xt ) + v ,
+We used p(x1 ) = N (0, 1) as a prior on the initial latent state. We assumed access to the latent state
+and trained the dynamics and measurement GPs using 30 randomly generated points, resulting in
+a model with a substantial amount of posterior model uncertainty. The length of the test trajectory
+used was T = 20 time steps.
+Tab. 1 reports the quality of the inferred posterior distributions of the latent state trajectories using the
+average NLLx , MAEx , and NLLz (with standard errors), averaged over 10 independent scenarios.
+For this dataset, we also compared to the Extended Kalman Smoother (EKS) and an EP-iterated EKS
+(EP-EKS). Both inference methods make use of the known transition and measurement mappings
+h and g , respectively. Iterated forward-backward smoothing with EP (EP-EKS, EP-GPEKS, EP-
+GPADS) improved the smoothing posteriors using a single sweep only (EKS, GPEKS, GPADS).
+The GPADS performed poorly across all our evaluation criteria for two reasons: First, the GPs were
+trained using few data points, resulting in posterior distributions with a high degree of uncertainty.
+Second, predictive variances using moment-matching are generally conservative and increased the
+uncertainty even further. This uncertainty caused the GPADS to quickly lose track of the period of
+the state, as shown in Fig. 2(a). By iterating forward-backward smoothing using EP (EP-GPADS),
+the posteriors p(xt |Z ) were iteratively reﬁned, and the latent state could be followed closely as
+indicated by both the small blue error bars in Fig. 2(a) and all performance measures in Tab. 1. EP
+smoothing typically required a small number of iterations for the inferred posterior distribution to
+closely track the true state, Fig. 2(b). On average, EP required fewer than 10 iterations to converge
+to a good solution in which the mean of the latent-state posterior closely matched the ground truth.
+
+6
+
+(a) Example trajectory distributions with 95% con-
+ﬁdence bounds.
+
+(b) Average NLLx as a function of the EP iteration
+with twice the standard error.
+
+Figure 2: (a) Posterior latent state distributions using EP-GPADS (blue) and the GPADS (gray). The
+ground truth is shown in red (dashed). The GPADS quickly loses track of the period of the state
+revealed by the large posterior uncertainty. EP with moment matching (EP-GPADS) in the GPDS
+iteratively reﬁnes the GPADS posterior and can closely follow the true latent state trajectory. (b)
+Average NLLx per data point in latent space with standard errors of the posterior state distributions
+computed by the GPADS and the EP-GPADS as a function of EP iterations.
+
+4.2 Pendulum Tracking
+
+We considered a pendulum tracking problem to demonstrate GPDS inference in multidimen-
+sional settings, as well as the ability to handle control inputs. The state x of the system is
+given by the angle φ measured from being upright and the angular velocity ˙φ. The pendulum
+used has a mass of 1 kg and a length of 1 m, and random torques u ∈ [−2, 2] Nm were ap-
+plied for a duration 200 ms (zero-order-hold control). The system noise covariance was set to
+(cid:0)0, diag(0.12 , 0.052 )(cid:1) with zi = arctan (cid:0) sin φ−yi
+(cid:1), i = 1, 2. We trained the GP models using 4
+Σw = diag(0.32 , 0.12 ). The state was measured indirectly by two bearings sensors with coordinates
+(x1 , y1 ) = (−2, 0) and (x2 , y2 ) = (−0.5, −0.5), respectively, according to z = [z1 , z2 ](cid:62) + v , v ∼
+N
+cos φ−xi
+randomly generated trajectories of length T = 20 time steps, starting from an initial state distribu-
+tion p(x1 ) = N (0, diag(π2/162 , 0.52 )) around the upright position. For testing, we generated 12
+random trajectories starting from p(x1 ).
+Tab. 2 summarizes the performance
+Table 2: Performance comparison on the pendulum-swing
+of the various inference methods.
+data. Lower values are better.
+Generally,
+the (EP-)GPADS per-
+formed better than the (EP-)GPEKS
+NLLz
+MAEx
+NLLx
+across all performance measures.
+GPEKS
+0.30 ± 0.02 −2.41 ± 0.047
+−0.35 ± 0.39
+EP-GPEKS −0.33 ± 0.44
+This indicates that the (EP-)GPEKS
+0.31 ± 0.02 −2.39 ± 0.038
+GPADS
+suffered from overconﬁdent posteri-
+0.30 ± 0.02 −2.37 ± 0.042
+−0.80 ± 0.06
+EP-GPADS −0.85 ± 0.05
+0.29 ± 0.02 −2.40 ± 0.037
+ors compared to (EP-)GPADS, which
+is especially pronounced in the de-
+grading NLLx values with increasing EP iterations and the relatively high standard errors. In about
+20% of the test cases, the inference methods based on explicit linearization of the posterior mean
+function (GPEKS and EP-GPEKS) ran into numerical problems typical of linearizations [5], i.e.,
+overconﬁdent posterior distributions that caused numerical problems. We excluded these runs from
+the results in Tab. 2. The inference algorithms based on moment matching (GPADS and EP-GPADS)
+were numerically stable as their predictions are typically more coherent due to conservative approx-
+imations of moment matching.
+
+4.3 Motion Capture Data
+
+We considered motion capture data (from http://mocap.cs.cmu.edu/, subject 64) contain-
+ing 10 trials of golf swings recorded at 120 Hz, which we subsampled to 20 Hz. After removing
+observation dimensions with no variability we were left with observations z t ∈ R56 , which were
+then whitened as a pre-processing step. For trials 1–7 (403 data points), we used the GPDM [20]
+to learn MAP estimates of the latent states xt ∈ R3 . These estimated latent states and their corre-
+sponding observations are used to train the GP models GP f and GP g . Trials 8–10 were used as test
+
+7
+
+2468101214161820−505Time stepLatent State  True statePosterior state distribution (EP−GPADS)Posterior state distribution (GPADS)51015202530−2−1012EP iterationAverage NLL per data point  GPADSEP−GPADSFigure 3: Latent space posterior distribution (95% conﬁdence ellipsoids) of a test trajectory of the
+golf-swing motion capture data. The further the ellipsoids are separated the faster the movement.
+
+data without ground truth labels. The GPDM [20] focuses on learning a GPDS; we are interested in
+good approximate inference in these models.
+Fig. 3 shows the latent-state posterior distribution of a single test sequence (trial 10) obtained from
+the EP-GPADS. The most signiﬁcant prediction errors in observed space occurred in the region
+corresponding to the yellow/red ellipsoids, which is a low-dimensional embedding of the motion
+when the golf player hits the ball, i.e., the periods of high acceleration (poses 3–5).
+Tab. 3 summarizes the results of inference on the golf data set in all test trials: Iterating forward-
+backward smoothing by means of EP improved the inferred posterior distributions over the latent
+states. The posterior distributions in latent space inferred by the EP-GPEKS were tighter than the
+ones inferred by the EP-GPADS. The NLLz -values suffered a bit from this overconﬁdence, but the
+predictive performance of the EP-GPADS and EP-GPEKS were similar. Generally, inference was
+more difﬁcult in areas with fast movements (poses 3–5 in Fig. 3) where training data were sparse.
+The computational demand the two
+inference methods for GPDSs we
+presented is vastly different. High-
+dimensional approximate inference
+in the motion capture example using
+moment matching (EP-GPADS) was
+about two orders of magnitude slower
+than approximate inference based on
+linearization of the posterior GP mean (EP-GPEKS): For updating the posterior and the messages for
+a single time slice, the EP-GPEKS required less than 0.5 s, the EP-GPADS took about 20 s. Hence,
+numerical stability and more coherent posterior inference with the EP-GPADS trade off against
+computational demands.
+
+Test trial GPEKS EP-GPEKS GPADS EP-GPADS
+14.09
+14.28
+13.82
+14.20
+Trial 8
+14.84
+15.19
+14.71
+15.63
+Trial 9
+Trial 10
+26.68
+25.73
+25.64
+25.42
+
+Table 3: Average inference performance (NLLz , motion
+capture data set). Lower values are better.
+
+5 Conclusion
+We have presented an approximate message passing algorithm based on EP for improved infer-
+ence and Bayesian state estimation in GP dynamical systems. Our message-passing formulation
+generalizes current inference methods in GPDSs to iterative forward-backward smoothing. This
+generalization allows for improved predictions and comprises existing methods for inference in the
+wider theory for dynamical systems as a special case. Our new inference approach makes the full
+power of the GPDS model available for the study of complex time-series data. Future work includes
+investigating alternatives to linearization and moment matching when computing messages, and the
+more general problem of learning in Gaussian process dynamical systems.
+
+Acknowledgements
+
+We thank Zhikun Wang for helping with the motion capture experiment and Jan Peters for valu-
+able discussions. The research leading to these results has received funding from the European
+Community’s Seventh Framework Programme (FP7/2007–2013) under grant agreement #270327
+(ComPLACS) and the Canadian Institute for Advanced Research (CIFAR).
+
+8
+
+References
+[1] B. D. O. Anderson and J. B. Moore. Optimal Filtering. Dover Publications, 2005.
+[2] A. Damianou, M. K. Titsias, and N. D. Lawrence. Variational Gaussian Process Dynamical
+Systems. In Advances in Neural Information Processing Systems. 2011.
+[3] M. P. Deisenroth, M. F. Huber, and U. D. Hanebeck. Analytic Moment-based Gaussian Process
+Filtering. In Proceedings of the 26th International Conference on Machine Learning, pages
+225–232. Omnipress, 2009.
+[4] M. P. Deisenroth and S. Mohamed. Expectation Propagation in Gaussian Process Dynamical
+Systems: Extended Version, 2012. http://arxiv.org/abs/1207.2940.
+[5] M. P. Deisenroth, R. Turner, M. Huber, U. D. Hanebeck, and C. E. Rasmussen. Robust Filtering
+and Smoothing with Gaussian Processes. IEEE Transactions on Automatic Control, 2012.
+[6] T. Heskes and O. Zoeter. Expectation Propagation for Approximate Inference in Dynamic
+Bayesian Networks. In Proceedings of the International Conference on Uncertainty in Artiﬁ-
+cial Intelligence, pages 216–233, 2002.
+[7] S. J. Julier and J. K. Uhlmann. Unscented Filtering and Nonlinear Estimation. Proceedings of
+the IEEE, 92(3):401–422, March 2004.
+[8] J. Ko and D. Fox. GP-BayesFilters: Bayesian Filtering using Gaussian Process Prediction and
+Observation Models. Autonomous Robots, 27(1):75–90, 2009.
+[9] M. Kuss and C. E. Rasmussen. Assessing Approximate Inference for Binary Gaussian Process
+Classiﬁcation. Journal of Machine Learning Research, 6:1679–1704, 2005.
+[10] T. P. Minka. Expectation Propagation for Approximate Bayesian Inference. In Proceedings of
+the 17th Conference on Uncertainty in Artiﬁcial Intelligence, pages 362–369. Morgan Kauf-
+man Publishers, 2001.
+[11] T. P. Minka. A Family of Algorithms for Approximate Bayesian Inference. PhD thesis, Mas-
+sachusetts Institute of Technology, 2001.
+[12] T. P. Minka. EP: A Quick Reference. 2008.
+[13] Y. Qi and T. Minka. Expectation Propagation for Signal Detection in Flat-Fading Channels. In
+Proceedings of the IEEE International Symposium on Information Theory, 2003.
+[14] J. Qui ˜nonero-Candela, A. Girard, J. Larsen, and C. E. Rasmussen. Propagation of Uncer-
+tainty in Bayesian Kernel Models—Application to Multiple-Step Ahead Forecasting. In IEEE
+International Conference on Acoustics, Speech and Signal Processing, pages 701–704, 2003.
+[15] C. E. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning. The MIT
+Press, 2006.
+[16] M. W. Seeger. Expectation Propagation for Exponential Families. Technical report, University
+of California Berkeley, 2005.
+[17] M. W. Seeger. Bayesian Inference and Optimal Design for the Sparse Linear Model. Journal
+of Machine Learning Research, 9:759–813, 2008.
+[18] M. Toussaint and C. Goerick. From Motor Learning to Interaction Learning in Robotics,
+chapter A Bayesian View on Motor Control and Planning, pages 227–252. Springer-Verlag,
+2010.
+[19] R. Turner, M. P. Deisenroth, and C. E. Rasmussen. State-Space Inference and Learning with
+Gaussian Processes. In Proceedings of the International Conference on Artiﬁcial Intelligence
+and Statistics, volume JMLR: W&CP 9, pages 868–875, 2010.
+[20] J. M. Wang, D. J. Fleet, and A. Hertzmann. Gaussian Process Dynamical Models for Human
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 30(2):283–298,
+Motion.
+2008.
+
+9
+
+

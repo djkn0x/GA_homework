@@ -1,0 +1,369 @@
+Ob ject Identiﬁcation in Dynamic Environments
+
+Andrew Chou, Elliott Jin, Wendy Mu
+
+December 10, 2010
+
+1
+
+Introduction
+
+The overall problem our pro ject tackles is to have a
+robot be able to recognize ob jects that have been in-
+troduced or moved around in an environment. More
+speciﬁcally, given a room before and after new ob-
+jects have been introduced, we would like to be
+able to recognize how many new ob jects there are,
+whether they should be picked up or not, navigate
+to where those that should be picked up are, and
+pick them up.
+
+1.1 Applications
+
+The main application for this would be to have a
+robot be able to clean a room, by having it ﬁrst scan
+to see what the clean room should look like, and then
+go back after some period of time when the room
+has been changed, and clean up the room. Other
+practical applications include setting up a room or
+searching for ob jects in a crowded environment.
+
+2 Methods and Data
+
+To collect and test data, we used the Personal Robot
+2 (PR2), which has the capability to take laser scans
+of its environment. We used the PR2 to take re-
+peated scans of a room, before and after we intro-
+duce new ob jects to the environment. The laser
+scans returned 3D point clouds that represented the
+ob jects and layout of the environment. Additionally,
+we preprocessed the 3D point cloud ﬁles to make the
+format compatible with the rest of our processing
+
+pipeline. The PR2 uses the Robot Operating Sys-
+tem (ROS), so the code for our pro ject is all in a
+form that can be run on the PR2. The duration of
+each scan was 100 seconds, giving on the order of
+680,000 points in each point cloud, which was gen-
+erally dense enough for our algorithms.
+
+3 Point Cloud Alignment
+
+In practical applications, the robot would take the
+before and after room scans at two diﬀerent times, so
+it would be diﬃcult to ensure that the robot will be
+in the exact same position and orientation for both
+scans. As a result, the 3D point clouds from the be-
+fore and after scans will not even have constant ele-
+ments aligned, such as a wall or big table. In order to
+align the before and after scans of the room, we used
+the Iterative Closest Point (ICP) algorithm. We
+used a pre-existing implementation of the ICP algo-
+rithm that ROS already contained. This was the an
+iterative approach using the Levenberg-Marquardt
+algorithm, which is used to minimize the non-linear
+least-squares error. Because the robot at the point
+would be in the perspective of the second scan, we
+transform the old point cloud to be aligned with the
+new point cloud.
+
+4 Background Subtraction
+
+To ﬁnd the diﬀerences between the two scans, we re-
+moved all the points in the second scan that were less
+than some small ﬁxed distance away from any point
+
+1
+
+in the ICP-aligned ﬁrst scan. After background sub-
+traction, we are left with a point cloud that is a
+subset of the points in the second scan, represent-
+ing the ob jects that have been introduced into or
+moved in the environment.
+In particular, we only
+compute the diﬀerence one way so that ob jects that
+have been moved are treated the same as ob jects
+that have been introduced, and ob jects that have
+been removed are ignored. This makes sense because
+practically, the robot should only deal with what is
+in the room at the time of the second scan.
+
+removeBackground(PointCloud before, PointCloud after)
+begin
+for i := 1 to after.size step 1 do
+for j := 1 to before.size step 1 do
+if dist(after[i], before[j ]) < threshold)
+continue;
+
+ﬁ
+after.remove(i);
+
+od
+
+od
+end
+
+This code implemented directly turned out to be
+slower than we would prefer given the size of the
+point clouds, so we have also implemented some opti-
+mizations by taking advantage of knowing the ranges
+of the x, y , and z - coordinates.
+
+We empirically determined a suitable value for the
+threshold, which we set to be 0.04 meters, or 4 cen-
+timeters.
+
+5
+
+Identifying Ob ject Clusters
+and Location
+
+5.1 Clustering
+
+In the point cloud resulting from background sub-
+traction, we have only the points that correspond to
+new or moved ob jects in the second scan. If more
+than one ob ject has changed, we would like to be
+able to know exactly how many ob jects there are.
+
+Figure 1: Before aligning before (red) and after
+(blue) scans
+
+Figure 2: After aligning before (red) to after (blue)
+scan
+
+2
+
+0.811.21.4−1.5−1−0.500.511.500.511.50.60.811.21.4−1.5−1−0.500.511.500.511.52Here, we assume that none of the ob jects are touch-
+ing; otherwise from only a 3D point cloud it would
+be diﬃcult to tell whether two touching ob jects were
+one oddly-shaped ob ject or actually two. Assuming
+ob jects are not touching, ﬁguring out which points
+correspond to diﬀerent ob jects becomes a clustering
+problem.
+
+In order to determine how many new ob jects were
+introduced, we used a variation of single-linked clus-
+tering. Two points belong to the same cluster if
+there is a path between them consisting of inter-
+mediate points such that no distance between in-
+termediate points is greater than some ﬁxed mini-
+mum distance. We used an agglomerative method
+in which we iterate through the list of points not yet
+in a cluster, and add them if they are less than the
+ﬁxed minimum distance away from any point in the
+current cluster that we are building.
+If no points
+are less than this distance away, then we move onto
+building a new cluster. Using this algorithm, we can
+determine how many clusters (ob jects) there are and
+which points correspond to each ob ject.
+
+The algorithm we used is as follows:
+
+ﬁnd neighbor(PointCloud cloud, int[] labels,
+int position, int curr label)
+begin
+for i := position + 1 to cloud.size step 1 do
+if (labels[i] = 0 ∧
+dist(cloud[position], cloud[i]) < threshold)
+labels[i] = curr label;
+ﬁnd neighbors(cloud, labels, i, curr label);
+
+ﬁ
+
+od
+end
+
+ﬁnd clusters(PointCloud cloud, int[] labels)
+begin
+curr label := 0;
+for i := 1 to cloud.size step 1 do
+if labels[i] = 0
+num labels := num labels + 1;
+labels[i] = num labels;
+ﬁnd neighbors(cloud, labels, i, num labels);
+
+Figure 3: After background subtraction and cluster-
+ing: This ﬁgure shows the new scan with ob jects in-
+troduced (blue), and the two clusters that were rec-
+ognized by our clustering algorithm after the back-
+ground was subtracted, a juice carton (red) and a
+backpack (green)
+
+ﬁ
+
+od
+return curr label;
+end
+
+The method ﬁnd clusters gives each point a label cor-
+responding to the ob ject it belongs to. The method
+returns the total number of clusters that we found in
+the point cloud, representing the number of changed
+ob jects between the ﬁrst and second scans.
+
+To remove noise that could show up as clusters, we
+only considered point clusters that had more than
+400 points, which we empirically determined would
+be a good cutoﬀ given the minimum size of the set of
+ob jects we were considering and the amount of time
+we spent scanning the room (how dense the point
+cloud scan was). We also empirically determined a
+suitable value for the threshold, which we set to be
+0.03 meters, or 3 centimeters.
+
+3
+
+0.511.52−1−0.500.511.500.511.525.2 Location
+
+To represent the location of each ob ject, we use the
+center of mass of the ob ject based on the points in
+the cluster that correspond to the ob ject.
+
+6 Ob ject Classiﬁcation
+
+It is possible that new ob jects will be introduced
+into the room that we may not want the robot to
+pick up, such as furniture or other large ob jects that
+it cannot physically pick up. Thus, we additionally
+implemented binary classiﬁcation on point cloud ob-
+jects to help the PR2 decide which ob jects should
+be picked up. We would like to pick up ob jects that
+are “trash.” To pick features for this classiﬁcation
+problem, we thought about properties about ob jects
+that distinguish trash from non-trash. For instance,
+a smaller ob ject is more likely to be trash than a
+much larger ob ject, etc.
+
+6.1 Features
+
+The main features we chose to examine were related
+to the principal axes of the ob ject, or the lenghts
+of an appropriately rotated bounding box. The ten
+features we calculated were:
+
+1. Volume of the bounding box
+
+2. Area of each of the three distinct face of the
+bounding box
+
+3. Lenth of each of the three sides of the bounding
+box
+
+4. The ratio of each of the three pairs of the bound-
+ing box
+
+We implemented batch gradient descent, because
+our training set would just be the set of clusters rep-
+resenting ob jects that we obtained from the robot,
+and this is a small enough set that non-stochastic
+gradient descent would not be too slow.
+Since
+we had relatively few data points, we implemented
+
+leave-one-out cross validation so that we could po-
+tentially verify that we won’t have overﬁtting based
+on our ratio of features to number of data points.
+
+7
+
+Integration with the PR2
+
+The code for our pro ject uses ROS (Robot Operat-
+ing System) [1] that runs on the PR2, so all of this
+process can be done on the robot. We have pipelined
+the process so that, when already given data from
+the before and after scans of the room, the robot can
+automatically align the point scans, subtract out the
+background, pick out the clusters that are ob jects,
+navigate to the ob ject, and point its head towards
+the ob ject.
+
+In ROS, each step must be implemented as ROS
+node, which is an executable that can communicate
+with other ROS nodes, and in particular, the PR2.
+We have created the following ROS nodes:
+
+1. Point Cloud Listener with ICP: Takes a scan of
+the new room and aligns the old scan with the
+new scan.
+
+2. Background Remover: Subtracts out common
+elements between the two aligned scans.
+
+3. Cluster Finder: Classiﬁes the remaining points
+into diﬀerent clusters while discarding noise.
+
+4. Classiﬁer: Classiﬁes whether the robot should
+attempt to pick up the ob ject or not.
+
+5. Navigation Server: Sends navigation goals to
+the PR2 to navigate to ob jects in its environ-
+ment and point its head towards the ob ject.
+
+8 Conclusion
+
+This paper shows the fundamental steps needed to
+consider having a robot clean a room. There are
+many challenges to this process that can be ad-
+dressed using concepts in machine learning. As
+this paper has shown, among them are aligning
+
+4
+
+PR2, as well as Professor Ng for his suggestion to
+work on the pro ject of having a robot clean a room.
+
+11 References
+
+[1] ROS Wiki, http://www.ros.org.
+
+scans taken from diﬀerent perspectives, ﬁnding dif-
+ferences between rooms, clustering ob jects, classiﬁ-
+cation, and navigation. Other challenges in the fu-
+ture may include aligning scans from vastly diﬀerent
+perspectives (as opposed to from mostly the same
+position), more advanced ob ject classiﬁcation, and
+learning how to pick up diﬀerent ob jects.
+
+9 Future Work
+
+Although we have created and tested all the individ-
+ual ROS nodes mentioned above, we have not fully
+tested the integrated nodes together as a complete
+pipeline. In the future, we would like to integrate all
+these nodes so that the robot can automatically do
+all of these steps without human intervention.
+
+We would like to further optimize some parts of the
+process in terms of speed, especially the background
+removal and clustering algorithms.
+
+Additionally, we would like to gather much more
+data so that we could have more training examples
+to test each part of our pipeline more rigorously, but
+especially to test the ob ject classiﬁcation code that
+we have written.
+
+We would like to add grasping capabilities at the
+end of our pipeline; that is, given that it is in front
+of an ob ject that it needs to pick up, have the PR2
+actually pick up the ob ject from the environment.
+
+Finally, we would like to implement further improve-
+ments to ob ject classiﬁcation. For instance, in addi-
+tion to being able to only classify “trash” and “non-
+trash,” it would be helpful if the robot could deter-
+mine what kind of ob ject it is so that after picking
+it up from the environment, it could put it back in
+the correct place.
+
+10 Acknowledgement
+
+We would like to thank Ellen Klingbeil and Morgan
+Quigley for their help on working with ROS and the
+
+5
+
+

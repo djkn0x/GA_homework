@@ -1,0 +1,530 @@
+Submodular Multi-Label Learning
+
+James Petterson
+NICTA/ANU
+Canberra, Australia
+
+Tiberio Caetano
+NICTA/ANU
+Sydney/Canberra, Australia
+
+Abstract
+In this paper we present an algorithm to learn a multi-label classiﬁer which
+attempts at directly optimising the F -score. The key novelty of our for-
+mulation is that we explicitly allow for assortative (submodular) pairwise
+label interactions, i.e., we can leverage the co-ocurrence of pairs of labels
+in order to improve the quality of prediction. Prediction in this model
+consists of minimising a particular submodular set function, what can be
+accomplished exactly and eﬃciently via graph-cuts. Learning however is
+substantially more involved and requires the solution of an intractable com-
+binatorial optimisation problem. We present an approximate algorithm for
+this problem and prove that it is sound in the sense that it never predicts
+incorrect labels. We also present a nontrivial test of a suﬃcient condition
+for our algorithm to have found an optimal solution. We present exper-
+iments on benchmark multi-label datasets, which attest the value of the
+proposed technique. We also make available source code that enables the
+reproduction of our experiments.
+
+1
+
+Introduction
+
+Research in multi-label classiﬁcation has seen a substantial growth in recent years (e.g.,
+[1, 2, 3, 4]). This is due to a number of reasons, including the increase in availability of
+multi-modal datasets and the emergence of crowdsourcing, which naturally create settings
+where multiple interpretations of a given input observation are possible (multiple labels for
+a single instance). Also many classical problems are inherently multi-label, such as the
+categorisation of documents [5], gene function prediction [6] and image tagging [7].
+
+There are two desirable aspects in a multi-label classiﬁcation system. The ﬁrst is that a
+prediction should ideally be good both in terms of precision and recall: we care not only
+about predicting as many of the correct labels as possible, but also as few non-correct labels
+as possible. One of the most popular measures for assessing performance is therefore the
+F -score, which is the harmonic mean of precision and recall [8]. The second property we
+wish is that, both during training and also at test time, the algorithm should ideally take
+into account possible dependencies between the labels. For example, in automatic image
+tagging, if labels ocean and ship have high co-occurrence frequency in the training set, the
+model learned should somehow boost the chances of predicting ocean if there is strong visual
+evidence for the label ship [9].
+
+In this paper we present a method that directly addresses these two aspects. First, we
+explicitly model the dependencies between pairs of labels, albeit restricting them to be
+submodular (in rough terms, we model only the positive pairwise label correlations). This
+enables exact and eﬃcient prediction at test time, since ﬁnding an optimal subset of labels
+reduces to the minimisation of a particular kind of submodular set function which can be
+done eﬃciently via graph-cuts. Second, our method directly attempts at optimising a convex
+surrogate of the F -score. This is because we draw on the max-margin structured prediction
+framework from [10], which, as we will see, enables us to optimise a convex upper bound
+on the loss induced by the F -score. The critical technical contribution of the paper is a
+constraint generation algorithm for loss-augmented inference where the scoring of the pair
+(input-output) is a submodular set function and the loss is derived from the F -score. This
+
+1
+
+is what enables us to ﬁt our model into the estimator from [10]. Our constraint generation
+algorithm is only approximate since the problem is intractable. However we give theoretical
+arguments supporting our empirical ﬁndings that the algorithm is not only very accurate in
+practice, but in the ma jority of our real-world experiments it actually produces a solution
+which is exactly optimal. We compare the proposed method with other benchmark methods
+on publicly available multi-label datasets, and results favour our approach. We also provide
+source code that enables the reproduction of all the experiments presented in this paper.
+Related Work. A convex relaxation for F -measure optimisation in the multi-label setting
+was proposed recently in [11]. This can be seen as a particular case of our method when there
+are no explicit label dependencies. In [12] the authors propose quite general tree and DAG-
+based dependencies among the labels and adapt decoding algorithms from signal processing
+to the problem of ﬁnding predictions consistent with the structures learned. In [13] graphical
+models are used to impose structure in the label dependencies. Both [12] and [13] are in a
+sense complementary to our method since we do not enforce any particular graph topology
+on the labels but instead we limit the nature of the interactions to be submodular. In [14]
+the authors study the multi-label problem under the assumption that prior knowledge on
+the density of label correlations is available. They also use a max-margin framework, similar
+in spirit to our formulation. A quite simple and basic strategy for multi-label problems is
+to treat them as multiclass classiﬁcation, eﬀectively ignoring the relationships between the
+labels. One example in this class is the Binary Method [15]. The RAkEL algorithm [16] uses
+instead an ensemble of classiﬁers, each learned on a random subset of the label set. In [17] the
+authors propose a Bayesian CCA model and apply it to multi-label problems by enforcing
+group sparsity regularisation in order to capture information about label co-occurrences.
+
+2 The Model
+
+Let x ∈ X be a vector of dimensionality D with the features of an instance (say, an image);
+let y ∈ Y be a set of labels for an instance (say, tags for an image), from a ﬁxed dictionary
+of V possible labels, encoded as y ∈{ 0, 1}V . For example, y = [1 1 0 0] denotes the ﬁrst
+and second labels of a set of four. We assume we are given a training set {(xn , yn )}N
+n=1 , and
+our task is to estimate a map f : X → Y that has good agreement with the training set but
+also generalises well to new data. In this section we deﬁne the class of functions f that we
+will consider. In the next section we deﬁne the learning algorithm, i.e., a procedure to ﬁnd
+a speciﬁc f in the class.
+
+2.1 The Loss Function Derived from the F -Score
+
+F =
+
+1
+N
+
+2 p(yn , ¯yn )r(yn , ¯yn )
+p(yn , ¯yn ) + r(yn , ¯yn )
+
+Our notion of ‘agreement’ with the training set is given by a loss function. We focus on
+maximising the average over all instances of F, a score that considers both precision and
+recal l and can be written in our notation as
+N￿n=1
+and r(y , ¯y) = |y ⊙ ¯y |
+, where p(y , ¯y) = |y ⊙ ¯y |
+|y |
+| ¯y |
+Here ¯yn denotes our prediction for input instance n, yn is the corresponding ground-truth,
+⊙ denotes the element-wise product and |u| denotes the 1-norm of vector u (in our case the
+number of 1s since u will always be binary). Since our goal is to maximise the F -score a
+suitable choice of loss function is ∆(y , ¯y) = 1 − F (y , ¯y), which is the one we adopt in this
+paper. The loss for a single prediction is therefore
+∆(y , ¯y) = 1 − 2 |y ⊙ ¯y |/(|y | + | ¯y |)
+2.2 Feature Maps and Parameterisation
+
+(1)
+
+We assume that the prediction for a given input x is a maximiser of a score that encodes
+both the unary dependency between labels and instances as well as the pairwise dependencies
+between labels:
+
+¯y ∈ argmax
+y∈Y
+
+yT Ay
+
+2
+
+(2)
+
+where A is an upper-triangular matrix scoring the pair (x, y), with diagonal elements Aii =
+￿x, θ1
+i ￿, where x is the input feature vector and θ1
+i is a parameter vector that deﬁnes how
+label i weighs each feature of x. The oﬀ-diagonal elements are Aij = Cij θij , where Cij
+is the normalised counts of co-occurrence of labels i and j in the training set, and θ2
+ij
+the corresponding scalar parameter which is forced to be non-negative. This will ensure
+that the oﬀ-diagonal entries of A are non-negative and therefore that problem 2 consists
+of the maximisation of a supermodular function (or, equivalently, the minimisation of a
+submodular function), which can be solved eﬃciently via graph-cuts. We also deﬁne the
+T . . . ]T , θ2 := [. . .θ 2
+ij . . . ]T and θ = [θ1 T θ2 T ]T , as
+complete parameter vectors θ1 := [. . .θ 1
+i
+well as the complete feature maps φ1 (x, y) = vec(x ⊗ y), φ2 (y) = vec(y ⊗ y) and φ(x, y) =
+[φT
+1 (x, y) φT
+2 (y)]T . This way the score in expression 2 can be written as yT Ay = ￿φ(x, y),θ ￿.
+Note that the dimensionality of θ2 is the number of non-zero elements of matrix C –in this
+setting that is ￿V
+2 ￿, but it can be reduced by setting to zero elements of C below a speciﬁed
+threshold.
+3 Learning Algorithm
+Optimisation Problem. Direct optimisation of the loss deﬁned in equation 1 is a highly
+intractable problem since it is a discrete quantity and our parameter space is continuous.
+Here we will follow the program in [10] and instead construct a convex upper bound on the
+loss function, which can then be attacked using convex optimisation tools. The purpose of
+learning will be to solve the following convex optimisation problem
+2 ￿θ￿2￿
+￿ 1
+N￿n=1
+λ
+[θ∗ ,ξ ∗ ] = argmin
+N
+θ,ξ
+s.t. ￿φ(xn , yn ),θ ￿ − ￿φ(xn , y),θ ￿ ≥ ∆(y , yn ) − ξn ,
+ξn ≥ 0, ∀n, y ￿= yn .
+This is the margin-rescaling estimator for structured support vector machines [10].
+The constraints immediately imply that the optimal solution will be such that ξ ∗n ≥
+∆(argmaxy ￿φ(xn , y),θ ∗ ￿ , yn ), and therefore the minimum value of the ob jective function
+upper bounds the loss, thus motivating the formulation. Since there are exponentially many
+constraints, we follow [10] in adopting a constraint generation strategy, which starts by
+solving the problem with no constraints and iteratively adding the most violated constraint
+for the current solution of the optimisation problem. This is guaranteed to ﬁnd an ￿-close
+approximation of the solution of (3) after including only a polynomial (O(￿−2 )) number of
+constraints [10]. At each iteration we need to maximise the violation margin ξn , which from
+the constraints 3b reduces to
+y∗n ∈ argmax
+[∆(y , yn ) + ￿φ(xn , y),θ ￿]
+y∈Y
+Learning Algorithm. The learning algorithm is described in Algorithm 1 (requires as
+subroutine Algorithm 2). Algorithm 1 describes a particular convex solver based on bundle
+methods (BMRM [18]), which we use here. Other solvers could have been used instead.
+Our contribution lies not here, but in the routine of constraint generation for Algorithm 1,
+which is described in Algorithm 2.
+
+ξn +
+
+(3b)
+
+(3a)
+
+(4)
+
+BMRM requires the solution of constraint generation and the value of the ob jective function
+for the slack corresponding to the constraint generated, as well as its gradient. Soon we will
+discuss constraint generation. The other two ingredients we describe here. The slack at the
+optimal solution is
+
+ξ ∗n =∆( y∗n , yn ) + ￿φ(xn , y∗n ),θ ￿ − ￿φ(xn , yn ),θ ￿
+thus the ob jective function from (3) becomes
+N ￿n
+1
+∆(y∗n , yn ) + ￿φ(xn , y∗n ),θ ￿ − ￿φ(xn , yn ),θ ￿ +
+whose gradient is
+N ￿n
+1
+
+(φ(xn , yn ) − φ(xn , y∗n ))
+
+λθ −
+
+λ
+2 ￿θ￿2 ,
+
+3
+
+(5)
+
+(6)
+
+(7)
+
+Algorithm1BundleMethodforRegu-larisedRiskMinimisation(BMRM)1:Input:trainingset{(xn,yn)}Nn=1,λ,Output:θ2:Initializei=1,θ1=0,max=−∞3:repeat4:forn=1toNdo5:Computey∗n(y∗nkmaxreturnedbyAl-gorithm2.)6:endfor7:Computegradientgi(equation(7))andobjectiveoi(equation(6))8:θi+1:=argminθλ2￿θ￿2+max(0,maxj≤i￿gj,θ￿+oj);i←i+19:untilconverged(see[17])10:returnθAlgorithm2ConstraintGeneration1:Input:(xn,yn),θ,V,Output:y∗nkmax2:k=03:A[k],nij=￿θij,Cij￿(foralli,j:i￿=j)4:whilek≤Vdo5:diag(A[k],n)=diag(A)−2ynk+￿yn￿26:y∗nk=argmaxyyTA[k],ny(graph-cuts)7:if|y∗nk|>kthen8:kmax=|y∗nk|;k=kmax9:elseif|y∗nk|=kthen10:kmax=|y∗nk|;k=kmax+111:else12:k=k+113:endif14:endwhile15:returny∗nkmaxExpressions(6)and(7)arethenusedinAlgorithm1.ConstraintGeneration.Themostchallengingstepconsistsofsolvingtheconstraintgenerationproblem.Constraintgenerationforagiventraininginstancenconsistsofsolvingthecombinatorialoptimisationprobleminexpression4,which,usingthelossinequation1,aswellasthecorrespondenceyTAy=￿φ(x,y),θ￿,canbewrittenasy∗n∈argmaxyyTAn(y)y(8)wherediag(An)=diag(A)−2yn|y|+|yn|andoﬀdiag(An)=oﬀdiag(A).NotethatthematrixAndependsony.Moreprecisely,asubsetofitsdiagonalelements(thoseAniiforwhichyn(i)=1)dependsonthequantity|y|,i.e.,thenumberofnonzeroelementsiny.Thismakessolvingproblem8aformidabletask.IfAnwereindependentofy,theneq.8couldbesolvedexactlyandeﬃcientlyviagraph-cuts,justasourpredictionprobleminequation2.Ana¨ıvestrategywouldbetoaimforsolvingproblem8Vtimes,oneforeachvalueof|y|,andconstrainingtheoptimisationtoonlyincludeelementsysuchthat|y|isﬁxed.Inotherwords,wecanpartitiontheoptimisationproblemintokoptimisationproblemsconditionedonthesetsYk:={y:|y|=k}:maxyyTA(y)y=maxkmaxy∈YkyTA[k],ny(9)whereA[k],ndenotestheparticularmatrixAnthatweobtainwhen|y|=k.Howevertheinnermaximizationabove,i.e.,theproblemofmaximisingasupermodularfunction(orminimisingasubmodularfunction)subjecttoacardinalityconstraint,isitselfNP-hard[19].Wethereforedonotfollowthisstrategy,butinsteadseekapolynomial-timealgorithmthatinpracticewillgiveusanoptimalsolutionmostofthetime.Algorithm2describesouralgorithm.Intheworstcaseitcallsgraph-cutsO(V)times,sothetotalcomplexityisO(V4).1ThealgorithmessentiallysearchesforthelargestksuchthatsolvingargmaxyyTA[k],nyreturnsasolutionwithk1s.Wecallthekobtainedkmax,andthecorrespondingsolutiony∗nkmax.Observethefactthat,askincreasesduringtheexecutionofthealgorithm,Aniiincreasesforthoseiwhereyn(i)=1.Theincrementobservedwhenkincreasestok￿is￿k￿k:=A[k￿],nii−A[k],nii=2k￿−k(k￿+|yn|)(k+|yn|)(10)whichisalwaysapositivequantity.Althoughthisalgorithmisnotprovablyoptimal,Theo-rem1guaranteesthatitissoundinthesensethatitneverpredictsincorrectlabels.Inthe1Theworst-caseboundofO(V3)forgraph-cutsisverypessimistic;inpracticethealgorithmisextremelyeﬃcient.4next section we present additional evidence supporting this algorithm, in the form of a test
+that if positive guarantees the solution obtained is optimal.
+We call a solution y ￿ a partial ly optimal solution of argmaxy yT An (y)y if the labels it predicts
+as being present are indeed present in an optimal solution, i.e., if for those i for which
+y ￿ (i) = 1 we also have y∗n (i) = 1, for some y∗n ∈ argmaxy yT An (y)y . Equivalently, we can
+write y ￿ ⊙ y∗n = y ￿ . We have the following result
+Theorem 1 Upon completion of Algorithm 2, y∗n
+kmax is a partial ly optimal solution of
+argmaxy yT An (y)y .
+
+The proof is in the Appendix A. The theorem means that whenever the algorithm predicts
+the presence of a label, it does so correctly; however there may be labels not predicted which
+are in fact present in the corresponding optimal solution.
+
+4 Certiﬁcate of Optimality
+
+> 0
+
+(11)
+
+As empirically veriﬁed in our experiments in section 5, our constraint generation algorithm
+(Algorithm 2) is indeed quite accurate: most of the time the solution obtained is optimal.
+In this section we present a test that if positive guarantees that an optimal solution has
+been obtained (i.e., a certiﬁcate of optimality). This can be used to generate empirical lower
+bounds on the probability that the algorithm returns an optimal solution (we explore this
+possibility in the experimental section).
+We start by formalising the situation in which the algorithm will fail. Let Z := {i :
+y∗n
+kmax (i) = 0}, and PZ be the power set of Z (Z for ‘zeros’). Let O := {i : y∗n
+kmax (i) = 1} (O
+for ‘ones’). Then the algorithm will fail if there exists α ∈ PZ such that
++ ￿i∈α
++ ￿i∈α,j∈O
+￿i,j∈α;i ￿=j
+A[kmax+|α|],n
+|yn ⊙ y∗n
+An
+kmax |
+Aij
++ ￿kmax+|α|
+ij
+ii
+kmax
+￿
+￿￿
+￿
+￿￿
+￿
+￿
+￿￿
+￿
+￿
+￿
+￿￿
+￿
+(d)
+(c)
+(b)
+(a)
+The above expression describes the situation in which, starting with y∗n
+kmax , if we insert |α|
+1s in the indices deﬁned by index set α, we will obtain a new vector y ￿ which is a feasible
+solution of argmaxy yT An (y)y and yet has strictly larger score than solution y∗n
+kmax . This
+can be understood by looking closely into each of the sums in expression 11. Sums (a)
+and (b) describe the increase in the ob jective function due to the inclusion of oﬀ-diagonal
+terms. Both (a) and (b) are non-negative due to the submodularity assumption. Term (c)
+is the sum of the diagonal terms corresponding to the newly introduced 1s of y ￿ . Term (c)
+is negative or zero, since each term in the sum is negative or zero (otherwise y∗n
+kmax would
+have included it). Finally, term (d) is non-negative, being the total increase in the diagonal
+elements of O due to the inclusion of |α| additional 1s. We can write (c) as
+￿i∈α
+= ￿i∈α
++ ￿i∈α
+(A[kmax+|α|],n
+A[kmax+|α|],n
+− A[kmax ],n
+A[kmax ],n
+)
+ii
+ii
+ii
+ii
+￿
+￿￿
+￿
+￿
+￿￿
+￿
+￿
+￿￿
+￿
+(c)
+(e)
+(f )
+and the last term can be bounded as
+￿i∈α
+(A[kmax+|α|],n
+− A[kmax ],n
+) ≤ ￿kmax+|α|
+vα
+ii
+ii
+kmax
+￿
+￿￿
+￿
+(g)
+where vα = min[|yn |−| yn ⊙y∗n
+kmax |, |α|] is an upper bound on the number of indices i ∈ α such
+that yn (i) = 1, and ￿kmax+|α|
+is the increment in a diagonal element i for which yn (i) = 1
+kmax
+arising from increasing the cardinality of the solution from kmax to kmax + |α|. Incorporating
+bound 13 into equation 12, we get that (c) ≤ (e) + (g). We can then replace (c) in inequality
+11 by (e) + (g), obtaining
+ij + ￿i∈α,j∈O
+Aij + ￿i∈α
+￿i,j∈α;i ￿=j
+A[kmax ],n
+|yn ⊙ y∗n
+An
+kmax |
+vα + ￿kmax+|α|
++ ￿kmax+|α|
+ii
+kmax
+kmax
+￿￿
+￿
+￿
+￿
+￿￿
+￿
+:=γα
+:=βA,α
+5
+
+(12)
+
+(13)
+
+> 0
+
+(14)
+
+Algorithm3ComputemaxαβA,α1:Input:A[kmax],n,y∗nkmax,V,2:Output:max3:max=−∞4:Z={i:y∗nkmax(i)=0}5:O={i:y∗nkmax(i)=1}6:fori∈Zdo7:O￿=O∪i8:rmax=maxy:yO￿=1yTA[kmax],ny(graph-cuts)9:ifrmax>maxthen10:max=rmax11:endif12:endfor13:max=max−maxyyTA[kmax],ny14:returnmaxTable1:Datasets.#train/#testdenotesthenumberofobservationsusedfortrainingandtestingrespec-tively;VisthenumberoflabelsandDthedimensionalityofthefeatures;Avgistheaveragenumberoflabelsperinstance.datasetyeastenrondomainbiologytext#train15001123#test917579V1453D1031001Avg4.233.37Weknowthat,regardlessofAorα,βA,α≤0(otherwisey∗nkmax/∈argmaxyyTA[kmax],ny,sinceβA,αistheincrementintheobjectivefunctionyTA[kmax],nyobtainedbyadding1sintheentriesofα).Thekeyfactcomingtoouraidisthatγαis‘small’,andaweakupperboundis2.Thisisbecause￿kmax+|α|kmaxvα+￿kmax+|α|kmax|yn⊙y∗nkmax|≤￿kmax+|α|kmax|yn|≤￿Vkmax|yn|≤￿V0|yn|==2V|yn|/((V+|yn|)|yn|)≤2(15)(Notethatif|yn|=0thenγα=0andouralgorithmwillalwaysreturnanoptimalsolutionsinceβA,α≤0).Now,sinceβA,α≤0foranyAandα∈PZ,itsuﬃcesthatwestudythequantitymaxαβA,α:ifmaxαβA,α<−2,thenβA,α<−2foranyα∈PZ.ItishoweververyhardtounderstandtheoreticallythebehaviouroftherandomvariablemaxαβA,αevenforasimplisticuniformi.i.d.assumptionontheentriesofA.Thisisbecausethedomainofα,PZ,isitselfarandomquantitythatdependsontheparticularAchosen.ThismakescomputingeventheexpectedvalueofmaxαβA,αanintractabletask,letaloneobtainingconcentrationofmeasureresultsthatcouldgiveusupperboundsontheprobabilityofcondition14holdingundertheassumeddistributiononA.However,foragivenAwecanactuallycomputemaxαβA,αeﬃciently.ThiscanbedonewithAlgorithm3.Thealgorithmeﬀectivelycomputesthegapbetweenthescoresoftheoptimalsolutiony∗nkmaxandthehighestscoringsolutionifonesetsto1atleastoneofthezeroentriesiny∗nkmax.Itdoessobysolvinggraph-cutsconstrainingthesolutionytoincludethe1spresentiny∗nkmaxbutadditionallyﬁxingoneofthezeroentriesofy∗nkmaxto1(lines7-8).Thisisdoneforeverypossiblezeroentryofy∗nkmax,andthemaximumscoreisrecorded(lines7-11).Thegapbetweenthisandthescoreoftheoptimalsolutiony∗nkmaxisthenreturned(line13).ThiswillinvolveV−kmaxcallstograph-cuts,andthereforethetotalcomputationalcomplexityisO(V4).OncewecomputemaxαβA,α,wesimplytestwethermaxαβA,α+￿|V|kmax|yn|>0holds(weuse￿|V|kmax|yn|ratherthan2asanupperboundforγαbecause,asseenfrom(15),itisthetightestupperboundwhichstilldoesnotdependonαandthereforecanbecomputed).Wehavethefollowingtheorem(proveninAppendixA)Theorem2UponcompletionofAlgorithm3,ifmaxαβA,α+￿|V|kmax|yn|≤0,theny∗nkmaxisanoptimalsolutionofargmaxyyTAn(y)y.5ExperimentalResultsToevaluateourmulti-labellearningmethodweappliedittoreal-worlddatasetsandcom-paredittostate-of-theartmethods.Datasets.Forthesakeofreproducibilitywefocusedinpubliclyavailabledatasets,andtoensurethatthelabeldependencieshaveareasonableimpactintheresultswerestrictedtheexperimentstodatasetswithasuﬃcientlylargeaveragenumberoflabelsperinstance.We6Figure 1: F -Score results on enron (left) and yeast (right), for diﬀerent amounts of unary
+features. The horizontal axis denotes the proportion of the features used in training.
+
+chose therefore two multilabel datasets from mulan:2 yeast and enron. Table 1 describes
+them in more detail.
+
+Experimental setting. The datasets used have very informative unary features, so to
+better visualise the contribution of the label dependencies to the model we trained using
+varying amounts (1%, 10% and 100%) of the original unary features. We compared our
+proposed method to RML[11] without reversion3 , which is essentially our model without
+the quadratic term, and to other state-of-the-art methods for which source code is publicly
+available – BR [15], RAkEL[16] and MLKNN[20].
+
+Model selection. Our model has two parameters: λ, the trade-oﬀ between data ﬁtting
+and good generalisation, and c, a scalar that multiplies C to control the trade-oﬀ between
+the linear and the quadratic terms. For each experiment we selected them with 5-fold cross-
+validation on the training data. We also control the sparsity of C by setting Cij to zero
+for all except the top most frequent pairs – this way we can reduce the dimensionality of
+θ2 , avoiding an excessive number of parameters for datasets with large values of V . In our
+experiments we used 50% of the pairs with yeast and 5% with enron (45 and 68 pairs,
+respectively). We experimented with other settings, but the results were very similar.
+
+RML’s only parameter, λ, was selected with 5-fold cross-validation. MLKNN’s two param-
+eters k (number of neighbors) and s (strength of the uniform prior) were kept ﬁxed to 10
+and 1.0, respectively, as was done in [20]. RAkEL’s m (number of models) and t (threshold)
+were set to the library’s default (respectively 2 ∗ N and 0.5), and k (size of the labelset) was
+set to V
+2 as suggested by [4]. For BR we kept the library’s defaults.
+Implementation. Our implementation is in C++, based on the source code of RML[11],
+which uses the Bund le Methods for Risk Minimization (BMRM) of [18]. The max-ﬂow
+computations needed for graph-cuts are done with the library of [21]. The modiﬁcations
+necessary to enforce positivity in θ2 in BMRM are described in Appendix C. Source code is
+available4 under the Mozilla Public License. Details of training time for our implementation
+are available in Appendix B.
+
+Results: F-Score. In Figure 1 we plot the F -Score for varying-sized subsets of the unary
+features, for both enron (left) and yeast (right). The goal is to assess the beneﬁts of
+explicitly modelling the pairwise label interactions, particularly when the unary information
+is deteriorated. As can be seen in Figure 1, when all features are available our model behaves
+similarly to RML. In this setting the unary features are very informative and the pairwise
+interactions are not helpful. As we reduce the number of available unary features (from right
+to left in the plots), the importance of the pairwise interactions increase, and our model
+demonstrates improvement over RML.
+
+2http://mulan.sourceforge.net/datasets.html
+3RML deals mainly with the reverse problem of predicting instances given labels, however it can
+be applied in the forward direction as well as described in [11].
+4http://users.cecs.anu.edu.au/∼jpetterson/.
+
+7
+
+Figure 2: Empirical analysis of Algorithms 2 and 3 during training with the yeast dataset.
+Left: frequency with which Algorithm 2 is optimal at each iteration (blue) and frequency
+with which Algorithm 3 reports an optimal solution has been found by Algorithm 2 (green).
+Right: diﬀerence, at each iteration, between the ob jective computed using the results from
+Algorithm 2 and exhaustive enumeration.
+
+Results: Correctness. To evaluate how well our constraint generation algorithm performs
+in practice we compared its results against those of exhaustive search, which is exact but
+only feasible for a dataset with a small number of labels, such as yeast. We also assessed
+the strength of our test proposed in Algorithm 3.
+In Figure 2-left we plot, for the ﬁrst
+100 iterations of the learning algorithm, the frequency with which Algorithm 2 returns the
+exact solution (blue line) as well as the frequency with which the test given in Algorithm
+3 guarantees the solution is exact (green line). We can see that overall in more than 50%
+of its executions Algorithm 2 produces an optimal solution. Our test eﬀectively oﬀers a
+lower bound which is as expected is not tight, however it is informative in the sense that
+its variations reﬂect legitimate variations in the real quantity of interest (as can be seen by
+the obvious correlation between the two curves).
+
+For the learning algorithm, however, what we are interested in is the ob jective oi and the
+gradient gi of line 7 of Algorithm 1, and both depend only on the compound result of N
+executions of Algorithm 2 at each iteration of the learning algorithm. This is illustrated
+in Figure 2-right, where we plot, for each iteration, the normalised diﬀerence between the
+ob jective computed with results from Algorithm 2 and the one computed with the results
+of an exact exhaustive search5 . We can see that the diﬀerence is quite small – below 4%
+after the initial iterations.
+
+6 Conclusion
+We presented a method for learning multi-label classiﬁers which explicitly models label de-
+pendencies in a submodular fashion. As an estimator we use structured support vector
+machines solved with constraint generation. Our key contribution is an algorithm for con-
+straint generation which is proven to be partially optimal in the sense that all labels it
+predicts are included in some optimal solution. We also describe an eﬃciently computable
+test that if positive guarantees the solution found is optimal, and can be used to generate
+empirical lower bounds on the probability of ﬁnding an optimal solution. We present empir-
+ical results that corroborate the fact that the algorithm is very accurate, and we illustrate
+the gains obtained in comparison to other popular algorithms, particularly a previous al-
+gorithm which can be seen as the particular case of ours when there are no explicit label
+interactions being modelled.
+
+Acknowledgements
+We thank Choon Hui Teo for his help on making the necessary modiﬁcations to BMRM.
+NICTA is funded by the Australian Government as represented by the Department of
+Broadband, Communications and the Digital Economy and the Australian Research Council
+through the ICT Centre of Excellence program.
+
+5We repeated this experiment with several sets of parameters with similar results.
+
+8
+
+References
+
+[1] K. Dembczynski, W. Cheng, and E. H¨ullermeier, “Bayes Optimal Multilabel Classiﬁ-
+cation via Probabilistic Classiﬁer Chains,” in ICML, 2010.
+[2] X. Zhang, T. Graepel, and R. Herbrich, “Bayesian Online Learning for Multi-label and
+Multi-variate Performance Measures,” in AISTATS, 2010.
+[3] P. Rai and H. Daume, “Multi-Label Prediction via Sparse Inﬁnite CCA,” in NIPS,
+2009.
+[4] J. Read, B. Pfahringer, G. Holmes, and E. Frank, “Classiﬁer chains for multi-label
+classiﬁcation.,” in ECML/PKDD, 2009.
+[5] J. Rousu, C. Saunders, S. Szedmak, and J. Shawe-Taylor, “Kernel-based learning of
+hierarchical multilabel classiﬁcation models,” JMLR, vol. 7, pp. 1601–1626, December
+2006.
+[6] Z. Barutcuoglu, R. E. Schapire, and O. G. Troyanskaya, “Hierarchical multi-label pre-
+diction of gene function,” Bioinformatics, vol. 22, pp. 830–836, April 2006.
+[7] M. Guillaumin, T. Mensink, J. Verbeek, and C. Schmid, “TagProp: Discriminative
+Metric Learning in Nearest Neighbor Models for Image Auto-Annotation,” in ICCV,
+2009.
+[8] M. Jansche, “Maximum expected F-measure training of logistic regression models,”
+HLT, 2005.
+[9] T. Mensink, J. Verbeek, and G. Csurka, “Learning structured prediction models for
+interactive image labeling,” in CVPR, 2011.
+[10] I. Tsochantaridis, T. Joachims, T. Hofmann, and Y. Altun, “Large margin methods for
+structured and interdependent output variables,” JMLR, vol. 6, pp. 1453–1484, 2005.
+[11] J. Petterson and T. Caetano, “Reverse multi-label learning,” in NIPS, 2010.
+[12] W. Bi and J. Kwok, “Multi-Label Classiﬁcation on Tree- and DAG-Structured Hierar-
+chies,” in ICML, 2011.
+[13] N. Ghamrawi and A. Mccallum, “Collective Multi-Label Classiﬁcation,” 2005.
+[14] B. Hariharan, S. V. N. Vishwanathan, and M. Varma, “Large Scale Max-Margin Multi-
+Label Classiﬁcation with Prior Knowledge about Densely Correlated Labels,” in ICML,
+2010.
+[15] G. Tsoumakas, I. Katakis, and I. P. Vlahavas, Mining Multi-label Data. Springer, 2009.
+[16] G. Tsoumakas and I. P. Vlahavas, “Random k-labelsets: An ensemble method for
+multilabel classiﬁcation,” in ECML, 2007.
+[17] S. Virtanen, A. Klami, and S. Kaski, “Bayesian CCA via Group Sparsity,” in ICML,
+2011.
+[18] C. H. Teo, S. V. N. Vishwanathan, A. J. Smola, and Q. V. Le, “Bundle methods for
+regularized risk minimization,” JMLR, vol. 11, pp. 311–365, 2010.
+[19] Z. Svitkina and L. Fleischer, “Submodular approximation: Sampling-based algorithms
+and lower bounds,” in FOCS, 2008.
+[20] M.-L. Zhang and Z.-H. Zhou, “ML-KNN: A lazy learning approach to multi-label learn-
+ing,” Pattern Recognition, vol. 40, pp. 2038–2048, July 2007.
+[21] Y. Boykov and V. Kolmogorov, “An experimental comparison of min-cut/max-ﬂow
+algorithms for energy minimization in vision,” IEEE Trans. PAMI, 2004.
+
+9
+
+

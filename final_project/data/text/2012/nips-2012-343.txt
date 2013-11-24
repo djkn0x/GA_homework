@@ -1,0 +1,762 @@
+Cost-Sensitive Exploration in
+Bayesian Reinforcement Learning
+
+Dongho Kim
+Department of Engineering
+University of Cambridge, UK
+dk449@cam.ac.uk
+
+Kee-Eung Kim
+Dept of Computer Science
+KAIST, Korea
+kekim@cs.kaist.ac.kr
+
+Pascal Poupart
+School of Computer Science
+University of Waterloo, Canada
+ppoupart@cs.uwaterloo.ca
+
+Abstract
+
+In this paper, we consider Bayesian reinforcement learning (BRL) where actions
+incur costs in addition to rewards, and thus exploration has to be constrained in
+terms of the expected total cost while learning to maximize the expected long-
+term total reward.
+In order to formalize cost-sensitive exploration, we use the
+constrained Markov decision process (CMDP) as the model of the environment, in
+which we can naturally encode exploration requirements using the cost function.
+We extend BEETLE, a model-based BRL method, for learning in the environment
+with cost constraints. We demonstrate the cost-sensitive exploration behaviour in
+a number of simulated problems.
+
+1
+
+Introduction
+
+In reinforcement learning (RL), the agent interacts with a (partially) unknown environment, classi-
+cally assumed to be a Markov decision process (MDP), with the goal of maximizing its expected
+long-term total reward. The agent faces the exploration-exploitation dilemma: the agent must se-
+lect actions that exploit its current knowledge about the environment to maximize reward, but it
+also needs to select actions that explore for more information so that it can act better. Bayesian RL
+(BRL) [1, 2, 3, 4] provides a principled framework to the exploration-exploitation dilemma.
+
+However, exploratory actions may have serious consequences. For example, a robot exploring in an
+unfamiliar terrain may reach a dangerous location and sustain heavy damage, or wander off from the
+recharging station to the point where a costly rescue mission is required. In a less mission critical
+scenario, a route recommendation system that learns actual travel times should be aware of toll fees
+associated with different routes. Therefore, the agent needs to carefully (if not completely) avoid
+critical situations while exploring to gain more information.
+
+The constrained MDP (CMDP) extends the standard MDP to account for limited resources or mul-
+tiple objectives [5]. The CMDP assumes that executing actions incur costs and rewards that should
+be optimized separately. Assuming the expected total reward and cost criterion, the goal is to ﬁnd
+an optimal policy that maximizes the expected total reward while bounding the expected total cost.
+Since we can naturally encode undesirable behaviors into the cost function, we formulate the cost-
+sensitive exploration problem as RL in the environment modeled as a CMDP.
+
+Note that we can employ other criteria for the cost constraint in CMDPs. We can make the actual
+total cost below the cost bound with probability one using the sample-path cost constraints [6, 7], or
+with probability 1 − δ using the percentile cost constraints [8]. In this paper, we restrict ourselves
+to the expected total cost constraint mainly due to the computational efﬁciency in solving the con-
+strained optimization problem. Extending our work to other cost criteria is left as a future work. The
+main argument we make is that the CMDP provides a natural framework for representing various
+approaches to constrained exploration, such as safe exploration [9, 10].
+
+1
+
+In order to perform cost-sensitive exploration in the Bayesian RL (BRL) setting, we cast the problem
+as a constrained partially observable MDP (CPOMDP) [11, 12] planning problem. Speci ﬁcally, we
+take a model-based BRL approach and extend BEETLE [4] to solve the CPOMDP which models
+BRL with cost constraints.
+
+2 Background
+
+In this section, we review the background for cost-sensitive exploration in BRL. As we explained
+in the previous section, we assume that the environment is modeled as a CMDP, and formulate
+model-based BRL as a CPOMDP. We brieﬂy review the CMDP and CPO MDP before summarizing
+BEETLE, a model-based BRL for environments without cost constraints.
+
+2.1 Constrained MDPs (CMDPs) and Constrained POMDPs (CPOMDPs)
+
+The standard (inﬁnite-horizon discounted return) MDP is de ﬁned by tuple hS, A, T , R, γ , b0 i where:
+S is the set of states s; A is the set of actions a; T (s, a, s′ ) is the transition function which denotes
+the probability Pr(s′ |s, a) of changing to state s′ from s by executing action a; R(s, a) ∈ ℜ is the
+reward function which denotes the immediate reward of executing action a in state s; γ ∈ [0, 1) is
+the discount factor; b0 (s) is the initial state probability for state s. b0 is optional, since an optimal
+policy π∗ : S → A that maps from states to actions can be shown not to be dependent on b0 .
+The constrained MDP (CMDP) is deﬁned by tuple hS, A, T , R, C, ˆc, γ , b0 i with the following addi-
+tional components: C (s, a) ∈ ℜ is the cost function which denotes the immediate cost incurred by
+executing action a in state s; ˆc is the bound on expected total discounted cost.
+An optimal policy of a CMDP maximizes the expected total discounted reward over the inﬁnite
+horizon, while not incurring more than ˆc total discounted cost in the expectation. We can formalize
+this constrained optimization problem as:
+
+s.t. C π ≤ ˆc.
+maxπ V π
+where V π = Eπ ,b0 [P∞
+t=0 γ tR(st , at )] is the expected total discounted reward, and C π =
+Eπ ,b0 [P∞
+t=0 γ tC (st , at )] is the expected total discounted cost. We will also use C π (s) to denote
+the expected total cost starting from the state s.
+It has been shown that an optimal policy for CMDP is generally a randomized stationary policy [5].
+Hence, we deﬁne a policy π as a mapping of states to probability distributions over actions, where
+π(s, a) denotes the probability that an agent will execute action a in state s. We can ﬁnd an optimal
+policy by solving the following linear program (LP):
+
+x X
+max
+s,a
+s.t. X
+a
+X
+s,a
+
+R(s, a)x(s, a)
+
+x(s′ , a) − γ X
+s,a
+
+x(s, a)T (s, a, s′ ) = b0 (s′ ) ∀s′
+
+C (s, a)x(s, a) ≤ ˆc and x(s, a) ≥ 0 ∀s, a
+
+(1)
+
+The variables x’s are related to the occupancy measure of optimal policy, where x(s, a) is the ex-
+pected discounted number of times executing a at state s. If the above LP yields a feasible solution,
+optimal policy can be obtained by π(s, a) = x(s, a)/ Pa′ x(s, a′ ). Note that due to the introduc-
+tion of cost constraints, the resulting optimal policy is contingent on the initial state distribution b0 ,
+in contrast to the standard MDP of which an optimal policy can be independent of the initial state
+distribution. Note also that the above LP may be infeasible if there is no policy that can satisfy the
+cost constraint.
+
+The constrained POMDP (CPOMDP) extends the standard POMDP in a similar manner. The stan-
+dard POMDP is deﬁned by tuple hS, A, Z, T , O, R, γ , b0 i with the following additional components:
+the set Z of observations z , and the observation probability O(s′ , a, z ) representing the probability
+Pr(z |s′ , a) of observing z when executing action a and changing to state s′ . The states in the
+POMDP are hidden to the agent, and it has to act based on the observations instead. The CPOMDP
+
+2
+
+Algorithm 1: Point-based backup of α-vector pairs with admissible cost
+input : (b, d) with belief state b and admissible cost d; set Γ of α-vector pairs
+output: set Γ′
+(b,d) of α-vector pairs (contains at most 2 pairs for a single cost function)
+// regress
+foreach a ∈ A do
+αa,∗
+R = R(·, a), αa,∗
+C = C (·, a)
+foreach (αi,R , αi,C ) ∈ Γ, z ∈ Z do
+αa,z
+i,R (s) = Ps′ T (s, a, s′ )O(s′ , a, z )αi,R (s′ )
+αa,z
+i,C (s) = Ps′ T (s, a, s′ )O(s′ , a, z )αi,C (s′ )
+// backup for each action
+foreach a ∈ A do
+Solve the following LP to obtain best randomized action at the next time step:
+b · Pi ˜wiz αa,z
+i,C ≤ dz ∀z
+Pi ˜wiz = 1 ∀z
+˜wiz ≥ 0 ∀i, z
+Pz dz = 1
+γ (d − C (b, a))
+
+˜wiz αa,z
+i,R subject to
+
+max
+˜wiz ,dz
+
+b · X
+i,z
+
+R = αa,∗
+R + γ Pi,z ˜wiz αa,z
+αa
+i,R
+C = αa,∗
+C + γ Pi,z ˜wiz αa,z
+αa
+i,C
+// ﬁnd the best randomized action for the current time step
+Solve the following LP with :
+
+max
+wa
+
+b · X
+a
+
+waαa
+R subject to
+
+b · Pa waαa
+C ≤ d
+Pa wa = 1
+wa ≥ 0 ∀a
+
+return Γ′
+R , αa
+(b,d) = {(αa
+C )|wa > 0}
+
+is deﬁned by adding the cost function C and the cost bound ˆc into the deﬁnition as in the CMDP. Al-
+though the CPOMDP is intractable to solve as is the case with the POMDP, there exists an efﬁcient
+point-based algorithm [12].
+The Bellman backup operator for CPOMDP generates pairs of α-vectors (αR , αC ), each vector
+corresponding to the expected total reward and cost, respectively. In order to facilitate deﬁning the
+Bellman backup operator at a belief state, we augment the belief state with a scalar quantity called
+admissible cost [13], which represents the expected total cost that can be additionally incurred for
+the future time steps without violating the cost constraint. Suppose that, at time step t, the agent
+has so far incurred a total cost of Wt , i.e., Wt = Pt
+τ =0 γ τ C (sτ , aτ ). The admissible cost at
+time step t + 1 is deﬁned as dt = 1
+γ t+1 (ˆc − Wt ). It can be computed recursively by the equation
+dt+1 = 1
+γ (dt − C (st , at )), which can be derived from Wt = Wt−1 + γC (st , at ), and d0 = ˆc. Given
+a pair of belief state and admissible cost (b, d) and the set of α-vector pairs Γ = {(αi,R , αi,C )}, the
+best (randomized) action is obtained by solving the following LP:
+
+max
+wi
+
+b · X
+i
+
+wiαi,R
+
+subject to
+
+b · Pi wiαi,C ≤ d
+Pi wi = 1
+wi ≥ 0 ∀i
+
+where wi corresponds to the probability of choosing the action associated with the pair (αi,R , αi,C ).
+The point-based backup for CPOMDP leveraging the above LP formulation is shown in Algo-
+rithm 1.1
+
+1Note that this algorithm is an improvement over the heuristic distribution of the admissible cost to each
+observation by ratio Pr(z |b, a) in [12]. Instead, we optimize the cost distribution by solving an LP.
+
+3
+
+2.2 BEETLE
+
+BEETLE [4] is a model-based BRL algorithm, based on the idea that BRL can be formulated
+as a POMDP planning problem. Assuming that the environment is modeled as a discrete-state
+MDP P = hS, A, T , R, γ i where the transition function T is unknown, we treat each transi-
+tion probability T (s, a, s′ ) as an unknown parameter θs,s′
+and formulate BRL as a hyperstate
+a
+POMDP hSP , AP , ZP , TP , OP , RP , γ , b0 i where SP = S × {θs,s′
+a }, AP = A, ZP = S ,
+TP (s, θ , a, s′ , θ ′ ) = θs,s′
+δθ (θ ′ ), OP (s′ , θ ′ , a, z ) = δs′ (z ), and RP (s, θ , a) = R(s, a).
+In sum-
+a
+mary, the hyperstate POMDP augments the original state space with the set of unknown parameters
+{θs,s′
+a }, since the agent has to take actions without exact information on the unknown parameters.
+The belief state b in the hyperstate POMDP yields the posterior of θ . Speci ﬁcally, assuming a
+product of Dirichlets for the belief state such that
+
+b(θ) = Y
+s,a
+
+a ; ns,∗
+Dir(θs,∗
+a )
+
+is the parameter vector of multinomial distribution deﬁnin g the transition function for
+where θs,∗
+a
+state s and action a, and ns,∗
+is the hyperparameter vector of the corresponding Dirichlet distri-
+a
+bution. Since the hyperparameter ns,s′
+can be viewed as pseudocounts, i.e., the number of times
+a
+observing transition (s, a, s′ ), the updated belief after observing transition (ˆs, ˆa, ˆs′ ) is also a product
+of Dirichlets:
+
+bˆs,ˆs′
+ˆa
+
+(θ) = Y
+s,a
+
+a ; ns,∗
+Dir(θs,∗
+a + δˆs,ˆa,ˆs′ (s, a, s′ ))
+
+Hence, belief states in the hyperstate POMDP can be represented by |S |2 |A| variables one for each
+hyperparameter, and the belief update is efﬁciently perfor med by incrementing the hyperparmeter
+corresponding to the observed transition.
+
+Solving the hyperstate POMDP is performed by dynamic programming with the Bellman backup
+operator [2]. Speci ﬁcally, the value function is represent ed as a set Γ of α-functions for each state
+s (b) = maxα∈Γ αs (b) where αs (b) =
+s, so that the value of optimal policy is obtained by V ∗
+Rθ b(θ)αs (θ)dθ . Using the fact that α-functions are multivariate polynomials of θ , we can obtain
+an exact solution to the Bellman backup.
+
+There are two computational challenges with the hyperstate POMDP approach. First, being a
+POMDP, the Bellman backup has to be performed on all possible belief states in the probability
+simplex. BEETLE adopts Perseus [14], performing randomized point-based backups conﬁned to
+the set of sampled (s, b) pairs by simulating a default or random policy, and reducing the total
+number of value backups by improving the value of many belief points through a single backup.
+Second, the number of monomial terms in the α-function increases exponentially with the number
+of backups. BEETLE chooses a ﬁxed set of basis functions and p rojects the α-function onto a linear
+combination of these basis functions. The set of basis functions is chosen to be the set of monomials
+extracted from the sampled belief states.
+
+3 Constrained BEETLE (CBEETLE)
+
+We take an approach similar to BEETLE for cost-sensitive exploration in BRL. Speci ﬁcally, we for-
+mulate cost-sensitive BRL as a hyperstate CPOMDP hSP , AP , ZP , TP , OP , RP , CP , ˆc, γ , b0 i where
+SP = S × {θs,s′
+a }, AP = A, ZP = S , TP (s, θ , a, s′ , θ ′ ) = θs,s′
+δθ (θ ′ ), OP (s′ , θ ′ , a, z ) = δs′ (z ),
+a
+RP (s, θ , a) = R(s, a), and CP (s, θ , a) = C (s, a).
+Note that using the cost function C and cost bound ˆc to encode the constraints on the exploration
+behaviour allows us to enjoy the same ﬂexibility as using the
+reward function to deﬁne the task
+objective in the standard MDP and POMDP. Although, for the sake of exposition, we use a single
+cost function and discount factor in our deﬁnition of CMDP an d CPOMDP, we can generalize the
+model to have multiple cost functions that capture different aspects of exploration behaviour that
+cannot be put together on the same scale, and different discount factors for rewards and costs. In
+addition, we can even completely eliminate the possibility of executing action a in state s by setting
+the discount factor to 1 for the cost constraint and impose a sufﬁciently low cost bound ˆc < C (s, a).
+
+4
+
+Algorithm 2: Point-based backup of α-function pairs for the hyperstate CPOMDP2
+input : (s, n, d) with state s, Dirichlet hyperparameter n representing belief state b, and admissible
+cost d; set Γs of α-function pairs for each state s
+output: set Γ′
+(s,n,d) of α-function pairs (contains at most 2 pairs for a single cost function)
+// regress
+foreach a ∈ A do
+αa,∗
+R = R(s, a), αa,∗
+// constant functions
+C = C (s, a)
+foreach s′ ∈ S, (αi,R , αi,C ) ∈ Γs′ do
+a αi,R , αa,s′
+αa,s′
+i,C = θs,s′
+i,R = θs,s′
+a αi,C
+// backup for each action
+foreach a ∈ A do
+Solve the following LP to obtain best randomized action at the next time step:
+Pi ˜wis′ αa,s′
+i,C (b) ≤ ds′ ∀s′
+Pi ˜wis′ = 1 ∀s′
+˜wis′ ≥ 0 ∀i, s′
+Pz ds′ = 1
+γ (d − C (s, a))
+C + γ Pi,s′ ˜wis′ αa,s′
+R + γ Pi,s′ ˜wis′ αa,s′
+C = αa,∗
+R = αa,∗
+i,R , αa
+αa
+i,C
+// ﬁnd the best randomized action for the current time step
+Solve the following LP with :
+
+// multiplied by variable θs,s′
+a
+
+˜wis′ αa,s′
+i,R (b)
+
+subject to
+
+max
+˜wis′ ,dz
+
+X
+i,s′
+
+max
+wa
+
+X
+a
+
+waαa
+R (b)
+
+subject to
+
+Pa waαa
+C (b) ≤ d
+Pa wa = 1
+wa ≥ 0 ∀a
+
+return Γ′
+R , αa
+(s,n,d) = {(αa
+C )|wa > 0}
+
+We call our algorithm CBEETLE, which solves the hyperstate CPOMDP planning problem. As
+in BEETLE, α-vectors for the expected total reward and cost are represented as α-functions in
+terms of unknown parameters. The point-based backup operator in Algorithm 1 naturally extends
+to α-functions without signi ﬁcant increase in the computation complexity: the size of LP does not
+increase even though the belief states represent probability distributions over unknown parameters.
+Algorithm 2 shows the point-based backup of α-functions in the hyperstate CPOMDP. In addition,
+if we choose a ﬁxed set of basis functions for representing α-functions, we can pre-compute the
+projections of α-functions ( ˜T , ˜R, and ˜C ) in the same way as BEETLE. This technique is used in the
+point-based backup, although not explicitly described in the pseudocode due to the page limit.
+
+We also implemented the randomized point-based backup to further improve the performance. The
+key step in the randomized value update is to check whether a newly generated α-function pairs
+Γ = {(αi,R , αi,C )} from a point-based backup yields improved value at some other sampled belief
+state (s, n, d). We can obtain the value of Γ at the belief state by solving the following LP:
+Pi wiαi,C (b) ≤ d
+Pi wi = 1
+wi ≥ 0 ∀i
+If we can ﬁnd an improved value, we skip the point-based backu p at (s, n, d) in the current iteration.
+Algorithm 3 shows the randomized point-based value update.
+
+subject to
+
+wiαi,R (b)
+
+X
+i
+
+max
+wi
+
+(2)
+
+In summary, the point-based value iteration algorithm for CPOMDP and BEETLE readily provide
+all the essential computational tools to implement the hyperstate CPOMDP planning for the cost-
+sensitive BRL.
+2The α-functions in the pseudocode are functions of θ and α(b) is deﬁned to be Rθ b(θ)α(θ)dθ as explained
+in Sec. 2.2.
+
+5
+
+Algorithm 3: Randomized point-based value update for the hyperstate CPOMDP
+input : set B of sampled belief points, and set Γs of α-function pairs for each state s
+output: set Γ′
+s of α-function pairs (updated value function)
+// initialize
+˜B = B // belief points needed to be improved
+foreach s ∈ S do
+Γ′
+s = ∅
+// randomized backup
+while ˜B 6= ∅ do
+Sample ˜b = (˜s, ˜n, ˜d) ∈ ˜B
+by point-based backup at ˜b with {Γs |∀s ∈ S } (Algorithm 2)
+Obtain Γ′
+˜b
+˜s ∪ Γ′
+Γ′
+˜s = Γ′
+˜b
+foreach b ∈ B do
+Calculate V ′ (b) by solving the LP Eqn. 2 with Γ′
+˜b
+˜B = {b ∈ B : V ′ (b) < V (b)}
+return {Γ′
+s |∀s ∈ S }
+
+(a)
+
+(b)
+
+Figure 1: (a) 5-state chain: each edge is labeled with action, reward, and cost associated with the
+transition. (b) 6 × 7 maze: a 6 × 7 grid including the start location with recharging station (S), goal
+location (G), and 3 ﬂags to capture.
+
+4 Experiments
+
+We used the constrained versions of two standard BRL problems to demonstrate the cost-sensitive
+exploration. The ﬁrst one is the 5-state chain [15, 16, 4], an d the second one is the 6 × 7 maze [16].
+
+4.1 Description of Problems
+
+The 5-state chain problem is shown in Figure 1a, where the agent has two actions 1 and 2. The agent
+receives a large reward of 10 by executing action 1 in state 5, or a small reward of 2 by executing
+action 2 in any state. With probability 0.2, the agent slips and makes the transition corresponding
+to the other action. We deﬁned the constrained version of the problem by assigning a cost of 1 for
+action 1 in every state, thus making the consecutive execution of action 1 potentially violate the cost
+constraint.
+
+The 6 × 7 maze problem is shown in Figure 1b, where the white cells are navigatable locations and
+gray cells are walls that block navigation. There are 5 actions available to the agent: move left, right,
+up, down, or stay. Every “move” action (except for the stay ac tion) can fail with probability 0.1,
+resulting in a slip to two nearby cells that are perpendicular to the intended direction. If the agent
+bumps into a wall, the action will have no effect. The goal of this problem is to capture as many
+ﬂags as possible and reach the goal location. Upon reaching t he goal, the agent obtains a reward
+equal to the number of ﬂags captured, and the agent gets warpe d back to the start location. Since
+there are 33 reachable locations in the maze and 8 possible combinations for the status of captured
+ﬂags, there are a total of 264 states. We deﬁned the constrain
+ed version of the problem by assuming
+that the agent is equipped with a battery and every action consumes energy except the stay action at
+
+6
+
+recharging station. We modeled the power consumption by assigning a cost of 0 for executing the
+stay action at the recharging station, and a cost of 1 otherwise. Thus, the battery recharging is done
+by executing stay action at the recharging station, as the admissible cost increases by factor 1/γ .3
+
+4.2 Results
+
+Table 1 summarizes the experimental results for the constrained chain and maze problems.
+
+In the chain problem, we used two structural prior models, “t ied” and “semi ”, among three priors
+experimented in [4]. Both chain-tied and chain-semi assume that the transition dynamics are known
+to the agent except for the slip probabilities. In chain-tied, the slip probability is assumed to be
+independent of state and action, thus there is only one unknown parameter in transition dynamics.
+In chain-semi, the slip probability is assumed to be action dependent, thus there are two unknown
+parameters since there are two actions. We used uninformative Dirichlet priors in both settings.
+We excluded experimenting with the “full ” prior model (comp letely unknown transition dynamics)
+since even BEETLE was not able to learn a near-optimal policy as reported in [4].
+
+We report the average discounted total reward and cost as well as their 95% conﬁdence intervals
+for the ﬁrst 1000 time steps using 200 simulated trials. We pe rformed 60 Bellman iterations on 500
+belief states, and used the ﬁrst 50 belief states for choosin g the set of basis functions. The discount
+factor was set to 0.99.
+
+When ˆc=100, which is the maximum expected total cost that can be incurred by any policy, CBEE-
+TLE found policies that are as good as the policy found by BEETLE since the cost constraint has no
+effect. As we impose tighter cost constraints by ˆc=75, 50, and 25, the policies start to trade off the
+rewards in order to meet the cost constraint. Note also that, although we use approximations in the
+various stages of the algorithm, ˆc is within the conﬁdence intervals of the average total cost, meaning
+that the cost constraint is either met or violated by statistically insigni ﬁcant amounts. Since chain-
+semi has more unknown parameters than chain-tied, it is natural that the performance of CBEETLE
+policy is slighly degraded in chain-semi. Note also that as we impose tighter cost constraints, the
+running times generally increase. This is because the cost constraint in the LP tends to become
+active at more belief states, generating two α-function pairs instead of a single α-function pair when
+the cost constaint in the LP is not active.
+
+The results for the maze problem were calculated for the ﬁrst 2000 time steps using 100 simulated
+trials. We performed 30 Bellman iterations on 2000 belief states, and used 50 basis functions. Due
+to the computational requirement for solving the large hyperstate CPOMDP, we only experimented
+with the “tied” prior model which assumes that the slip proba bility is shared by every state and
+action. Running CBEETLE with ˆc = 1/(1 − 0.95) = 20 is equivalent to running BEETLE without
+cost constraints, as veri ﬁed in the table.
+
+We further analyzed the cost-sensitive exploration behaviour in the maze problem. Figure 2 com-
+pares the policy behaviors of BEETLE and CBEETLE(ˆc=18) in the maze problem. The BEETLE
+policy generally captures the top ﬂag ﬁrst (Figure 2a), then
+navigates straight to the goal (Figure 2b)
+or captures the right ﬂag and navigates to the goal (Figure 2c ). If it captures the right ﬂag ﬁrst, it then
+navigates to the goal (Figure 2d) or captures the top ﬂag and n avigates to the goal (Figure 2e). We
+suspect that the reason the third ﬂag on the left is not captur ed is due to the relatively low discount
+rate, hence ignored due to numerical approximations. The CBEETLE policy shows a similar cap-
+ture behaviour, but it stays at the recharging station for a number of time steps between the ﬁrst and
+second ﬂag captures, which can be conﬁrmed by the high state v
+isitation frequency for the cell S in
+Figures 2g and 2i. This is because the policy cannot navigate to the other ﬂag position and move to
+the goal without recharging the battery in between. The agent also frequently visits the recharging
+station before the ﬁrst ﬂag capture (Figure 2f) because it ac
+tively explores for the ﬁrst ﬂag with a
+high uncertainty in the dynamics.
+
+3 It may seem odd that the battery recharges at an exponential rate. We can set γ = 1 and make the cost
+function assign, e.g., a cost of -1 for recharging and 1 for consuming, but our implementation currently assumes
+same discount factor for the rewards and costs. Implementation for different discount factors is left as a future
+work, but note that we can still obtain meaningful results with γ sufﬁciently close to 1.
+
+7
+
+BEETLE
+
+CBEETLE
+
+Table 1: Experimental results for the chain and maze problems.
+time
+avg discounted
+avg discounted
+utopic
+problem
+algorithm
+ˆc
+(minutes)
+total cost
+total reward
+value
+1.0
+351.11±8.42
+354.77
+−
+354.77
+354.68±8.57
+100.00±0
+2.4
+2.4
+75.05±0.14
+287.70±8.17
+325.75
+44.3
+49.96±0.09
+264.97±7.06
+296.73
+80.59
+25.12±0.13
+212.19±4.98
+238.95
+1.6
+351.11±8.42
+354.77
+−
+354.77
+354.68±8.57
+100.00±0
+3.7
+3.8
+75.05±0.14
+287.64±8.16
+325.75
+70.7
+50.09±0.14
+256.76±7.23
+296.73
+139.3
+25.01±0.16
+204.84±4.51
+238.95
+159.8
+1.02±0.02
+1.03
+−
+1.03
+1.02±0.02
+19.04±0.02
+242.5
+733.1
+17.96±0.46
+0.93±0.04
+0.97
+
+−
+100
+75
+50
+25
+−
+100
+75
+50
+25
+−
+20
+18
+
+BEETLE
+CBEETLE
+
+BEETLE
+
+CBEETLE
+
+chain-tied
+|S | = 5
+|A| = 2
+
+chain-semi
+|S | = 5
+|A| = 2
+
+maze-tied
+|S | = 264
+|A| = 5
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+(g)
+
+(h)
+
+(i)
+
+(j)
+
+Figure 2: State visitation frequencies of each location in the maze problem over 100 runs. Brightness
+is proportional to the relative visitation frequency. (a-e) Behavior of BEETLE (a) before the ﬁrst
+e top ﬂag captured ﬁrst and the right ﬂag
+ﬂag capture, (b) after the top ﬂag captured ﬁrst, (c) after th
+second, (d) after the right ﬂag captured ﬁrst, and (e) after t
+he right ﬂag captured ﬁrst and the top ﬂag
+second. (f-j) Behavior of CBEETLE (ˆc = 18). The yellow star represents the current location of the
+agent.
+
+5 Conclusion
+
+In this paper, we proposed CBEETLE, a model-based BRL algorithm for cost-sensitive exploration,
+extending BEETLE to solve the hyperstate CPOMDP which models BRL using cost constraints. We
+showed that cost-sensitive BRL can be effectively solved by the randomized point-based value iter-
+ation for CPOMDPs. Experimental results show that CBEETLE can learn reasonably good policies
+for underlying CMDPs while exploring the unknown environment cost-sensitively.
+
+While our experiments show that the policies generally satisfy the cost constraints, it can still po-
+tentially violate the constraints since we approximate the alpha functions using a ﬁnite number of
+basis functions. As for the future work, we plan to focus on making CBEETLE more robust to the
+approximation errors by performing a constrained optimization when approximating alpha functions
+to guarantee that we never violate the cost constraints.
+
+Acknowledgments
+
+This work was supported by National Research Foundation of Korea (Grant# 2012-007881), the
+Defense Acquisition Program Administration and Agency for Defense Development of Korea (Con-
+tract# UD080042AD), and the SW Computing R&D Program of KEIT (2011-10041313) funded by
+the Ministry of Knowledge Economy of Korea.
+
+8
+
+References
+
+[1] R. Howard. Dynamic programming. MIT Press, 1960.
+[2] M. Duff. Optimal learning: Computational procedures for Bayes-adaptive Markov decision
+processes. PhD thesis, University of Massachusetts, Amherst, 2002.
+[3] S. Ross, J. Pineau, B. Chaib-draa, and P. Kreitmann. A Bayesian approach for larning and
+planning in partially observable markov decision processes. Journal of Machine Learning
+Research, 12, 2011.
+[4] P. Poupart, N. Vlassis, J. Hoey, and K. Regan. An analytic solution to descrete Bayesian
+reinforcement learning. In Proc. of ICML, 2006.
+[5] E. Altman. Constrained Markov Decision Processes. Chapman & Hall/CRC, 1999.
+[6] K. W. Ross and R. Varadarajan. Markov decision-processes with sample path constraints - the
+communicating case. Operations Research, 37(5):780–790, 1989.
+[7] K. W. Ross and R. Varadarajan. Multichain Markov decision-processes with a sample path
+constraint - a decomposition approach. Mathematics of Operations Research, 16(1):195–207,
+1991.
+[8] E. Delage and S. Mannor. Percentile optimization for Markov decision processes with param-
+eter uncertainty. Operations Research, 58(1), 2010.
+[9] A. Hans, D. Schneegaß, A. M. Sch ¨afer, and S. Udluft. Safe exploration for reinforcement
+learning. In Proc. of 16th European Symposium on Arti ﬁcial Neural Networ ks, 2008.
+[10] T. M. Moldovan and P. Abbeel. Safe exploration in Markov decision processes. In Proc. of
+NIPS Workshop on Bayesian Optimization, Experimental Design and Bandits, 2011.
+[11] J. D. Isom, S. P. Meyn, and R. D. Braatz. Piecewise linear dynamic programming for con-
+strained POMDPs. In Proc. of AAAI, 2008.
+[12] D. Kim, J. Lee, K.-E. Kim, and P. Poupart. Point-based value iteration for constrained
+POMDPs. In Proc. of IJCAI, 2011.
+[13] A. B. Piunovskiy and X. Mao. Constrained Markovian decision processes: the dynamic pro-
+gramming approach. Operations Research Letters, 27(3):119–126, 2000.
+[14] M. T. J. Spaan and N. Vlassis. Perseus: Randomized point-based value iteration for POMDPs.
+Journal of Arti ﬁcial Intelligence Research , 24, 2005.
+[15] R. Dearden, N. Friedman, and D. Andre. Bayesian Q-learning. In Proc. of AAAI, 1998.
+[16] M. Strens. A Bayesian framework for reinforcement learning. In Proc. of ICML, 2000.
+
+9
+
+

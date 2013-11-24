@@ -1,0 +1,460 @@
+Fast Iterative Kernel PCA
+
+Simon G ¨unter
+S.V. N. Vishwanathan
+Nicol N. Schraudolph
+{nic.schraudolph,simon.guenter,svn.vishwanathan}@nicta.com.au
+Statistical Machine Learning, National ICT Australia
+Locked Bag 8001, Canberra ACT 2601, Australia
+Research School of Information Sciences & Engineering
+Australian National University, Canberra ACT 0200, Australia
+
+Abstract
+
+We introduce two methods to improve convergence of the Kernel Hebbian Algo-
+rithm (KHA) for iterative kernel PCA. KHA has a scalar gain parameter which
+is either held constant or decreased as 1/t, leading to slow convergence. Our
+KHA/et algorithm accelerates KHA by incorporating the reciprocal of the current
+estimated eigenvalues as a gain vector. We then derive and apply Stochastic Meta-
+Descent (SMD) to KHA/et; this further speeds convergence by performing gain
+adaptation in RKHS. Experimental results for kernel PCA and spectral clustering
+of USPS digits as well as motion capture and image de-noising problems conﬁrm
+that our methods converge substantially faster than conventional KHA.
+
+1
+
+Introduction
+
+Principal Components Analysis (PCA) is a standard linear technique for dimensionality reduction.
+Given a matrix X ∈ Rn×l of l centered, n-dimensional observations, PCA performs an eigende-
+composition of the covariance matrix Q := XX > . The r × n matrix W whose rows are the
+eigenvectors of Q associated with the r ≤ n largest eigenvalues minimizes the least-squares recon-
+struction error
+
+||X − W >W X ||F ,
+
+(1)
+
+where || · ||F is the Frobenius norm.
+As it takes O(n2 l) time to compute Q and up to O(n3 ) time to eigendecompose it, PCA can be
+prohibitively expensive for large amounts of high-dimensional data. Iterative methods exist that do
+not compute Q explicitly and thereby reduce the computational cost to O(rn) per iteration. One
+such method is Sanger’s [1] Generalized Hebbian Algorithm (GHA), which updates W as
+t − lt(yty>
+Wt+1 = Wt + ηt [ytx>
+t )Wt ].
+(2)
+Here xt ∈ Rn is the observation at time t, yt := Wtxt , and lt(·) makes its argument lower triangu-
+lar by zeroing all elements above the diagonal. For an appropriate scalar gain ηt , Wt will generally
+tend to converge to the principal component solution as t → ∞; though its global convergence is
+not proven [2].
+One can do better than PCA in minimizing the reconstruction error (1) by allowing nonlinear pro-
+jections of the data into r dimensions. Unfortunately such approaches often pose difﬁcult nonlinear
+optimization problems. Kernel methods [3] provide a way to incorporate nonlinearity without un-
+duly complicating the optimization problem. Kernel PCA [4] performs an eigendecomposition on
+the kernel expansion of the data, an l × l matrix. To reduce the attendant O(l2 ) space and O(l3 ) time
+complexity, Kim et al. [2] introduced the Kernel Hebbian Algorithm (KHA) kernelizing GHA.
+
+Both GHA and KHA are examples of stochastic approximation algorithms, whose iterative updates
+employ individual observations in place of — but, in the limit, approximating — statistical proper-
+ties of the entire data. By interleaving their updates with the passage through the data, stochastic
+approximation algorithms can greatly outperform conventional methods on large, redundant data
+sets, even though their convergence is comparatively slow.
+Both the GHA and KHA updates incorporate a scalar gain parameter ηt , which is either held ﬁxed
+or annealed according to some predeﬁned schedule. Robbins and Monro [5] established conditions
+on the sequence of ηt that guarantee the convergence of many stochastic approximation algorithms;
+a widely used annealing schedule that obeys these conditions is ηt ∝ τ /(t + τ ), for any τ > 0.
+Here we propose the inclusion of a gain vector in the KHA, which provides each estimated eigen-
+vector with its individual gain parameter. We present two methods for setting these gains: In the
+KHA/et algorithm, the gain of an eigenvector is reciprocal to its estimated eigenvalue as well as
+the iteration number t [6]. Our second method, KHA-SMD, additionally employs Schraudolph’s
+[7] Stochastic Meta-Descent (SMD) technique for adaptively controlling a gain vector for stochastic
+gradient descent, derived and applied here in Reproducing Kernel Hilbert Space (RKHS), cf. [8].
+The following section summarizes Kim et al.’s [2] KHA. Sections 3 and 4 describe our KHA/et and
+KHA-SMD algorithms, respectively. We report our experiments with these algorithms in Section 5
+before concluding with a discussion.
+
+2 Kernel Hebbian Algorithm (KHA and KHA/t)
+
+Kim et al. [2] apply Sanger’s [1] GHA to data mapped into a reproducing kernel Hilbert space
+(RKHS) H via the function Φ : Rn → H. H and Φ are implicitly deﬁned via the kernel k :
+Rn × Rn → H with the property ∀x, x0 ∈ Rn : k(x, x0 ) = hΦ(x), Φ(x0 )iH , where h·, ·iH denotes
+the inner product in H. Let Φ denote the transposed mapped data:
+Φ := [Φ(x1 ), Φ(x2 ), . . . Φ(xl )]> .
+(3)
+This assumes a ﬁxed set of l observations whereas GHA relies on an inﬁnite sequence of observa-
+tions for convergence. Following Kim et al. [2], we use an indexing function p : N → Zl which
+concatenates random permutations of Zl to reconcile this discrepancy.
+PCA, GHA, and hence KHA all assume that the data is centered. Since the mapping into feature
+space performed by kernel methods does not necessarily preserve such centering, we must re-center
+the mapped data:
+
+Φ0 := Φ − M Φ,
+(4)
+where M denotes the l × l matrix with entries all equal to 1/l. This is achieved by replacing the
+kernel matrix K := ΦΦ> (i.e., [K ]ij := k(xi , xj )) by its centered version
+K 0 := Φ0Φ0> = (Φ − M Φ)(Φ − M Φ)> = K − MK − (MK )> + MKM .
+(5)
+Since all rows of MK are identical (as are all elements of MKM ) we can precalculate that row in
+O(l2 ) time and store it in O(l) space to efﬁciently implement operations with the centered kernel.
+The kernel centered on the training data is also used when testing the trained system on new data.
+From Kernel PCA [4] it is known that the principal components must lie in the span of the centered
+mapped data; we can therefore express the GHA weight matrix as Wt = AtΦ0 , where A is an
+r × l matrix of expansion coefﬁcients, and r the number of principal components. The GHA weight
+update (2) thus becomes
+At+1Φ0 = AtΦ0 + ηt [ytΦ0 (xp(t) )> − lt(yty>
+t )AtΦ0 ],
+
+(6)
+
+where
+
+yt := WtΦ0 (xp(t) ) = AtΦ0Φ0 (xp(t) ) = Atk0
+(7)
+p(t) ,
+using k0
+i to denote the ith column of the centered kernel matrix K 0 . Since we have Φ0 (xi )> =
+e>
+i Φ0 , where ei is the unit vector in direction i, (6) can be rewritten solely in terms of expansion
+coefﬁcients as
+p(t) − lt(yty>
+At+1 = At + ηt [yte>
+t )At ].
+
+(8)
+
+Introducing the update coefﬁcient matrix
+p(t) − lt(yty>
+Γt := yte>
+t )At
+
+we obtain the compact update rule
+
+(9)
+
+At+1 = At + ηtΓt .
+In their experiments, Kim et al. [2] employed the KHA update (8) with a constant scalar gain,
+ηt = const. They also proposed letting the gain decay as ηt = 1/t for stationary data.
+
+(10)
+
+3 Gain Decay with Reciprocal Eigenvalues (KHA/et)
+Consider the term ytx>
+t = Wtxtx>
+t appearing on the right-hand side of the GHA update rule
+(2). At the desired solution, the rows of Wt contain the principal components, i.e., the leading
+eigenvectors of Q = XX >. The elements of yt thus scale with the associated eigenvalues of Q.
+Wide spreads of eigenvalues can therefore lead to ill-conditioning, hence slow convergence, of the
+GHA; the same holds for the KHA.
+In our KHA/et algorithm, we counteract this problem by furnishing KHA with a gain vector ηt that
+provides each eigenvector estimate with its individual gain parameter. The update rule (10) thus
+becomes
+
+At+1 = At + diag(ηt ) Γt ,
+(11)
+where diag(·) turns a vector into a diagonal matrix. To condition KHA, we set the gain parameters
+proportional to the reciprocal of both the iteration number t and the current estimated eigenvalue;
+a similar apporach was used by Chen and Chang [6] for neural network feature selection. Let λt
+be the vector of eigenvalues associated with the current estimate (as stored in At ) of the ﬁrst r
+eigenvectors. KHA/et sets the ith element of ηt to
+||λt ||
+[λt ]i
+where η0 is a free scalar parameter, and l the size of the data set. This conditions the KHA update
+(8) by proportionately decreasing (increasing) the gain for rows of At associated with large (small)
+eigenvalues.
+The norm ||λt || in the numerator of (12) is maximized by the principal components; its growth serves
+to counteract the l/(t + l) gain decay while the leading eigenspace is idientiﬁed. This achieves an
+effect comparable to an adaptive “search then converge” gain schedule [9] without introducing any
+tuning parameters.
+As the goal of KHA is to ﬁnd the eigenvectors in the ﬁrst place, we don’t know the true eigen-
+values while running the algorithm. Instead we use the eigenvalues associated with KHA’s current
+eigenvector estimate, computed as
+
+l
+t + l
+
+[ηt ]i =
+
+(12)
+
+η0 ,
+
+(13)
+
+||[At ]i∗K 0 ||
+[λt ]i =
+||[At ]i∗ ||
+s
+where [At ]i∗ denotes the i-th row of At . This can be stated compactly as
+diag[AtK 0 (AtK 0 )> ]
+diag(AtA>
+t )
+where the division and square root operation are performed element-wise, and diag(·) (when applied
+to a matrix) extracts the vector of elements along the matrix diagonal.
+Note that naive computation of AK 0 is quite expensive: O(rl2 ). Since the eigenvalues evolve
+gradually, it sufﬁces to re-estimate them only occasionally; we determine λt and ηt once for each
+pass through the training data set, i.e., every l iterations. Below we derive a way to maintain AK 0
+incrementally in an affordable O(rl) via Equations (17) and (18).
+
+λt =
+
+(14)
+
+4 KHA with Stochastic Meta-Descent (KHA-SMD)
+
+While KHA/et makes reasonable assumptions about how the gains of a KHA update should be
+scaled, it is by no means clear how close the resulting gains are to being optimal. To explore
+this question, we now derive and implement the Stochastic Meta-Descent (SMD [7]) algorithm for
+KHA/et. SMD controls gains adaptively in response to the observed history of parameter updates
+so as to optimize convergence. Here we focus on the speciﬁcs of applying SMD to KHA/et; please
+refer to [7, 8] for more general derivations and discussion of SMD.
+Using the KHA/et gains as a starting point, the KHA-SMD update is
+
+At+1 = At + ediag(ρt ) diag(ηt ) Γt ,
+(15)
+where the log-gain vector ρt is adjusted by SMD. (Note that the exponential of a diagonal matrix is
+obtained simply by exponentiating the individual diagonal entries.)
+In an RKHS, SMD adapts a scalar log-gain whose update is driven by the inner product between
+the gradient and a differential of the system parameters, all in the RKHS [8]. Note that ΓtΦ0 can
+be interpreted as the gradient in the RKHS of the (unknown) merit function maximized by KHA,
+and that (15) can be viewed as r coupled updates in RKHS, one for each row of At , each associated
+with a scalar gain. SMD-KHA’s adaptation of the log-gain vector is therefore driven by the diagonal
+entries of hΓtΦ0 , BtΦ0 iH , where Bt := dAt denotes the r × l matrix of expansion coefﬁcients for
+SMD’s differential parameters:
+ρt = ρt−1 + µ diag(hΓtΦ0 , BtΦ0 iH )
+t ) = ρt−1 + µ diag(ΓtK 0B>
+= ρt−1 + µ diag(ΓtΦ0Φ0>B>
+t ),
+(16)
+where µ is a scalar tuning parameter. Naive computation of ΓtK 0 in (16) would cost O(rl2 ) time,
+which is prohibitively expensive for large l. We can, however, reduce this cost to O(rl) by noting
+that (9) implies
+p(t) − lt(yty>
+p(t)K 0 − lt(yty>
+t )AtK 0 = ytk0>
+ΓtK 0 = yte>
+t )AtK 0 ,
+where the r × l matrix AtK 0 can be stored and updated incrementally via (15):
+At+1K 0 = AtK 0 + ediag(ρt ) diag(ηt ) ΓtK 0 .
+(18)
+The initial computation of A1K 0 still costs O(rl2 ) in general but is affordable as it is performed
+only once. Alternatively, the time complexity of this step can easily be reduced to O(rl) by making
+A1 suitably sparse.
+Finally, we apply SMD’s standard update of the differential parameters:
+
+(17)
+
+Bt+1 = ξBt + ediag(ρt ) diag(ηt ) (Γt + ξdΓt ),
+(19)
+where the decay factor 0 ≤ ξ ≤ 1 is another scalar tuning parameter. The differential dΓt of the
+gradient is easily computed by routine application of the rules of calculus:
+p(t) − lt(yty>
+dΓt = d[yte>
+t )At ]
+p(t) − lt(yty>
+t )(dAt ) − [d lt(yty>
+= (dAt )k0
+p(t)e>
+t )]At
+p(t) − lt(yty>
+t )Bt − lt(Btk0
+p(t)e>
+= Btk0
+p(t)y>
+p(t)B>
+t + ytk0>
+t )At .
+Inserting (9) and (20) into (19) yields the update rule
+Bt+1 = ξBt + ediag(ρt ) diag(ηt )[(At + ξBt ) k0
+p(t)e>
+p(t)
+− lt(yty>
+t )(At + ξBt ) − ξ lt(Btk0
+p(t)y>
+p(t)B>
+t + ytk0>
+t )At ].
+In summary, the application of SMD to KHA/et comprises Equations (16), (21), and (15), in that
+order. The complete KHA-SMD algorithm is given as Algorithm 1. We initialize A1 to an isotropic
+normal density with suitably small variance, B1 to all zeroes, and ρ0 to all ones. The worst-case
+time complexity of non-trivial initialization steps is given explicitly; all steps in the repeat loop have
+a time complexity of O(rl) or less.
+
+(20)
+
+(21)
+
+Algorithm 1 KHA-SMD
+
+1. Initialize:
+(a) calculate MK , MKM — O(l2 )
+(b) ρ0 := [1 . . . 1]>
+(c) B1 := 0
+(d) A1 ∼ N (0, (rl)−1I )
+(e) calculate A1K 0 — O(rl2 )
+2. Repeat for t = 1, 2, . . .
+(a) calculate λt (13)
+(b) calculate ηt (11)
+(c) select observation xp(t)
+(d) calculate yt (7)
+(e) calculate Γt (9)
+(f) calculate ΓtK 0 (17)
+(g) update ρt−1 → ρt (16)
+(h) update Bt → Bt+1 (21)
+(i) update At → At+1 (15)
+(j) update AtK 0 → At+1K 0 (18)
+
+5 Experiments
+
+We compared our KHA/et and KHA-SMD algorithms with KHA using either a ﬁxed gain (ηt = η0 )
+or a scheduled gain decay (ηt = η0 l/(t + l), denoted KHA/t) in a number of different settings:
+Performing kernel PCA and spectral clustering on the well-known USPS dataset [10], replicating an
+image denoising experiment of Kim et al. [2], and denoising human motion capture data.
+In all experiments the Kernel Hebian Algorithm (KHA) and our enhanced variants are used to ﬁnd
+the ﬁrst r eigenvectors of the centered Kernel matrix K 0 . To assess the quality of the result, we
+reconstruct the Kernel matrix from the found eigenvectors and measure the reconstruction error
+E (A) := ||K 0 − (AK 0 )>AK 0 ||F ,
+(22)
+where || · ||F is the Frobenius norm. The minimal reconstruction error from r eigenvectors, E min :=
+minA E (A), can be calculated by an eigendecomposition. This allows us to report reconstruction
+errors as excess errors relative to the optimal reconstruction, i.e., E (A)/ E min − 1.
+To compare algorithms we plot the excess reconstruction error on a logarithmic scale after each pass
+through the entire data set. This is a fair comparison since the overhead for KHA/et and KHA-
+SMD is negligible compared to the time required by the KHA base algorithm. The most expensive
+operation, the calculation of a row of the Kernel matrix, is shared by all algorithms.
+We manually tuned η0 for KHA, KHA/t, and KHA/et; for KHA-SMD we hand-tuned µ, used the
+same η0 as KHA/et, and the value ξ = 0.99 (set a priori) throughout. Thus a comparable amount of
+tuning effort went into each algorithm. Parameters were tuned by a local search over values in the
+set {a · 10b : a ∈ {1, 2, 5}, b ∈ Z}.
+
+5.1 USPS Digits
+
+Our ﬁrst set of experiments was performed on a subset of the well-known USPS dataset [10], namely
+the ﬁrst 100 samples of each digit in the USPS training data. KHA with both a dot-product kernel
+and a Gaussian kernel with σ = 8 1 was used to extract the ﬁrst 16 eigenvectors. The results are
+shown in Figure 1. KHA/et clearly outperforms KHA/t for both kernels, and KHA-SMD is able to
+increase the convergence speed even further.
+
+1This is the value of σ used by Mika et al. [11].
+
+Figure 1: Excess relative reconstruction error for kernel PCA (16 eigenvectors) on USPS data, using
+a dot-product (left) vs. Gaussian kernel with σ = 8 (right).
+
+5.2 Multipatch Image PCA
+
+For our second set of experiments we replicated the image de-noising problem used by Kim et al.
+[2], the idea being that reconstructing image patches from their r leading eigenvectors will eliminate
+most of the noise. The image considered here is the famous Lena picture [12] which was divided
+in four sub-images. From each sub-image 11×11 pixel windows were sampled on a grid with two-
+pixel spacing to produce 3844 vectors of 121 pixel intensity values each. The KHA with Gaussian
+kernel (σ = 1) was used to ﬁnd the 20 best eigenvectors for each sub-image. Results averaged over
+all four sub-images are shown in Figure 2 (left), including KHA with the constant gain of η0 = 0.05
+employed by Kim et al. [2] for comparison.
+After 50 passes through the training data, KHA/et achieves an excess reconstruction error two orders
+of magnitude better than conventional KHA; KHA-SMD yields an additional order of magnitude
+improvement. KHA/t, while superior to a constant gain, is comparatively ineffective here.
+Kim et al. [2] performed 800 passes through the training data. Replicating this approach we obtain a
+reconstruction error of 5.64%, signiﬁcantly worse than KHA/et and KHA-SMD after 50 passes. The
+signal-to-noise ratio (SNR) of the reconstruction after 800 passes with constant gain is 13.46 2 while
+KHA/et achieves comparable performance much faster, reaching an SNR of 13.49 in 50 passes.
+
+5.3 Spectral Clustering
+
+Spectral Clustering [13] is a clustering method which includes the extraction of the ﬁrst kernel PCs.
+In this section we present results of the spectral clustering of all 7291 patterns of the USPS data [10]
+where 10 kernel PCs were obtained by KHA. We used the spectral clustering method presented in
+
+2Kim et al. [2] reported an SNR of 14.09; the discrepancy is due to different reconstruction methods.
+
+Figure 2: Excess relative reconstruction error (left) for multipatch image PCA on a noisy Lena image
+(center), using a Gaussian kernel with σ = 1; denoised image obtained by KHA-SMD (right).
+
+Figure 3: Excess relative reconstruction error (left) and quality of clustering as measured by variation
+of information (right) for spectral clustering of the USPS data with a Gaussian kernel (σ = 8).
+
+[13], and evaluate our results via the Variation of Information (VI) metric [14], which compares the
+clustering obtained by spectral clustering to that induced by the class labels. On the USPS data, a VI
+of 4.54 corresponds to random performance, while clustering in perfect accordance with the class
+labels would give a VI of zero.
+Our results are shown in Figure 3. Again KHA-SMD dominates KHA/et in both convergence speed
+and quality of reconstruction (left); KHA/et in turn outperforms KHA/t. The quality of the resulting
+clustering (right) reﬂects the quality of reconstruction. KHA/et and KHA-SMD produce a cluster-
+ing as good as that obtained from a (computationally expensive) full kernel PCA within 10 passes
+through the data; KHA/t after more than 30 passes.
+
+5.4 Human motion denoising
+
+In our ﬁnal set of experiments we employed KHA to denoise a human walking motion trajectory
+from the CMU motion capture database (http://mocap.cs.cmu.edu), converted to Cartesian
+coordinates via Neil Lawrence’s Matlab Motion Capture Toolbox (http://www.dcs.shef.
+ac.uk/∼neil/mocap/). The experimental setup was similar to that of Tangkuampien and Suter
+[15]: Gaussian noise was added to the frames of the original motion, then KHA with 25 PCs was
+used to denoise them. The results are shown in Figure 4.
+As in the other experiments, KHA-SMD clearly outperformed KHA/et, which in turn was better
+than KHA/t. KHA-SMD managed to reduce the mean-squared error by 87.5%; it is hard to visually
+
+√
+Figure 4: From left to right: Excess relative reconstruction error on human motion capture data with
+Gaussian kernel (σ =
+1.5), one frame of the original data, a superposition of this original and the
+noisy data, and a superposition of the original and reconstructed (denoised) data.
+
+detect a difference between the denoised frames and the original ones — see Figure 4 (right) for an
+example. We include movies of the original, noisy, and denoised walk in the supporting material.
+
+6 Discussion
+
+We modiﬁed Kim et al.’s [2] Kernel Hebbian Algorithm (KHA) by providing a separate gain for
+each eigenvector estimate. We then presented two methods, KHA/et and KHA-SMD, to set those
+gains. KHA/et sets them inversely proportional to the estimated eigenvalues and iteration number;
+KHA-SMD enhances that further by applying Stochastic Meta-Descent (SMD [7]) to perform gain
+adaptation in RKHS [8]. In four different experimental settings both methods were compared to a
+conventional gain decay schedule. As measured by relative reconstruction error, KHA-SMD clearly
+outperformed KHA/et, which in turn outperformed the scheduled decay, in all our experiments.
+
+Acknowledgments
+
+National ICT Australia is funded by the Australian Government’s Department of Communications,
+Information Technology and the Arts and the Australian Research Council through Backing Aus-
+tralia’s Ability and the ICT Center of Excellence program. This work is supported by the IST
+Program of the European Community, under the Pascal Network of Excellence, IST-2002-506778.
+
+References
+[1] T. D. Sanger. Optimal unsupervised learning in a single-layer linear feedforward network.
+Neural Networks, 2:459–473, 1989.
+[2] K. I. Kim, M. O. Franz, and B. Sch ¨olkopf. Iterative kernel principal component analysis for
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 27(9):
+image modeling.
+1351–1366, 2005.
+[3] B. Sch ¨olkopf and A. Smola. Learning with Kernels. MIT Press, Cambridge, MA, 2002.
+[4] B. Sch ¨olkopf, A. J. Smola, and K.-R. M ¨uller. Nonlinear component analysis as a kernel eigen-
+value problem. Neural Computation, 10:1299–1319, 1998.
+[5] H. Robbins and S. Monro. A stochastic approximation method. Annals of Mathematical
+Statistics, 22:400–407, 1951.
+[6] L.-H. Chen and S. Chang. An adaptive learning algorithm for principal component analysis.
+IEEE Transaction on Neural Networks, 6(5):1255–1263, 1995.
+[7] N. N. Schraudolph. Fast curvature matrix-vector products for second-order gradient descent.
+Neural Computation, 14(7):1723–1738, 2002.
+[8] S. V. N. Vishwanathan, N. N. Schraudolph, and A. J. Smola. Step size adaptation in reproduc-
+ing kernel Hilbert space. Journal of Machine Learning Research, 7:1107–1133, 2006.
+[9] C. Darken and J. E. Moody. Towards faster stochastic gradient search. In J. E. Moody, S. J.
+Hanson, and R. Lippmann, editors, Advances in Neural Information Processing Systems 4,
+pages 1009–1016. Morgan Kaufmann Publishers, 1992.
+[10] Y. LeCun, B. Boser, J. S. Denker, D. Henderson, R. E. Howard, W. Hubbard, and L. J. Jackel.
+Backpropagation applied to handwritten zip code recognition. Neural Computation, 1:541–
+551, 1989.
+[11] S. Mika, B. Sch ¨olkopf, A. J. Smola, K.-R. M ¨uller, M. Scholz, and G. R ¨atsch. Kernel PCA and
+de-noising in feature spaces. In M. S. Kearns, S. A. Solla, and D. A. Cohn, editors, Advances
+in Neural Information Processing Systems 11, pages 536–542. MIT Press, 1999.
+[12] D. J. Munson. A note on Lena. IEEE Trans. Image Processing, 5(1), 1996.
+[13] A. Ng, M. Jordan, and Y. Weiss. Spectral clustering: Analysis and an algorithm (with ap-
+In T. G. Dietterich, S. Becker, and Z. Ghahramani, editors, Advances in Neural
+pendix).
+Information Processing Systems 14, 2002.
+[14] M. Meila. Comparing clusterings: an axiomatic view. In ICML ’05: Proceedings of the 22nd
+international conference on Machine learning, pages 577–584, New York, NY, USA, 2005.
+ACM Press.
+[15] T. Tangkuampien and D. Suter. Human motion de-noising via greedy kernel principal compo-
+nent analysis ﬁltering. In Proc. Intl. Conf. Pattern Recognition, 2006.
+
+

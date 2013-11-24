@@ -1,0 +1,873 @@
+Using Bayesian Dynamical Systems for
+Motion Template Libraries
+
+Silvia Chiappa, Jens Kober, Jan Peters
+
+Max-Planck Institute for Biological Cybernetics
+Spemannstraße 38, 72076 Tübingen, Germany
+{silvia.chiappa,jens.kober,jan.peters}@tuebingen.mpg.de
+
+Abstract
+
+Motor primitives or motion templates have become an important concept for both
+modeling human motor control as well as generating robot behaviors using imi-
+tation learning. Recent impressive results range from humanoid robot movement
+generation to timing models of human motions. The automatic generation of skill
+libraries containing multiple motion templates is an important step in robot learn-
+ing. Such a skill learning system needs to cluster similar movements together and
+represent each resulting motion template as a generative model which is subse-
+quently used for the execution of the behavior by a robot system. In this paper,
+we show how human trajectories captured as multi-dimensional time-series can be
+clustered using Bayesian mixtures of linear Gaussian state-space models based on
+the similarity of their dynamics. The appropriate number of templates is automat-
+ically determined by enforcing a parsimonious parametrization. As the resulting
+model is intractable, we introduce a novel approximation method based on varia-
+tional Bayes, which is especially designed to enable the use of efﬁcient inference
+algorithms. On recorded human Balero movements, this method is not only ca-
+pable of ﬁnding reasonable motion templates but also yields a generative model
+which works well in the execution of this complex task on a simulated anthropo-
+morphic SARCOS arm.
+
+1 Introduction
+
+Humans demonstrate a variety and versatility of movements far beyond the reach of current anthro-
+pomorphic robots. It is widely believed that human motor control largely relies on a set of “mental
+templates” [1] better known as motor primitives or motion templates. This concept has gained in-
+creasing attention both in the human motor control literature [1, 2] as well as in robot imitation
+learning [3, 4]. The recent suggestion of Ijspeert et al.
+[3] to use dynamical systems as motor
+primitives has allowed this approach to scale in the domain of humanoid robot imitation learning
+and has yielded a variety of interesting applications as well as follow-up publications. However, up
+to now, the focus of motion template learning has largely been on single template acquisition and
+self-improvement. Future motor skill learning systems on the other hand need to be able to observe
+several different behaviors from human presenters and compile libraries of motion templates directly
+from these examples with as little predetermined structures as possible.
+
+An important part of such a motor skill learning system is the clustering of many presented move-
+ments into different motion templates. Human trajectories are recorded as multi-dimensional time-
+series of joint angles as well as joint velocities using either a marker-based tracking setup (e.g.,
+a VICONT M setup), a sensing suit (e.g., a SARCOS SenSuit) or a haptic interface (e.g., an an-
+thropomorphic master arm). Inspired by Ijspeert et al. [3], we intend to use dynamical systems
+as generative models of the presented trajectories, i.e., as motion templates. Our goal is to cluster
+
+1
+
+these multi-dimensional time-series automatically into a small number of motion templates without
+pre-labeling of the trajectories or assuming an a priori number of templates. Thus, the system has
+to discover the underlying motion templates, determine the number of templates as well as learn the
+underlying skill sufﬁciently well for robot application.
+
+In principle, one could use a non-generative clustering approach (e.g., a type of K-means) with a
+method for selecting an appropriate number of clusters and, subsequently, ﬁt a generative model to
+each cluster. Here we prefer to take a different approach in which the clustering and learning of the
+underlying time-series dynamics are performed at the same time. This way we aim at ensuring that
+each obtained cluster can be modeled well by its representative generative model.
+
+To date the majority of the work on time-series clustering using generative models has focused on
+static mixture models. Clustering long or high-dimensional time-series is hard when approached
+with static models, such that collapsing the trajectories to a few relevant features is often required.
+This problem would be severe for a high-dimensional motor learning system where the data needs
+to be represented at high sampling rates in order to ensure the capturing of all relevant details for
+motor skill learning. In addition, it is difﬁcult to ensure smoothness when the time-series display
+high variability and, therefore, to obtain accurate generative models with static approaches.
+
+A natural alternative is to use mixtures of temporal models which explicitly model the dynamics of
+the time-series. In this paper, we use Mixtures of Linear Gaussian State-Space Models (LGSSMs).
+LGSSMs are probabilistic temporal models which, despite their computational simplicity, can repre-
+sent many natural dynamical processes [5]. As we will see later in this paper, LGSSMs are powerful
+enough to model our time-series sufﬁciently accurately.
+
+For determining the number of clusters, most probabilistic approaches in the past used to train a sep-
+arate model for each possible cluster conﬁguration, and then select the one which would optimize
+the trade-off between accuracy and complexity, as measured for example by the Bayesian Informa-
+tion Criterion [6, 7]. The drawback of these approaches is that training many separate models can
+lead to a large computational overhead, such that heuristics are often needed to restrict the number
+of possible cluster conﬁgurations [7].
+
+A less computationally expensive alternative is offered by recent Bayesian approaches where the
+model parameters are treated as random variables and integrated out yielding the marginal likelihood
+of the data. An appropriate prior distribution can be used to enforce a sparse representation, i.e., to
+select the smallest set of parameters that explains the data well by making the remaining parameters
+inactive. As a result, the structure selection can be achieved within the model, without the need to
+train and compare several separate models.
+
+As a Bayesian treatment of the Mixtures of Linear Gaussian State-Space Models is intractable, we
+introduce a deterministic approximation based on variational Bayes. Importantly, our approximation
+is especially designed to enable the use of standard LGSSM inference methods for the hidden state
+variables, which has the advantage of minimizing numerically instabilities.
+
+As a realistically difﬁcult scenario in this ﬁrst step towards large motor skill libraries, we have
+selected the game of dexterity Balero (also known as Ball-In-A-Cup or Kendama, see [8]) as an
+evaluation platform. Several substantially different types of movements exist for performing this
+task and humans tend to have a large variability in movement execution [9]. From a robotics point
+of view, Balero can be considered sufﬁciently complex as it involves movements in all major seven
+degrees of freedom of a human arm as well as an anthropomorphic robot arm. We are able to show
+that the presented method gives rise to a reasonable number of clusters representing quite distinct
+movements and that the resulting generative models can be used successfully as motion templates
+in physically realistic simulations.
+
+In the remainder of the paper, we will proceed as follows. We will ﬁrst introduce a generative
+approach for clustering and modeling multi-dimensional time-series with Bayesian Mixtures of
+LGSSMs and describe how this approach can be made tractable using a variational approximation.
+We will then show that the resulting model can be used to infer the motion templates underlying a
+set of human demonstrations, and give evidence that the generative model representing each motion
+template is sufﬁciently accurate for control in a mechanically plausible simulation of the SARCOS
+Master Arm.
+
+2
+
+2 Bayesian Mixtures of Linear Gaussian State-Space Models
+
+Our goal is to model both human and robot movements in order to build motion template libraries. In
+this section, we describe our Bayesian modeling approach and discuss both the underlying assump-
+tions as well as how the structure of the model is selected. As the resulting model is not tractable for
+analytical solution, we introduce an approximation method based on variational Bayes.
+
+2.1 Modeling Approach
+
+In our Bayesian approach to Mixtures of Linear Gaussian State-Space Models (LGSSMs), we are
+given a set of N time-series1 v1:N
+1:T of length T for which we deﬁne with the following marginal
+likelihood
+1:T | ˆΘ1:K , γ ) = Xz1:N ZΘ1:K
+1:T |z 1:N , Θ1:K )p(Θ1:K | ˆΘ1:K ) Zπ
+p(v1:N
+p(v1:N
+where z n ∈ {1, . . . , K } indicates which of a set of K LGSSMs generated the sequence vn
+1:T . The
+parameters of LGSSM k are denoted by Θk and have a prior distribution depending on hyperparam-
+eters ˆΘk . The K -dimensional vector π includes the prior probabilities of the time-series generation
+for each LGSSM and has prior distribution hyperparameter γ .
+
+p(z 1:N |π)p(π |γ ),
+
+The optimal hyperparameters are estimated by type-II maximum likelihood [10], i.e., by maximizing
+the marginal likelihood over ˆΘ1:K and γ . Clustering can be performed by inferring the LGSSM that
+1:T , ˆΘ1:K , γ ).
+1:T by computing arg maxk p(z n = k |v1:N
+most likely generated the sequence vn
+
+1:N
+
+, ˆΘ1:K ). As a generative temporal model for each time-series, we em-
+1:N
+Modeling p(v
+1:T |z
+ploy a Linear Gaussian State-Space Model [5] that assumes that the observations v1:T , with vt ∈ ℜV ,
+are generated from a latent Markovian linear dynamical system with hidden states h1:T , with
+ht ∈ ℜH , according to2
+
+vt = Bht + ηv
+t , ηv
+ht = Aht−1 + ηh
+t , ηh
+t ∼ N (0V , ΣV ),
+t ∼ N (µt , ΣH ) .
+Standard LGSSMs assume a zero-mean hidden-state noise (µt ≡ 0H ). In our application the use of
+a time-dependent mean µt 6= 0H leads to a superior modeling accuracy. A probabilistic formulation
+of the LGSSM is given by
+
+(1)
+
+p(vt |ht , Θ)p(ht |ht−1 , Θ),
+
+p(v1:T , h1:T |Θ) = p(v1 |h1 , Θ)p(h1 |Θ)
+
+T
+Yt=2
+with p(ht |ht−1 , Θ) = N (Aht−1 + µt , ΣH ), p(h1 |Θ) = N (µ1 , Σ), p(vt |ht , Θ) = N (Bht , ΣV ),
+and Θ = {A, B , ΣH , ΣV , µ1:T , Σ}. Due to the simple structure of the model, performing inference,
+that is to compute quantities such as p(ht |v1:T , Θ), can be efﬁciently achieved in O(T ) operations.
+In the presented Bayesian approach, we deﬁne a prior distribution p(Θ| ˆΘ) over the parameters Θ
+
+	
+where ˆΘ are the associated hyperparameters. More speciﬁcally, we deﬁne zero-mean Gaussians on
+the elements of A and on the columns of B by3
+β V /2
+α1/2
+H
+H
+A2
+j
+ij
+Yj=1
+Yi,j=1
+ij , p (cid:0)B |β , Σ−1
+p (cid:0)A|α, Σ−1
+V (cid:1) =
+H (cid:1) =
+p2π [ΣH ]ii
+p|2πΣV |
+where α and β are a set of hyperparameters which need to be optimized. We make the assumption
+that Σ−1
+H , Σ−1
+V and Σ−1 are diagonal and deﬁne Gamma distributions on them. For µ1 we deﬁne
+a zero-mean Gaussian prior, while we formally treat µ2:T as hyperparameters and determine their
+1 v1:N
+T , . . . , vN
+1 , . . . , vN
+v1
+1 , . . . , v1
+1:T is a shorthand for
+.
+T
+2Here, N (m, S ) denotes a Gaussian with mean m and covariance S , and 0X denotes an X -dimensional
+zero vector. The initial latent state h1 is drawn from N (µ1 , Σ).
+3 [X ]ij and Xj denote the ij -th element and the j -th column of matrix X respectively. The dependency of
+the priors on ΣH and ΣV is chosen speciﬁcally to render a variational implementation feasible.
+
+e−
+
+βj
+j Σ−1
+2 B T
+V Bj ,
+
+αij
+2 [Σ−1
+H ]ii
+
+e−
+
+3
+
+optimal values. These choices are made in order to render our Bayesian treatment feasible and to
+obtain a sparse parametrization, as discussed in more details below.
+
+p(Θk | ˆΘk ),
+
+In the resulting mixture model, we consider a set of K such Bayesian LGSSMs. The joint distribu-
+tion over all sequences given the indicator variables and hyperparameters is deﬁned as
+1:T |z n , Θ1:K )) K
+1:T |z 1:N , ˆΘ1:K ) = ZΘ1:K ( N
+Yn=1
+Yk=1
+p(vn
+p(v1:N
+where p(vn
+1:T |Θk ) denotes the probability of time-series vn
+1:T |z n = k , Θ1:K ) ≡ p(vn
+1:T given that
+parameters Θk have been employed to generate it.
+1:N |γ (cid:1). As prior for π , we deﬁne a symmetric Dirichlet distribution
+Modeling p(cid:0)z
+K
+Γ (γ )
+πγ /K−1
+Yk=1
+p(π |γ ) =
+,
+k
+Γ(γ /K )K
+where Γ(·) is the Gamma function and γ denotes a hyperparameter that needs to be optimized. This
+distribution is conjugate to the multinomial, which greatly simpliﬁes our Bayesian treatment. To
+model the joint indicator variables, we deﬁne
+p(z 1:N |γ ) = Zπ ( N
+p(z n |π)) p(π |γ ), where p(z n = k |π) ≡ πk .
+Yn=1
+Such Bayesian approach favors simple model structures. In particular, the priors on Ak and B k en-
+force a sparse parametrization since, during learning, many αk
+ij and β k
+j get close to inﬁnity whereby
+(the posterior distribution of) Ak
+ij and B k
+j get close to zero (see [11] for an analysis of this pruning ef-
+fect). This enables us to achieve structure selection within the model. Speciﬁcally, this approach en-
+sures that the unnecessary LGSSMs are pruned out from the model during training (for certain k , all
+1:T , ˆΘ1:K , γ ) = 0
+elements of B k are pruned out such that LGSSM k becomes inactive (p(z n = k |v1:N
+for all n)).
+
+2.2 Model Intractability and Approximate Solution
+
+The Bayesian treatment of the model is non-trivial as the integration over the parameters Θ1:K and π
+renders the computation of the required posterior distributions intractable. This problem results from
+the coupling in the posterior distributions between the hidden state variables h1:N
+1:T and the parameters
+Θ1:K as well as between the indicators z 1:N and π , Θ1:K . To deal with this intractability, we use a
+deterministic approximation method based on variational Bayes.
+
+In our variational approach we introduce a new distribution q and
+Variational Approximation.
+make the following approximation4
+
+1:T , ˆΘ1:K , γ ) ≈ q(h1:N
+1:T |z 1:N )q(z 1:N )q(Θ1:K ).
+1:T , Θ1:K |v1:N
+p(z 1:N , h1:N
+
+(2)
+
+That is, we approximate the posterior distribution of the hidden variables of the model by one in
+which the hidden states are decoupled from the parameters given the indicator variables and in
+which the indicators are decoupled from the parameters.
+
+The approximation is achieved with a variational expectation-maximization algorithm which min-
+imizes the KL divergence between the right and left hand sides of Equation (2), or, equivalently,
+1:T | ˆΘ1:K , γ ) ≥ F ( ˆΘ1:K , γ , q) with
+maximizes a tractable lower bound on the log-likelihood log p(v1:N
+respect to q for ﬁxed ˆΘ1:K and γ and vice-versa. Observation vn
+t is then placed in the most likely
+LGSSM by computing arg maxk q(z n = k).
+
+4Here, we describe a collapsed approximation over π [13]. To simplify the notation, we omit conditioning
+1:T , ˆΘ1:K , γ for the q distribution.
+on v1:N
+
+4
+
+Figure 1: This ﬁgure shows one of the Balero motion templates found by our clustering method,
+i.e., the cluster C2 in Figure 2. Here, a sideways movement with a subsequent catch is performed
+
+and the uppermost row illustrates this movement with a symbolic sketch. The middle row shows an
+execution of the movement generated with the LGSSM representing the cluster C2. The lowest row
+shows a recorded human movement which was attributed to cluster C2 by our method. Note that
+movements generated from LGSSMs representing other clusters differ signiﬁcantly.
+Resulting Updates. While the space does not sufﬁce for complete derivation, we will brieﬂy
+1:T |zn=k)+hlog p(zn=k|z¬n ,γ )i	
+sketch the updates for q . Additional details and the updates for the hyperparameters can be found
+in [12]. The updates consist of a parameter update, an indicator variable update and a latent state
+update. First, the approximate parameter posterior is given by
+1:T |Θk )iq(hn
+n=1 q(zn=k)hlog p(vn
+1:T ,hn
+N
+q(Θk ) ∝ p(Θk | ˆΘk )e
+|zn=k) ,
+1:T
+where h·iq denotes expectation with respect to q . The speciﬁc choice for p(Θk | ˆΘk ) makes the
+computation of this posterior relatively straightforward, since q(Θk ) is a distribution of the same
+type. Second, the approximate posterior over the indicator variables is given by
+Hq (hn
+q(z n = k) ∝ e
+m 6=n q(zm ) e
+|zn=k)q(Θk ) ,
+where Hq (x) denotes the entropy of the distribution q(x) and z¬n includes all indicator variables
+except for z n . Due to the choice of a Dirichlet prior, the term p(z n = k |z¬n , γ ) = Rπ p(z n =
+k |z¬n , π)p(π , γ ) can be determined analytically. However, the required average over this term is
+computationally expensive, and, thus, we approximate it using a second order expansion [13]. The
+third and most challenging update is the one of the hidden states
+hlog p(vn
+1:T |Θk )iq(Θk ) .
+1:T ,hn
+1:T |z n = k) ∝ e
+q (hn
+Whilst computing this joint density is relatively straightforward, the parameter and indicator variable
+updates require the non-trivial estimation of the posterior averages hhn
+t i and (cid:10)hn
+t hn
+t−1 (cid:11) with respect
+to this distribution. Following a similar approach to the one proposed in [14] for the Bayesian
+LGSSM, we reformulate the rhs of Equation (3) as proportional to the distribution of an augmented
+LGSSM such that standard inference routines for the LGSSM can be used.
+
+1:T |Θk )iq(hn
+hlog p(vn
+1:T ,hn
+1:T
+
+(3)
+
+3 Results
+
+In this section we show that the model presented in Section 2 can be used effectively both for
+inferring the motion templates underlying a set of human trajectories and for approximating motion
+templates with dynamical systems. For doing so, we take the difﬁcult task of Balero, also known
+as Ball-In-A-Cup or Kendama, and collect human executions of this task using a motion capture
+
+5
+
+0.3
+
+C1
+
+0.3
+
+C2
+
+0.3
+
+C3
+
+Z
+
+Z
+
+C4
+
+0.3
+
+Z
+
+−1
+1
+
+C5
+
+0.3
+
+Z
+
+−1
+1
+
+Z
+
+−0.2
+−0.3
+
+Y
+
+−0.2
+−0.3
+
+0.4
+
+−0.2
+−0.3
+
+0.4
+
+0.4
+
+Y
+
+0.7
+
+Y
+
+X
+
+−0.6
+
+0
+
+Y
+
+−0.6
+
+0
+
+X
+
+Y
+
+−0.6
+
+0
+
+X
+
+X
+
+−0.6
+
+−0.5
+
+0.7
+
+X
+
+−0.6
+
+−0.5
+
+0.3
+
+C6
+
+0.3
+
+C7
+
+0.3
+
+C8
+
+0.3
+
+C9
+
+Z
+
+Z
+
+Z
+
+Z
+
+−0.2
+−0.3
+
+Y
+
+−0.2
+−0.3
+
+0.4
+
+−0.2
+−0.3
+
+0.4
+
+−0.2
+−0.3
+
+0.4
+
+0.4
+
+X
+
+−0.6
+
+0
+
+Y
+
+−0.6
+
+0
+
+X
+
+Y
+
+−0.6
+
+0
+
+X
+
+Y
+
+−0.6
+
+0
+
+X
+
+Figure 2: In this ﬁgure, we show nine plots where each plot represents one cluster found by our
+method. Each of the ﬁve shown trajectories in the respective clusters represents a different recorded
+Balero movement. For better visualization, we do not show joint trajectories here but rather the
+trajectories of the cup which have an easier physical interpretation and, additionally, reveal the
+differences between the isolated clusters. All axes show units in meters.
+
+setup. We show that the presented model successfully extracts meaningful human motion templates
+underlying Balero, and that the movements generated by the model are successful in simulation of
+the Balero task on an anthropomorphic SARCOS arm.
+
+3.1 Data Generation of Balero Motions
+
+In the Balero game of dexterity, a human is given a toy consisting of a cup with a ball attached by
+a string. The goal of the human is to toss the ball into the cup. Humans perform a wide variety of
+different movements in order to achieve this task [9]. For example, three very distinct movements
+are: (i) swing the hand slightly upwards to the side and then go back to catch the ball, (ii) hold the
+cup high and then move very fast to catch the ball, and (iii) jerk the cup upwards and catch the ball
+in a fast downwards movement. Whilst the difference in these three movements is signiﬁcant and
+can be easily detected visually, there exist many other movements for which this is not the case.
+
+We collected 124 different Balero trajectories where the subject was free to select the employed
+movement. For doing so, we used a VICONT M data collection system which samples the trajecto-
+ries at 200Hz to track both the cup as well as all seven major degrees of freedom of the human arm.
+For the evaluation of our method, we considered the seven joint angles of the human presenter as
+well as the corresponding seven estimated joint velocities.
+
+In the lowest row of Figure 1, we show how the human motion is collected with a VICONT M motion
+tracking setup. As we will see later, this speciﬁc movement is assigned by our method to cluster C2
+whose representative generative LGSSM can be used successfully for imitating this motion (middle
+row). A sketch of the represented movement is shown in the top row of Figure 1.
+
+3.2 Clustering and Imitation of Motion Templates
+
+We trained the variational method with different initial conditions, hidden dimension H = 35 and a
+number of clusters K which varied from 20 to 50 in order to avoid suboptimal results due to local
+maxima.
+
+The resulting clustering contains nine active motion templates. These are plotted in Figure 2, where,
+instead of the 14-dimensional joint angles and velocities, we show the three-dimensional cup tra-
+jectories resulting from these joint movements, as it is easier for humans to make sense of cartesian
+trajectories. Clusters C1, C2 and C3 are movements to the side which subsequently catch the ball.
+Here, C1 is a short jerk, C3 appears to have a circular movement similar to a jerky movement, while
+C2 uses a longer but smoother movement to induce kinetic energy in the ball. Motion templates
+C4 and C5 are dropping movements where the cup moves down fast for more than 1.2m and then
+
+6
+
+Execution 1
+
+Execution 2
+
+Execution 1
+
+Execution 2
+
+0.5
+
+0
+
+−0.4
+
+5
+
+0
+
+−4
+
+]
+d
+a
+r
+[
+s
+n
+o
+i
+t
+i
+s
+o
+P
+
+]
+s
+/
+d
+a
+r
+[
+s
+e
+i
+t
+i
+c
+o
+l
+e
+V
+
+0.5
+
+0
+
+−0.4
+
+5
+
+0
+
+−4
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.5
+
+0
+
+−0.4
+
+5
+
+0
+
+−4
+
+0.5
+
+0
+
+−0.4
+
+5
+
+0
+
+−4
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+0.16
+
+0.32
+
+0.48
+
+0.64
+
+Time[s]
+
+Time[s]
+
+Time[s]
+
+Time[s]
+
+(a)
+
+(b)
+
+Figure 3: (a) Time-series recorded from two executions of the Balero movement assigned by our
+model to cluster C1. In the ﬁrst and second rows are plotted the positions and velocities respectively
+(for better visualization each time-series component is plotted with its mean removed). (b) Two
+executions of the Balero movement generated by our trained model using probability distributions
+of cluster C1.
+
+catches the ball. The template C5 is a smoother movement than C4 with a wider catching movement.
+For C6 and C7, we observe a signiﬁcantly different movement where the cup is jerked upwards drag-
+ging the ball in this direction and then catches the ball on the way down. Clusters C8 and C9 exhibit
+the most interesting movement where the main motion is forward-backwards and the ball swings
+into the cup. In C8 this task is achieved by moving upwards at the same time while in C9 there is
+little loss of height.
+
+To generate Balero movements with our trained model, we can use the recursive formulation of the
+LGSSM given by Equation 1 where, for each cluster k , Ak , B k and µk
+1 are replaced by the mean
+values of their inferred Gaussian q distributions, while the noise covariances are replaced by the
+modes of their Gamma q distributions. The initial hidden state h1 and the noise elements ηh
+t and
+ηv
+t are sampled from their respective q distributions, whist the inferred optimal values are used for
+µk
+2:T .
+In Figure 3 (a) we plotted two recorded executions of the Balero task assigned by our model to cluster
+C1. As we can see, the two executions have similar dynamics but also display some differences due
+to human variability in performing the same type of movement. In Figure 3 (b) we plotted two
+executions generated by our model using the learned distributions representing cluster C1. Our
+model can generate time-series with very similar dynamics to the ones of the recorded time-series.
+
+To investigate the accuracy of the obtained motion templates, we used them for executing Balero
+movements on a simulated anthropomorphic SARCOS arm. Inspired by Miyamoto et al. [15], a
+small visual feedback term based on a Jacobian transpose method was activated when the ball was
+within 3cm in order to ensure task-fulﬁllment. We found that our motion templates are accurate
+enough to generate successful task executions. This can be seen in Figure 1 for cluster C2 (middle
+row) and in the video on the author’s website.
+
+4 Conclusions
+
+In this paper, we addressed the problem of automatic generation of skill libraries for both robot
+learning and human motion analysis as a unsupervised time-series clustering and learning problem
+based on human trajectories. We have introduced a novel Bayesian temporal mixture model based
+on a variational approximation method which is especially designed to enable the use of efﬁcient
+inference algorithms. We demonstrated that our model gives rise to a meaningful clustering of
+human executions of the difﬁcult game of dexterity Balero and is able to generate time-series which
+are very close to the recorded ones. Finally, we have shown that the model can be used to obtain
+successful executions of the Balero movements on a physically realistic simulation of the SARCOS
+Master Arm.
+
+7
+
+5 Acknowledgments
+
+The authors would like to thank David Barber for useful discussions and Betty Mohler for help with
+data collection.
+
+References
+
+[1] T. Flash and B. Hochner. Motor primitives in vertebrates and invertebrates. Current Opinion in
+Neurobiology, 15(6):660–666, 2005.
+
+[2] B. Williams, M. Toussaint, and A. Storkey. Modelling motion primitives and their timing in
+biologically executed movements. In Advances in Neural Information Processing Systems 20,
+pages 1609–1616, 2008.
+
+[3] A. Ijspeert, J. Nakanishi, and S. Schaal. Learning attractor landscapes for learning motor prim-
+itives. In Advances in Neural Information Processing Systems 15, pages 1547–1554, 2003.
+
+[4] S. Calinon, F. Guenter, and A. Billard. On learning, representing and generalizing a task in a
+humanoid robot. IEEE Transactions on Systems, Man and Cybernetics, Part B, 37(2):286–298,
+2007.
+
+[5] J. Durbin and S. J. Koopman. Time Series Analysis by State Space Methods. Oxford Univ. Press,
+2001.
+
+[6] Y. Xiong and D-Y. Yeung. Mixtures of ARMA models for model-based time series clustering.
+In Proceedings of the IEEE International Conference on Data Mining, pages 717–720, 2002.
+
+[7] C. Li and G. Biswas. A Bayesian approach to temporal data clustering using hidden Markov
+models. In Proceedings of the International Conference on Machine Learning, pages 543–550,
+2000.
+
+[8] J. Kober, B. Mohler and J. Peters. Learning perceptual coupling for motor primitives. Interna-
+tional Conference on Intelligent Robots and Systems, pages 834–839, 2008.
+
+[9] S. Fogel, J. Jacob, and C. Smith. Increased sleep spindle activity following simple motor proce-
+dural learning in humans. Actas de Fisiologia, 7(123), 2001.
+
+[10] D. J. C. MacKay. Information Theory, Inference and Learning Algorithms. Cambridge Univ.
+Press, 2003.
+
+[11] D. Wipf and J. Palmer and B. Rao. Perspectives on Sparse Bayesian Learning. In Advances in
+Neural Information Processing Systems 16, 2004.
+
+[12] S. Chiappa and D. Barber. Dirichlet Mixtures of Bayesian Linear Gaussian State-Space Mod-
+els: a Variational Approach. Technical Report no. 161, MPI for Biological Cybernetics, Tübin-
+gen, Germany, 2007.
+
+[13] K. Kurihara, M. Welling, and Y. W. Teh. Collapsed variational Dirichlet process mixture
+models. In Proceedings of the International Joint Conference on Artiﬁcial Intelligence, pages
+2796–2801, 2007.
+
+[14] D. Barber and S. Chiappa. Uniﬁed inference for variational Bayesian linear Gaussian state-
+space models. In Advances in Neural Information Processing Systems 19, pages 81–88, 2007.
+
+[15] H. Miyamoto and S. Schaal and F. Gandolfo and Y. Koike and R. Osu and E. Nakano and
+Y. Wada and M. Kawato. A Kendama learning robot based on bi-directional theory. Neural
+Networks, 9(8): 1281–1302, 1996
+
+8
+
+

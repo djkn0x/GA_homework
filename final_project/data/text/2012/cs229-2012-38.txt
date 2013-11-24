@@ -1,0 +1,223 @@
+Classifying Chess Positions
+
+Christopher De Sa
+
+December 14, 2012
+
+Chess was one of the ﬁrst problems studied by the AI community. While currently, chess-
+playing programs perform very well using primarily search-based algorithms to decide the best
+move to make, in this pro ject I apply machine-learning algorithms to this problem. Speciﬁcally,
+instead of choosing which move is the best to make, I want to produce an function that attempts
+to determine the probability that a player is likely to win in a given chess position. Note that
+while searching chess engines also produce a score factor for each position, this score represents
+the engines own belief (in a Bayesian sense) that it will win the game given the position, whereas
+our goal is to classify the actual probability of a win given human players.
+The main possible application of such a classifying function would be as a heuristic in an A*-
+like search-based chess engine. Additionally, the structure of the classiﬁer could shed insights
+on the nature of the game as a whole.
+I have acquired training examples from actual games played by humans. I decided to use
+the FICS games database, which contains over 100 million games played over the internet over
+a period of years. This dataset consists of games in PGN (portable game notation) format,
+which encodes the game as a whole rather than as a sequence of positions. Since the goal of
+this pro ject is to classify positions, I needed to convert these PGN games to position sequences,
+and used a python script to do so. This presented a technical challenge due to the fact that a
+sequence of positions is several orders of magnitude larger (in terms of memory consumption)
+than the PGN-encoded games. By using specialized solvers, such as the stochastic subgradient
+method, I was able to avoid storing all the positions in memory at once.
+Since these positions are played by humans, and humans have a wide distribution of skill levels
+and play styles, any results from these data will depend on how the data are ﬁltered. For this
+pro ject, I am only pre-ﬁltering these data by excluding (1) fast games in which the amount of
+time remaining for each player would be a spoiler factor for the classier, (2) games in which either
+player forfeited on time, (3) games in which either player forfeited due to network disconnection,
+(4) extremely short games, and (5) games resulting in a draw. This last exclusion is done in
+order to use a binary classiﬁer for this problem; however, my approach could be extended to
+include drawn games.
+Formally, we can express this problem as a ML problem as follows: our content x(i) is a legal
+chess position from a game played by humans, and our annotation y (i) is the outcome of that
+game (a win or loss by the player- to-move). We are trying to predict the expected value of
+the outcome of the game given the position. Note here that, due to the fact that humans are
+playing these games, the result of the game is not a mathematical function of the board state.
+Furthermore, the nature of chess is such that the vast ma jority of positions encountered by
+the algorithm will not necessarily favor either color, so they will both not be useful as training
+examples for the classiﬁer, and also raise the error rate when the classiﬁer is tested. Because
+of these factors, it will be impossible for any classiﬁer for this problem to produce a near-zero
+error rate over this dataset.
+The approach will necessitate representing the board state as some multidimensional vector
+of features. After investigating several possible feature sets, I settled on representing the board
+
+1
+
+state as a sparse vector, where each entry represents the presence of a particular piece on a
+particular square.
+Let’s look in more depth at this representation. A chess position consists of 64 squares, each
+of which may contain a piece. There are 6 pieces: the pawn, the knight, the bishop, the rook,
+the queen, and the king. Additionally, each piece is one of two colors: white or black. This
+creates a total of 12 distinct pieces. We can therefore (almost) fully represent a board state as
+a partial function in:
+f (s) ∈ ({1, 2, . . . , 8} × {1, 2, . . . , 8}) → ({P, N, B, R, Q, K} × {White, Black})
+If this partial function describes our game state, it follows (from the deﬁnition of a partial
+function) that we can equivalently describe the game state as a subset of:
+({1, 2, . . . , 8} × {1, 2, . . . , 8}) × ({P, N, B, R, Q, K} × {White, Black})
+Since this set has magnitude 8 × 8 × 6 × 2 = 768, it follows that we can represent any subset of
+it as a vector in R768 , where the i-th entry is either 0 or 1 to represent the presence or absense
+of the i-th element of this set in the subset.
+There are some caveats with this representation. The partial function does not include certain
+non-position-based aspects on the game state, namely: whose turn it is, whether castling is still
+possible, and whether en passant is possible. I have assumed that the latter two things are
+insigniﬁcant enough that they can be safely omitted as features. The former is more diﬃcult to
+deal with, but it can be resolved by considering the symmetry of the chess board. Because of
+this symmetry, if we reverse: (1) the board, (2) the colors of all the pieces, and (3) the result,
+our classiﬁer should produce the same result. Therefore, without loss of generality, we can limit
+ourselves to only positions in which white is to move, and for these positions, this representation
+works well. (For all the analysis below, we will use “white” to refer to the player who is to move
+in the position, and “black” to refer to the player who is not to move.)
+We assume that, at any given position, the probability that a human player to move will win
+the game is a function of the position. This is a reasonable assumption based on the structure
+of the chess game. If we further constrain this function to be a logistic function of the above
+board representation with some parameter θ , then the maximum likelihood estimate of this
+parameter corresponds to logistic regression. Therefore, I trained a logistic classiﬁer using this
+representation. (I also tried a few other classiﬁers, such as a linear classiﬁer and a support
+vector machine; however, these classiﬁers did not perform well on the given dataset. This is to
+be expected since the basic properties that we want to have for applying these methods do not
+hold for this dataset.)
+I ran logistic regression over a dataset of about 500, 000 training samples and 500, 000 test
+samples. My algorithm was written in python using numpy and scipy, and computed the
+regression using the Newton-Raphson method. It dealt with the relatively-large amount of data
+both by using sparse matrices whenever possible (in particular, the training matrix X , whose
+columns are the sparse position vectors, was represented with a sparse matrix), and by avoiding
+the Hessian matrix inverse step by instead using the conjugate gradient method on the linear
+system H s = g (where s is the computed step, g is the logistic gradient, and H is the logistic
+Hessian). This solver (ﬁgure 1) converged in about 7 iterations for most of the data sets tested.
+The resulting classiﬁer had:
+
+train = 0.316266
+
+test = 0.336103
+
+The similarity between these numbers suggests that the model is not overﬁtting the data.
+While these error rates are not great, the fact that they are signiﬁcantly lower than 50% for a
+
+2
+
+1 d e f
+
+3
+
+5
+
+7
+
+9
+
+t r a i n l o g i s t i c r e g r e s s i o n (X , y ) :
+t h e t a = numpy . a s m a t r i x ( [ 0 ] ∗ X . s h a p e [ 1 ] ) . T # i n i t i a l i z e
+i
+f o r
+i n r a n g e ( i t e r m a x ) :
+l g r a d = l o g i s t i c g r a d i e n t (X , y , t h e t a ) #c om p u t e g r a d i e n t
+i f numpy . l i n a l g . norm ( l g r a d ) < t o l e r a n c e :
+b r e a k
+H = l o g i s t i c h e s s i a n (X , y , t h e t a ) #c om p u t e H e s s i a n
+s t e p = numpy . l i n a l g . l s t s q ( numpy . a s a r r a y (H) ,
+l g r a d ) [ 0 ] #Newton s t e p
+t h e t a = t h e t a − numpy . a s m a t r i x ( s t e p ) #p e r f o r m u p d a t e
+r e t u r n t h e t a
+
+t h e t a
+
+Figure 1: Logistic regression solver code
+
+large dataset of positions suggests that the logistic classiﬁer produced a result that would be a
+good heuristic for position value.
+One advantage that our sparse representation oﬀers us is that it allows us to average the
+calculated weight parameters for a given piece. This, in turn, allows us to determine how much
+the logistic classiﬁer “values” a given piece.
+When we look at the weights associated with a given piece, averaged over all squares, and
+normalized to have the weight of the white knight be 3, the linear regression resulted in:
+
+wWhitePawn = 1.122772
+wWhiteKnight = 3.000000
+wWhiteBishop = 3.379214
+wWhiteRook = 4.822891
+wWhiteQueen = 8.998281
+
+wBlackPawn = 1.125155
+wBlackKnight = 3.118595
+wBlackBishop = 3.442213
+wBlackRook = 4.908966
+wBlackQueen = 9.157469
+
+Figure 2: Piece valuations according to the logistic classiﬁer
+
+3
+
+This is very similar to the well-known system of valuing pieces in chess, which values pawns
+at 1, knights at 3, bishops at 3, rooks at 5, and queens at 9 (ﬁgure 2). The fact that the linear
+regression independantly reproduced a valuation that was very similar to this system suggests
+that it is performing some useful classiﬁcation.
+A pawn is a special piece in chess. Once it moves forward, it cannot move backward, and
+it is generally (bar capturing) restricted to moving within a single ﬁle. Since it doesnt move
+around a lot, it is reasonable to use pawns to study the value of holding a particular square on
+the board. Here, we cut by both rank and ﬁle and look at the resulting valuations of pawns
+(ﬁgure 3).
+
+Figure 3: Pawn valuations by rank and ﬁle according to the logistic classiﬁer
+
+Notice that, for pawns, their value increases greatly as the move forward on the board, but
+does not vary much as a function of their ﬁle. This makes sense since the further a pawn is
+along the board, the more likely it is to either be threatening the opponent, or to be promoted
+to a more valuable piece.
+It is also interesting that the classiﬁer seems to value b- and g-
+pawns higher than c- and f- pawns. This is counter to the expected notion that pawns are
+more valuable the closer they are to the center of the board. One possible reason for this result
+could be that the absense of a b- or g- pawn indicates damage to the local pawn structure, and
+suggests the future loss of surrounding pawns. Another possibility is that since c- and f- pawns
+are routinely sacriﬁced for other forms of compensation in the opening stages of the game, their
+loss is valued less by the classiﬁer than pawns in other ﬁles.
+Now, we still have a relatively large error rate on this classiﬁer. While much of this error
+is probably explained by player error in the individual games, we might want to ask to what
+degree this is true. If we assume that player error happens relatively uniformly over time, it
+follows that the closer a particular position is to the end of the game, the less likely it is that a
+blunder occured in the time between the position and when the game ended. Such a blunder will
+cause the position to be “mislabeled”, in the sense that it will be labeled with the outcome that
+was actually less likely to occur. This mislabeling will increase the error rate of the classiﬁer.
+Therefore, if we ﬁlter the original dataset to only include positions from the last n moves of a
+game, we would expect, as n decreases, for the classiﬁer error to also decrease. Below, we ﬁlter
+the positions in this way, and plot the classiﬁer error as a function of move ﬁltering threshold
+(ﬁgure 4).
+
+4
+
+Figure 4: Classiﬁer error as move ﬁltering threshold increases
+
+Since the error rate drops to about 14% within a single move of the end of the game, this
+suggests that about half of our classiﬁer error in the general case was due to player blunder
+causing a “mislabeling” of the test data. (Of course, even this ﬁgure does not completely rule
+out the presence of blunders in the test data, since a human error can still occur in the move
+preceding the end of the game. In fact, this is a relatively common case, where a player who
+made a bad move will immediately resign as a result of this move.) The fact that our classiﬁer
+produces this curve is an indication that it is performing well, and not overﬁtting individual
+subsections of the data.
+We can also intrepret this curve as showing the rate at which players make blunders over
+time, as a function of distance from the end of the game. One possibly interesting avenue of
+future research would be to look at how this curve varies for players of diﬀerent strengths. One
+would expect stronger players to blunder less frequently, and thus for the curve to be ﬂatter,
+but in fact this may not be the case.
+Even for the general case of positions, this classiﬁer performs relatively well, managing to
+predict the winner in two-thirds of positions. Considering the large number of drawn or unclear
+positions, this seems like an impressive feat. From our analysis of human error, it seems like
+about 10% of the classiﬁer error is due to human error in the test set. The rest is likely due to
+unclear or sharp positions that aren’t easily understood by a position-based classiﬁer.
+My algorithm managed to learn, to a high degree of accuracy, a system of piece weights that
+has been known to players for centuries. Its results for pawn placement values also seem to be
+interesting, especially in regards to variance by ﬁle, where the classiﬁer results run somewhat
+counter to established wisdom on the sub ject.
+In the future, it could be interesting to try to ﬁnd novel features for this problem, although I
+was unable to ﬁnd anything that produced good results. It also might be interesting to look at
+the performance of this function as a heuristic in a chess engine, and to then have that engine
+play and somehow use reinforcement learning to feedback and modify the heuristic based on
+the results of this play.
+
+5
+
+

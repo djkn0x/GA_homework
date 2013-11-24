@@ -1,0 +1,823 @@
+Bayesian models for Large-scale Hierarchical
+Classiﬁcation
+
+Siddharth Gopal
+Yiming Yang
+sgopal1@andrew.cmu.edu yiming@cs.cmu.edu
+Carnegie Mellon University
+
+Bing Bai
+Alexandru Niculescu-Mizil
+{bing,alex}@nec-labs.com
+NEC Laboratories America, Princeton
+
+Abstract
+A challenging problem in hierarchical classiﬁcation is to leverage the hierarchi-
+cal relations among classes for improving classiﬁcation performance. An even
+greater challenge is to do so in a manner that is computationally feasible for large
+scale problems. This paper proposes a set of Bayesian methods to model hier-
+archical dependencies among class labels using multivariate logistic regression.
+Speciﬁcally, the parent-child relationships are modeled by placing a hierarchi-
+cal prior over the children nodes centered around the parameters of their parents;
+thereby encouraging classes nearby in the hierarchy to share similar model param-
+eters. We present variational algorithms for tractable posterior inference in these
+models, and provide a parallel implementation that can comfortably handle large-
+scale problems with hundreds of thousands of dimensions and tens of thousands
+of classes. We run a comparative evaluation on multiple large-scale benchmark
+datasets that highlights the scalability of our approach and shows improved per-
+formance over the other state-of-the-art hierarchical methods.
+
+1
+Introduction
+With the tremendous growth of data, providing a multi-granularity conceptual view using hierar-
+chical classiﬁcation (HC) has become increasingly important. The large taxonomies for web page
+categorization at the Yahoo! Directory and the Open Directory Project, and the International Patent
+Taxonomy are examples of widely used hierarchies. The large hierarchical structures present both
+challenges and opportunities for statistical classiﬁcation research. Instead of focusing on individ-
+ual classes in isolation, we need to address joint training and inference based on the hierarchical
+dependencies among the classes. Moreover this has to be done in a computationally efﬁcient and
+scalable manner, as many real world HC problems are characterized by large taxonomies and high
+dimensionality.
+In this paper, we investigate a Bayesian framework for leveraging the hierarchical class structure.
+The Bayesian framework is a natural ﬁt for this problem as it can seamlessly capture the idea that
+the models at the lower levels of the hierarchy are specialization of models at the ancestor nodes.
+We deﬁne a hierarchical Bayesian model where the prior distribution for the parameters at a node
+is a Gaussian centered at the parameters of the parent node. This prior encourages the parameters
+of nodes that are close in the hierarchy to be similar thereby enabling propagation of information
+across the hierarchical structure and leading to inductive transfer (sharing statistical strength) among
+the models corresponding to the different nodes. The strength of the Gaussian prior, and hence the
+amount of information sharing between nodes, is controlled by its covariance parameter, which is
+also learned from the data. Modelling the covariance structures gives us the ﬂexibility to incorporate
+different ways of sharing information in the hierarchy. For example, consider a hierarchical organi-
+zation of all animals with two sub-topics mammals and birds. By placing feature speciﬁc variances,
+the model can learn that the sub-topic parameters are more similar along common features like
+‘eyes’,‘claw’ and less similar in other sub-topic speciﬁc features like ‘feathers’, ‘tail’ etc. As an-
+other example, the model can incorporate children-speciﬁc covariances that allows some sub-topic
+
+1
+
+parameters to be less similar to their parent and some to be more similar; for e.g. sub-topic whales is
+quite distinct from its parent mammals compared to its siblings felines, primates. Formulating such
+constraints in non-Bayesian large-margin approaches is not as easy, and to our knowledge has not
+done before in the context of hierarchical classiﬁcation. Other advantages of a fully Bayesian treat-
+ment are that there no reliance on cross-validation, the outputs have a probabilistic interpretation,
+and it is easy to incorporate prior domain knowledge.
+Our approach shares similarity to the correlated Multinomial logit [18] (corrMNL) in taking a
+Bayesian approach to model the hierarchical class structure, but improves over it in two signiﬁcant
+aspects - scalability and setting hyperparameters. Firstly, CorrMNL uses slower MCMC sampling
+for inference, making it difﬁcult to scale to problems with more than a few hundred features and a
+few hundred nodes in the hierarchy. By modelling the problem as a Hierarchical Bayesian Logis-
+tic Regression (HBLR), we are able to vastly improve the scalability by 1) developing variational
+methods for faster inference, 2) introducing even faster algorithms (partial MAP) to approximate
+the variational inference at an insigniﬁcant cost in classiﬁcation accuracy, and 3) parallelizing the
+inference. The approximate variational inference (1 plus 2) reduces the computation time by several
+order of magnitudes (750x) over MCMC, and the parallel implementation in a Hadoop cluster [4]
+further improves the time almost linearly in the number of processors. These enabled us to com-
+fortably conduct joint posterior inference for hierarchical logistic regression models with tens of
+thousands of categories and hundreds of thousands of features.
+Secondly, a difﬁculty with the Bayesian approaches, that has been largely side-stepped in [18], is
+that, when expressed in full generality, they leave many hyperparameters open to subjective input
+from the user. Typically, these hyper-parameters need to be set carefully as they control the amount
+of regularization in the model, and traditional techniques such as Empirical Bayes or cross-validation
+encounter difﬁculties in achieving this. For instance, Empirical Bayes requires the maximization of
+marginal likelihood which is difﬁcult to compute in hierarchical logistic models [9] in general, and
+cross-validation requires reducing the number of free parameters for computational reasons, poten-
+tially losing the ﬂexibility to capture the desired phenomena. In contrast, we propose a principled
+way to set the hyper-parameters directly from data using an approximation to the observed Fisher
+Information Matrix. Our proposed technique can be easily used to set a large number of hyper-
+parameters without losing model tractability and ﬂexibility.
+To evaluate the proposed techniques we run a comprehensive empirical study on several large scale
+hierarchical classiﬁcation problems. The results show that our approach is able to leverage the
+class hierarchy and obtain a signiﬁcant performance boost over leading non-Bayesian hierarchical
+classiﬁcation methods, as well as consistently outperform ﬂat methods that do not use the hierarchy
+information.
+Other Related Work: Most of the previous work in HC has been primarily using large-margin
+discriminative methods. Some of the early works in HC [10, 14] use the hierarchical structure to
+decompose the classiﬁcation problem into sub-problems recursively along the hierarchy and allocate
+a classiﬁer at each node. The hierarchy is used to partition the training data into node-speciﬁc subsets
+and classiﬁers at each node are trained independently without using the hierarchy any further. Many
+approaches have been proposed to better utilize the hierarchical structure. For instance, in [22, 1],
+the output of the lower-level classiﬁers was used as additional features for the instance at the top-
+level classiﬁers. Smoothing the estimated parameters in naive Bayes classiﬁers along each path from
+the root to a leaf node has been tried in [17]. [20, 6] proposed large-margin discriminative methods
+where the discriminant function at each node takes the contributions from all nodes along the path
+to the root node, and the parameters are jointly learned to minimize a global loss over the hierarchy.
+Recently, enforcing orthogonality constraints between parent and children classiﬁers was shown to
+achieve state-of-art performance [23].
+2 The Hierarchical Bayesian Logistic Regression (HBLR) Framework
+Deﬁne a hierarchy as a set of nodes Y = {1, 2...} with the parent relationship π : Y → Y where
+π(y) is the parent of node y ∈ Y . Let D = {(xi , ti )}N
+i=1 denote the training data where xi ∈ Rd is
+an instance, ti ∈ T is a label, where T ⊂ Y is the set of leaf nodes in the hierarchy labeled from 1
+to |T |. We assume that each instance is assigned to one of the leaf nodes in the hierarchy. Let Cy be
+the set of all children of y .
+
+2
+
+For each node y ∈ Y , we associate a parameter vector wy which has a Gaussian prior. We set the
+mean of the prior to the parameter of the parent node, wπ(y) . Different constraints on the covariance
+matrix of the prior corresponds to different ways of propagating information across the hierarchy. In
+what follows, we consider three alternate ways to model the covariance matrix which we call M1,
+M2 and M3 variants of HBLR. In the M1 variant all the siblings share the same spherical covariance
+matrix. Formally, the generative model for M1 is
+M1 wroot ∼ N (w0 , Σ0 ),
+αroot ∼ Γ(a0 , b0 )
+wy | wπ(y) , Σπ(y) ∼ N (wπ(y) , Σπ(y) ) ∀y ,
+αy ∼ Γ(ay , by ) ∀y /∈ T
+t | x ∼ Multinomial(p1 (x), p2 (x), .., p|T | (x)) ∀(x, t) ∈ D
+i x)/Σt(cid:48)∈T exp(w(cid:62)
+pi (x) = exp(w(cid:62)
+(1)
+t(cid:48) x)
+The parameters of the root node are drawn using user speciﬁed parameters w0 , Σ0 , a0 , b0 . Each non-
+leaf node y /∈ T has its own αy drawn from a Gamma with the shape and inverse-scale parameters
+speciﬁed by ay and by . Each wy is drawn from the Normal with mean wπ(y) and covariance matrix
+Σπ(y) = α−1
+π(y) I . The class-labels are drawn from a Multinomial whose parameters are a soft-max
+transformation of the wy s from the leaf nodes. This model leverages the class hierarchy information
+by encouraging the parameters of closely related nodes (parents, children and siblings) to be more
+similar to each other than those of distant ones in the hierarchy. Moreover, by using different inverse
+variance parameters αy for each node, the model has the ﬂexibility to adapt the degree of similarity
+between the parameters (i.e. parent and children nodes) on a per family basis. For instance it can
+learn that sibling nodes which are higher in the hierarchy (e.g. mammals and birds) are generally
+less similar compared to sibling nodes lower in the hierarchy (e.g. chimps and orangutans).
+Although this model is equivalent to the corrMNL proposed in [18], the hierarchical logistic re-
+gression formulation is different from corrMNL and has a distinct advantage that the parameters
+can be decoupled. As we shall see in Section 3, this enables the use of scalable and parallelizable
+variational inference algorithms. In contrast, in corrMNL the soft-max parameters are modeled as
+a sum of contributions along the path from a leaf to the root-node. This introduces two layers of
+dependencies between the parameters in the corrMNL model (inside the normalization constant as
+well along the path from leaves to root-node) which makes it less amenable to efﬁcient variational
+inference. Even if one were to develop a variational approach for the corrMNL parameterization, it
+would be slower and not efﬁcient for parallelization.
+Although the M1 approach is rational, one may argue that it would be beneﬁcial to allow the diagonal
+elements of the covariance matrix Σπ(y) to be feature-speciﬁc instead of uniform. In our previous
+example with sub-topics mammals and birds, we may want wmammals , wbirds to be commonly
+close to their parent in some dimensions (e.g., in some common features like ‘eyes’,‘breathe’ and
+‘claw’) but not in other dimensions (e.g., in bird speciﬁc features like ‘feathers’ or ‘beak’). We
+accommodate this by replacing prior αy using α(i)
+for every feature (i). This form of setting the
+y
+prior is referred to as Automatic Relevant Determination (ARD) and forms the basis of several works
+such as Sparse Bayesian Learning [19], Relevance Vector Machines [3], etc. For the HC problem,
+we deﬁne the M2 variant of the HBLR approach as:
+M2 wy | wπ(y) , Σπ(y) ∼ N (wπ(y) , Σπ(y) )
+∀y
+y ∼ Γ(a(i)
+i = 1..d, ∀y /∈ T
+α(i)
+y , b(i)
+y )
+−1
+π(y) = diag(α(1)
+π(y) , α(2)
+π(y) , . . . , α(d)
+where Σ
+π(y) )
+Yet another extension of the M1 model would be to allow each node to have its own covariance
+matrix for the Gaussian prior over wy , not shared with its siblings. This enables the model to learn
+how much the individual children nodes differ from the parent node. For example, consider topic
+mammals and its two sub-topics whales and carnivores; the sub-topic whales is very distinct from a
+typical mammal and is more of an ‘outlier’ topic. Such mismatches are very typical in hierarchies;
+especially in cases where there is not enough training data and an entire subtree of topics is collapsed
+as a single node. M3 aims to cope up with such differences.
+M3 wy | wπ(y) , Σy ∼ N (wπ(y) , Σy )
+∀y
+∀y /∈ T
+αy ∼ Γ(ay , by )
+Note that the only difference between M 3 and M 1 is that M 3 uses Σy = α−1
+y I instead of Σπ(y) in
+the prior for wy . In our experiments we found that M3 consistently outperformed the other variants
+suggesting that such effects are important to model in HC. Although it would be natural to extend
+
+3
+
+(2)
+
+y |a(i)
+y , b(i)
+p(α(i)
+y )
+
+p(wy |wπ(y) , Σπ(y) )
+
+M3 by placing ARD priors instead of the uniform αy , we do not expect to see better performance
+due to the difﬁculty in learning a large number of parameters. Preliminary experiments conﬁrmed
+our suspicions so we did not explore this direction further.
+3
+Inference for HBLR
+In this section, we present the inference method for M2 which is harder. The procedure can be easily
+extended for M1 and M3 1 . The posterior of M2 is given by
+p(W, α|D) ∝ p(D|W, α)p(W, α)
+∝ (cid:89)
+(cid:89)
+(cid:89)
+d(cid:89)
+(cid:80)
+exp(w(cid:62)
+t x)
+exp(w(cid:62)
+t(cid:48) x)
+y∈Y
+(x,t)∈D
+y∈Y \T
+t(cid:48) ∈T
+i=1
+Closed-form solution for the posterior is not possible due to the non-conjugacy between the lo-
+gistic likelihood and the Gaussian prior, we therefore resort to variational methods to compute the
+posterior. However, using variational methods are themselves computational intractable in high di-
+mensional scenarios due to the requirement of a matrix inversion which is computationally intensive.
+Therefore, we explore much faster approximation schemes such as partial MAP inference which are
+highly scalable. Finally, we show the resulting approximate variational inference procedure can be
+parallelized in a map-reduce framework to tackle large-scale problems that would be impossible to
+solve on a single processor.
+3.1 Variational Inference
+Starting with a simple factored form for the posterior, we seek such a distribution q which is closest
+in KL divergence to the true posterior p. We use independent Gaussian q(wy ) and Gamma q(αy )
+(cid:89)
+q(wy ) ∝ (cid:89)
+(cid:89)
+(cid:89)
+d(cid:89)
+posterior distributions for wy and αy per node as the factored representation:
+Γ(.|τ (i)
+N (.|µy , Ψy )
+y , υ (i)
+y )
+q(W, α) =
+q(αy )
+y∈Y
+y∈Y
+y∈Y \T
+y∈Y \T
+i=1
+In order to tackle the non-conjugacy inside p(D|W, α) in (2), we use a suitable lower-bound to the
+(cid:20) gk − β − ξk
+(cid:21)
+(cid:88)
+(cid:88)
+soft-max normalization constant proposed by [5], for any β ∈ R , ξk ∈ [0, ∞)
+egk ) ≤ β +
++ λ(ξk )((gk − β )2 − ξ 2
+(cid:17)
+(cid:16) 1
+k ) + log(1 + eξk )
+log(
+2
+k
+k
+1+e−ξ − 1
+where λ(ξ ) = 1
+2ξ
+2
+where β , ξk are variational parameters which we can optimize to get the tightest possible bound.
+For every (x, y) we introduce variational parameters βx and ξxy . We now derive an EM algorithm
+that computes the posterior in the E-step and maximizes the variational parameters in the M-step.
+Variational E-Step The local variational parameters are ﬁxed, and the posterior for a parameter is
+(cid:88)
+computed by matching the log-likelihood of the posterior with the expectation of log-likelihood
+under the rest of the parameters. The parameters are updated as1 ,
+) + |Cy | diag(
+y = I (y ∈ T )
+τπ(y)
+−1
+(cid:62)
+τy
+
+I (y ∈ T )
+(3)
++ diag(
+2λ(ξxy )xx
+Ψ
+υπ(y)
+υy
+(cid:88)
+(x,t)∈D
+(cid:88)
+(x,t)∈D
+|Cy |
+y − µ(i)
+c + (µ(i)
+y + Ψ(i,i)
+Ψ(i,i)
+y = b(i)
+υ (i)
+c )2
+(4)
+y +
+2
+c∈Cy
+Variational M-Step We keep the parameters of the posterior distribution ﬁxed and maximize the
+variational parameters ξxy , βx . Refer to [5] for detailed M-step derivations,
+(cid:88)
+(cid:88)
+y∈T
+y∈T
+
+βx = (.5(.5|T | − 1) +
+
+(I (t = y) − 1
+2
+
+)x + (βx − µ
+
+(cid:62)
+y x)2
+
+(cid:62)
+ξ 2
+xy = x
+
+diag(
+
+(cid:88)
+c∈Cy
+
++ 2λ(ξxy )βx )x + diag(
+
+)µπ(y) + diag(
+
+µc
+
+λ(ξxy )µ
+
+(cid:62)
+y x)/
+
+λ(ξxy )
+
+µy = Ψy
+
+τy
+υy
+
+)
+
+τπ(y)
+υπ(y)
+
+y = a(i)
+and τ (i)
+y +
+
+τy
+υy
+
+)
+
+Class-label Prediction After computing the posterior, one way to compute the probability of a target
+class-label given a test instance is to simply plugin the posterior mean for prediction. A more
+principled way would be to compute the predictive distribution of the target class label l given the
+
+1 Complete derivations are presented in the extended version located at http://www.cs.cmu.edu/˜sgopal1.
+
+4
+
+(Ψ(i,i)
+y
+
+−1 =
+)
+
+(6)
+
+diag(
+
+test instance,
+
+(cid:90)
+(cid:90)
+p(l|W, x)q(W)dW
+p(l, W|x)dW ≈
+p(l|x) =
+(5)
+The above integral cannot be computed in closed form and people have often resorted to probit
+approximations [16]. We take an alternative route by calculating the joint posterior p(l, W|x) by
+˜q(wy ) ˜q(ly ) ≡ (cid:89)
+(cid:89)
+variational approximations. We assume the following factored form for the predictive distribution,
+N (.| ˜µy , ˜Ψy )B ern(.| ˜py )
+˜q(l, W) =
+y∈T
+y∈T
+The posterior can be calculated as before, by introducing variational parameters ˜ξxy , ˜βx and match-
+ing the log likelihoods. Substituting ˜q(l, W) in (5), we see that the predictive distribution is given
+by ˜q(l) and the target class label is given by arg maxy∈T ˜py .
+3.2 Partial MAP Inference
+In most applications, the requirement for a matrix inversion in step (3) could be demanding. In such
+scenarios, we split the inference into two stages, ﬁrst calculating the posterior of wy using MAP
+solution, and second calculating the posterior of αy . In the ﬁrst stage, we ﬁnd the MAP estimate
+and then use laplace approximation to approximate the posterior using a separate Normal
+wmap
+y
+distribution for each dimension, thereby leading to a diagonal covariance matrix. Note that due to
+(cid:88)
+the laplace approximation, wmap
+and the posterior mean µy coincide.
+y
+− 1
+)(wy − wπ(y) ) + log p(D|W, α)
+(wy − wπ(y) )
+τπ(y)
+(cid:62)
+(cid:88)
+µ = wmap
+y = arg max
+2
+υπ(y)
+W
+y∈T
+x(i) pxy (1 − pxy )x(i)
+(x,t)∈Dy
+where pxy is the probability that training instance x is labeled as y . The arg max in (6) can be
+computed for all µy at the same time using optimization techniques like LBFGS [13]. For the
+second stage, parameters τy and υy are updated using (4). Full MAP inference is also possible by
+performing an alternating maximization between wy , αy but we do not recommend it as there is no
+gain in scalability compared to partial MAP Inference and it loses the posterior distribution of αy .
+3.3 Parallelization
+For large hierarchies, it might be impractical to learn the parameters of all classes, or even store
+them in memory, on a single machine. We therefore, devise a parallel memory-efﬁcient implemen-
+tation scheme for our partial MAP Inference. There are 4 sets of parameters that are updated -
+{µy , Ψy , τy , νy }. The Ψy , τy , νy can be updated in parallel for each node using (3),(4).
+For µ, the optimization step in (6) is not easy to parallelize since the w’s are coupled together inside
+the soft-max function. To make it parallelizable we replace the soft-max function in (1) with multi-
+ple binary logistic functions (one for each terminal node), which removes the coupling of parameters
+inside the log-normalization constant. The optimization can now be done in parallel by making the
+following observations - ﬁrstly note that the optimization problem in (6) is concave maximation,
+therefore any order of updating the variables reaches the same unique maximum. Secondly, note
+that the interactions between the wy ’s are only through the parent and child nodes. By ﬁxing the
+parameters of the parent and children, the parameter wy of a node can be optimized independently
+of the rest of the hierarchy. One simple way to parallelize is to traverse the hierarchy level by level,
+optimize the parameters at each level in parallel, and iterate until convergence. A better way that
+achieves a larger degree of parallelization is to iteratively optimize the odd and even levels - if we ﬁx
+the parameters at the odd levels, the parameters of parents and the children of all nodes at even levels
+are ﬁxed, and the wy ’s at all even levels can be optimized in parallel. The same goes for optimizing
+the odd level parameters. To aid convergence we interleave the µ, Ψ updates with the τ , ν updates
+and warm-start with the previous value of µy . In practice, for the larger hierarchies we observed
+speedups linear in the number of processors. Note that the convergence follows from viewing this
+procedure as block co-ordinate ascent on a concave differentiable function [15].
+We tested our parallelization framework on a cluster running map-reduce based Hadoop 20.2 with
+64 worker nodes with 8 cores and 16GB RAM each. We used Accumulo 1.4 key-value store for
+fast retrieve-update of the wy s. On this hardware, our experiments on the largest dataset with 15358
+class labels and 347256 features took just 38 minutes. Although the map-reduce framework is not
+a requirement; it is a ubiquitous paradigm in distributed computing and having an implementation
+compatible with it is a deﬁnite advantage.
+
+5
+
+Table 1: Dataset Statistics
+Dataset
+#Training #Testing #Class-Labels #Leaf-labels Depth #Features
+CLEF
+89
+4
+63
+87
+1006
+10000
+NEWS20
+53975
+3
+20
+27
+7505
+11260
+LSHTC-small
+51033
+6
+1139
+1563
+1858
+4463
+LSHTC-large
+93805
+34905
+15358
+12294
+6
+347256
+IPC
+46324
+541869
+4
+451
+552
+28926
+4 Setting prior parameters
+The w0 , Σ0 represent the overall mean and covariance structure for the wy . We set w0 = 0 and Σ0 =
+I because of their minimal effect on the rest of the parameters. The a(i)
+y , b(i)
+y are variance components
+such that b(i)
+represents the expected variance of the w(i)
+y . Typically, choosing these parameters is
+y
+a(i)
+difﬁcult before seeing the data. The traditional way to overcome this is to learn {ay , by } from the
+y
+data using Empirical Bayes. Unfortunately, in our proposed model, one cannot do this as each
+{ay , by } is associated with a single αy . Generally, we need more than one sample value to learn the
+prior parameters effectively [7].
+We therefore resort to a data dependent way of setting these parameters by using an approximation
+to the observed Fisher Information matrix. We ﬁrst derive on a simpler model and then extend it
+to a hierarchy. Consider the following binary logistic model with unknown w and let the Fisher
+(cid:104)
+(cid:62) (cid:105)
+(cid:88)
+Information matrix be I and observed Fisher Information ˆI
+exp(w(cid:62)x)
+Y | x ∼ B ernoulli(
+ˆp(x)(1 − ˆp(x))xx
+p(x)(1 − p(x))xx
+(cid:62)
+, ˆI =
+);
+I = E
+1 + exp(w(cid:62)x)
+(x,t)∈D
+It is well known that I −1 is the asymptotic covariance of the MLE estimator of w , so reasonable
+guess for the covariance of a Gaussian prior over w could be the observed ˆI −1 from a dataset
+D . The problem with ˆI −1 is that we do not have a good estimate ˆp(x) for a given x as we have
+exactly one sample for a given x i.e each instance x is labeled exactly once with certainty, therefore
+ˆp(x)(1 − ˆp(x)) will always be zero. Therefore we approximate ˆp(x) as the sample prior probability
+independent of x, i.e. ˆp(x) = ˆp = Σ(x,t)∈D
+t|D| . Now, the prior on the covariance of wy can be set
+such that the expected covariance is ˆI −1 . To extend this to HC, we need to handle multiple classes,
+which can be done by estimating ˆI (y)−1 for each y ∈ T , as well handle multiple levels, which can
+ ( (cid:80)
+c , (cid:80)
+be done by recursively setting ay , by as follows,
+if y /∈ T
+a(i)
+c∈Cy
+c∈Cy
+if y ∈ T
+(1, ˆI (y)−1(i,i) )
+where ˆI (y) is the observed Fisher Information matrix for class label y . This way of setting the priors
+is similar to the method proposed in [12], the key differences are in approximating p(x)(1 − p(x))
+from the data rather using p(x) = 1
+2 , extension to handle multiple classes as well as hierarchies.
+We also tried other popular strategies such as setting improper gamma priors Γ(, )  → 0 widely
+used in many ARD works (which is equivalent to using type-2 ML for the α’s if one uses variational
+methods [2]) and Empirical Bayes using a single a and b (as well as other Empirical Bayes variants).
+Neither of worked well, the former being to be too sensitive to the value of  which is in agreement
+with the observations made by [11] and the latter constraining the model by using a single a and b.
+We do not discuss this any further due to lack of space.
+5 Experiments Results
+Throughout our experiements, we used 4 popular benchmark datasets (Table 1) with the recom-
+mended train-test splits - CLEF[8], NEWS202 , LSHTC-{small,large}3 , IPC4 .
+First, to evaluate the speed advantage of the variational inference, we compare the full variational
+{M1,M2,M3}-var and partial MAP {M1,M2,M3-map} inference 5 for the three variants of HBLR to
+the MCMC sampling based inference of CorrMNL [18]. For CorrMNL, we used the implementation
+as provided by the authors6 . We performed sampling for 2500 iterations with 1000 for burn-in.
+2 http://people.csail.mit.edu/jrennie/20Newsgroups/
+3 http://lshtc.iit.demokritos.gr/
+4 http://www.wipo.int/classiﬁcations /ipc/en/support/
+5 Code available at http://www.cs.cmu.edu/˜sgopal1
+6 http://www.ics.uci.edu/ babaks/Site/Codes.html
+
+y , b(i)
+(a(i)
+y ) =
+
+b(i)
+c )
+
+6
+
+Table 2: Comparison with CorrMNL: Macro-F1 and Micro-F1 on the CLEF dataset
+{M1,M2,M3}-var
+{M1,M2,M3}-map
+{M1,M2,M3}-ﬂat
+CorrMNL M1 M2 M3 M1 M2 M3 M1 M2 M3
+56.67 51.23 59.67 55.53 54.76 59.65 52.13 48.78 55.23
+55.59
+81.21 79.92 81.61 80.88 80.25 81.41 79.82 77.83 80.52
+81.10
+3
+3
+3
+3
+3
+3
+80
+81
+79
+2279
+
+Macro-f1
+Micro-f1
+Time (mins)
+
+Figure 1: Micro-F1 (left) & Macro-F1 (right) on the CLEF dataset with limited number of training examples.
+
+Re-starts with different initialization values gave the same results for both MCMC and variational
+methods. All models were run on a single CPU without parallelization. We used the small CLEF[8]
+dataset in order to be able to run CorrMNL model in reasonable time. The results are presented
+in Table 2. For an informative comparison, we also included the results of {M1,M2,M3}-ﬂat, our
+proposed approach using a ﬂat hierarchy. With regards to scalability, partial MAP inference is
+the most scalable method being orders of magnitude faster (750x) than CorrMNL. Full variational
+inference, although less scalable as it requires O(d3 ) matrix inversions in the feature space, is still
+orders of magnitude faster (20x) than CorrMNL. In terms of performance, we see that the partial
+MAP inference for the HBLR has only small loss in performance compared to the full variational
+inference while having similar training time to the ﬂat approach that does not model the hierarchy
+({M1,M2,M3}-ﬂat).
+Next, we compare the performance of HBLR to several other competing approaches:
+1. Hierarchical Baselines: We selected 3 representative hierarchical methods that have shown to
+have state-of-the-art performance - Hierarchical SVM [6] (HSVM), a large-margin discriminative
+method with path-dependent discriminant function. Orthogonal Transfer [23] (OT), a method en-
+forcing orthogonality constraints between the parent node and children and Top-down Classiﬁcation
+[14] (TD) Top-down decision making using binary SVMs trained at each node.
+2. Flat Baselines: Typical ﬂat approaches which do not make use of the hierarchy. We tested One-
+versus rest Binary logistic Regressions (BLR), Multiclass Logistic Regression (MLR), One-versus
+Rest Binary SVMs (BSVM), and Multiclass SVM (MSVM) [21].
+For all competing approaches, we tune the regularization parameter using 5 fold CV with a range
+of values from 10−5 to 105 . For the HBLR models, we used partial MAP Inference because full
+variational is not scalable to high dimensions. The IPC and LSHTC-large are very large datasets so
+we are unable to test any method other than our parallel implementation of HBLR, and BLR, BSVM
+which can be trivially parallelized. Although TD can be parallelized we did not pursue this since
+TD did not achieve competitive performance on the other datasets. Parallelizing the other methods
+is not obvious and has not been discussed in previous literature to the best of our knowledge.
+Table 3 summarizes the results obtain by the different methods. The performance was measured us-
+ing the standard macro-F1 and micro-F1 measures [14]. The signiﬁcance tests are performed using
+sign-test for Micro-F1 and a wilcoxon rank test on the Macro-F1 scores. For every data collection,
+each method is compared to the best performing method on that dataset. The null hypothesis is that
+there is no signiﬁcanct difference between the two systems being compared, the alternative is that
+the best-performing-method is better. Among M1,M2 and M3, the performance of M3 seems to be
+consistently better than M1, followed by M2. Although M2 is more expressive than M1, the beneﬁt
+of a better model seems to be offset by the difﬁculty in learning a large number of parameters.
+Comparing to the other hierarchical baselines, M3 achieves signiﬁcantly higher performance on all
+datasets, showing that the Bayesian approach is able to leverage the information provided in the
+class hierarchy. Among the baselines, we ﬁnd that the average performance of HSVM is higher
+than the TD, OT. This can be partially explained by noting that both OT and TD are greedy top-
+down classiﬁcation methods and any error made in the top level classiﬁcations propagates down to
+
+7
+
+123450.150.20.250.30.350.40.450.50.55BLRMLRBSVMMSVMM3-map# Training Examples per ClassMicro-F1123450.10.150.20.250.30.350.4BLRMLRBSVMMSVMM3-map# Training Examples per ClassMacro-F1Table 3: Macro-F1 and Micro-F1 on the 4 datasets. Bold faced number indicate best performing method. The
+results of the signiﬁcance tests are denoted * for a p-value less than 5% and † for p-value less than 1%.
+{M1,M2,M3}-map
+Hierarchical methods
+Flat methods
+M1
+BLR MLR BSVM MSVM
+M2
+M3 HSVM OT
+TD
+55.53† 54.76† 59.65 57.23* 37.12† 32.32† 53.26† 54.76† 48.59† 54.33†
+80.88* 80.25* 81.41 79.72† 73.84† 70.11† 79.92† 80.52† 77.53† 80.02†
+81.54 80.91* 81.69 80.04†
+82.32
+81.82
+81.20 80.86* 82.17
+81.73
+82.24* 81.54* 82.56* 80.79* 81.98* 81.20† 82.97 82.56* 83.10
+82.47*
+28.81† 25.81† 30.81 21.95† 19.45† 20.01† 28.12† 28.38* 28.62* 28.34*
+45.48 43.31† 46.03 39.66† 37.12† 38.48† 44.94† 45.20 45.21*
+45.62
+28.32* 24.93† 28.76
+43.98 43.11† 44.05
+50.43† 47.45† 51.06
+55.80* 54.22† 56.02
+
+CLEF
+Macro-f1
+Micro-f1
+NEWS20
+Macro-f1
+Micro-f1
+LSHTC-small
+Macro-f1
+Micro-f1
+LSHTC-large
+Macro-f1
+Micro-f1
+IPC
+Macro-f1
+Micro-f1
+
+27.91*
+43.98
+48.29†
+55.03†
+
+27.89*
+44.03
+45.71†
+53.12†
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+-
+-
+
+the leaf node; in contrast to HSVM which uses an exhaustive search over all labels. However, the
+result of OT do not seem to support the conclusions in [23]. We hypothesize two reasons - ﬁrstly,
+the orthogonality condition which is assumed in OT does not hold in general, secondly, unlike
+[23] we use cross-validation to set the underlying regularization parameters rather than setting them
+arbitrarily to 1 (which was used in [23]).
+Surprisingly, the hierarchical baselines (HSVM,TD and OT) experience a very large drop in perfor-
+mance on LSHTC-small when compared to the ﬂat baselines, indicating that the hierarchy informa-
+tion actually mislead these methods rather than helping them. In contrast, M3 is consistently better
+than the ﬂat baselines on all datasets except NEWS20. In particular, M3 performs signiﬁcantly bet-
+ter on the largest datasets, especially in Macro-F1 , showing that even very large class hierarchies can
+convey very useful information, and highlighting the importance of having a scalable, parallelizable
+hierarchical classiﬁcation algorithm.
+To further establish the importance of modeling the hierarchy, we test our approach under scenarios
+when the number of training examples is limited. We expect the hierarchy to be most useful in
+such cases as it enables of sharing of information between class parameters. To verify this, we
+progressively increased the number of training examples per class-label on the CLEF dataset and
+compared M3-map with the other best performing methods. Figure 1 reports the results of M3-
+map, MLR, BSVM, MSVM averaged over 20 runs. The results shows that M3-map is signiﬁcantly
+better than the other methods especially when the number of examples is small. For instance, when
+there is exactly one training example per class, M3-map achieves a whopping 10% higher Micro-
+F1 and a 2% higher Macro-F1 than the next best method. We repeated the same experiments on
+the NEWS20 dataset but however did not ﬁnd an improved performance even with limited training
+examples suggesting that the hierarchical methods are not able to leverage the hierarchical structure
+of NEWS20.
+6 Conclusion
+In this paper, we presented the HBLR approach to hierarchical classiﬁcation, focusing on scalable
+ways to leverage hierarchical dependencies among classes in a joint framework. Using a Gaussian
+prior with informative mean and covariance matrices, along with fast variational methods, and a
+practical way to set hyperparameters, HBLR signiﬁcantly outperformed other popular HC methods
+on multiple benchmark datasets. We hope this study provides useful insights into how hierarchical
+relationships can be successfully leveraged in large-scale HC. In future, we would like to adapt this
+approach to equivalent non-bayesian large-margin discriminative counterparts.
+ACKNOWLDEGMENTS: This work is supported, in part, by the NEC Laboratories America,
+Princeton under ‘NEC Labs Data Management University Awards’ and the National Science Foun-
+dation (NSF) under grant IIS 1216282. A major part of work was accomplished while the ﬁrst
+author was interning at NEC Labs, Princeton.
+
+8
+
+References
+[1] P.N. Bennett and N. Nguyen. Reﬁned experts: improving classiﬁcation in large taxonomies.
+In SIGIR, 2009.
+[2] C.M. Bishop. Pattern recognition and machine learning.
+[3] C.M. Bishop and M.E. Tipping. Bayesian regression and classiﬁcation. 2003.
+[4] D. Borthakur. The hadoop distributed ﬁle system: Architecture and design. Hadoop Project
+Website, 11:21, 2007.
+[5] G. Bouchard. Efﬁcient bounds for the softmax function. 2007.
+[6] L. Cai and T. Hofmann. Hierarchical document categorization with support vector machines.
+In CIKM, pages 78–87. ACM, 2004.
+[7] George Casella. Empirical bayes method - a tutorial. Technical report.
+[8] I. Dimitrovski, D. Kocev, L. Suzana, and S. D ˇzeroski. Hierchical annotation of medical images.
+In IMIS, 2008.
+[9] C.B. Do, C.S. Foo, and A.Y. Ng. Efﬁcient multiple hyperparameter learning for log-linear
+models. In Neural Information Processing Systems, volume 21, 2007.
+[10] S. Dumais and H. Chen. Hierarchical classiﬁcation of web content. In SIGIR, 2000.
+[11] A. Gelman. Prior distributions for variance parameters in hierarchical models. BA.
+[12] R.E. Kass and R. Natarajan. A default conjugate prior for variance components in generalized
+linear mixed models. Bayesian Analysis, 2006.
+[13] D.C. Liu and J. Nocedal. On the limited memory bfgs method for large scale optimization.
+Mathematical programming, 45(1):503–528, 1989.
+[14] T.Y. Liu, Y. Yang, H. Wan, H.J. Zeng, Z. Chen, and W.Y. Ma. Support vector machines
+classiﬁcation with a very large-scale taxonomy. ACM SIGKDD, pages 36–43, 2005.
+[15] Z.Q. Luo and P. Tseng. On the convergence of the coordinate descent method for convex
+differentiable minimization. Journal of Optimization Theory and Applications, 72(1):7–35,
+1992.
+[16] D.J.C. MacKay. The evidence framework applied to classiﬁcation networks. Neural computa-
+tion, 1992.
+[17] A. McCallum, R. Rosenfeld, T. Mitchell, and A.Y. Ng. Improving text classiﬁcation by shrink-
+age in a hierarchy of classes. In ICML, pages 359–367, 1998.
+[18] B. Shahbaba and R.M. Neal. Improving classiﬁcation when a class hierarchy is available using
+a hierarchy-based prior. Bayesian Analysis, 2(1):221–238, 2007.
+[19] M.E. Tipping. Sparse bayesian learning and the relevance vector machine. JMLR, 1:211–244,
+2001.
+[20] I. Tsochantaridis, T. Joachims, T. Hofmann, and Y. Altun. Large margin methods for structured
+and interdependent output variables. JMLR, 6(2):1453, 2006.
+[21] J. Weston and C. Watkins. Multi-class support vector machines. Technical report, 1998.
+[22] G.R. Xue, D. Xing, Q. Yang, and Y. Yu. Deep classiﬁcation in large-scale text hierarchies. In
+SIGIR, pages 619–626. ACM, 2008.
+[23] D. Zhou, L. Xiao, and M. Wu. Hierarchical classiﬁcation via orthogonal transfer. Technical
+report, MSR-TR-2011-54, 2011.
+
+9
+
+

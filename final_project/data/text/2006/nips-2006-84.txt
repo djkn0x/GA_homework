@@ -1,0 +1,731 @@
+An Ef(cid:2)cient Method for Gradient-Based Adaptation
+of Hyperparameters in SVM Models
+
+S. Sathiya Keerthi
+Yahoo! Research
+3333 Empire Avenue
+Burbank, CA 91504
+selvarak@yahoo-inc.com
+
+Vikas Sindhwani
+Department of Computer Science
+University of Chicago
+Chicago, IL 60637
+vikass@cs.uchicago.edu
+
+Olivier Chapelle
+MPI for Biological Cybernetics
+Spemannstra(cid:223)e 38
+72076 T(cid:127)ubingen
+olivier.chapelle@tuebingen.mpg.de
+
+Abstract
+
+We consider the task of tuning hyperparameters in SVM models based on min-
+imizing a smooth performance validation function, e.g., smoothed k-fold cross-
+validation error, using non-linear optimization techniques. The key computation
+in this approach is that of the gradient of the validation function with respect to
+hyperparameters. We show that for large-scale problems involving a wide choice
+of kernel-based models and validation functions, this computation can be very ef-
+(cid:2)ciently done; often within just a fraction of the training time. Empirical results
+show that a near-optimal set of hyperparameters can be identi(cid:2)ed by our approach
+with very few training rounds and gradient computations.
+
+.
+
+1
+
+Introduction
+
+(1)
+
+Consider the general SVM classi(cid:2)er model in which, given n training examples f(x i ; yi )gn
+i=1 , the
+primal problem consists of solving the following problem:
+nXi=1
+1
+2 kwk2 + C
+l(oi ; yi )
+min
+(w;b)
+where l denotes a loss function over labels yi 2 f+1; (cid:0)1g and the outputs oi on the training set. The
+machine’s output o for any example x is given as o = w (cid:1) (cid:30)(x) (cid:0) b = Pn
+j=1 (cid:11)j yj k(x; xi ) (cid:0) b where
+the (cid:11)i are the dual variables, b is the threshold parameter and, as usual, computations involving (cid:30)
+are handled using the kernel function: k(x; z ) = (cid:30)(x) (cid:1) (cid:30)(z ). For example, the Gaussian kernel is
+given by
+k(x; z ) = exp((cid:0)(cid:13) kx (cid:0) zk2 )
+(2)
+The regularization parameter C and kernel parameters such as (cid:13) comprise the vector h of hyperpa-
+rameters in the model. h is usually chosen by optimizing a validation measure (such as the k-fold
+cross validation error) on a grid of values (e.g. a uniform grid in the (log C; log (cid:13) ) space). Such
+a grid search is usually expensive. Particularly, when n is large, this search is so time-consuming
+that one usually resorts to either default hyperparameter values or crude search strategies. The prob-
+lem becomes more acute when there are more than two hyperparameters. For example, for feature
+weighting/selection purposes one may wish to use the following ARD-Gaussian kernel:
+k(x; z ) = exp((cid:0) Xt
+(cid:13) t kxt (cid:0) z tk2 )
+where (cid:13) t = weight on the tth feature. In such cases, a grid based search is ruled out. In Figure 1 (see
+section 5) we show contour plots of performance of an SVM on the log C (cid:0) log (cid:13) plane for a real-
+world binary classi(cid:2)cation problem. These plots show that learning performance behaves (cid:147)nicely(cid:148) as
+
+(3)
+
+a function of hyperparameters. Intuitively, as C and (cid:13) are varied one expects the SVM to smoothly
+transition from providing under(cid:2)tting solutions to over(cid:2)tting solutions. Given that this phenomenon
+seems to occur routinely on real-world learning tasks, a very appealing and principled alternative to
+grid search is to consider a differentiable version of the performance validation function and invoke
+non-linear gradient-based optimization techniques for adapting hyperparameters. Such an approach
+requires the computation of the gradient of the validation function with respect to h.
+Chapelle et al. (2002) give a number of possibilities for such an approach. One of their most promis-
+ing methods is to use a differentiable version of the leave-one-out (LOO) error. A major disadvan-
+tage of this method is that it requires the expensive computation and storage of the inverse of a
+kernel sub-matrix corresponding to the support vectors.
+It is worth noting that, even if, on some
+large scale problems, the support vector set is of a manageable size at the optimal hyperparameters,
+the corresponding set can be large when the hyperparameter vector is away from the optimal; on
+many problems, such a far-off region in the hyperparameter space is usually traversed during the
+adaptation process!
+We highlight the contributions of this paper.
+(1) We consider differentiable versions of validation-set-based objective functions for model selec-
+tion (such as k-fold error) and give an ef(cid:2)cient method for computing the gradient of this function
+with respect to h. Our method does not require the computation of the inverse of a large kernel
+sub-matrix. Instead, it only needs a single linear system of equations to be solved, which can be
+done either by decomposition or conjugate-gradient techniques. In essence, the cost of computing
+the gradient with respect to h is about the same, and usually much lesser than the cost of solving (1)
+for a given h.
+(2) Our method is applicable to a wide range of validation objective functions and SVM models that
+may involve many hyperparameters. For example, a variety of loss functions can be used together
+with multiclass classi(cid:2)cation, regression, structured output or semi-supervised SVM algorithms.
+(3) Large-scale empirical results show that with BFGS optimization, just trying about 10-20 hy-
+perparameter points leads to the determination of optimal hyperparameters. Moreover, even as
+compared to a (cid:2)ne grid search, the gradient procedure provides a more precise placement of hy-
+perparameters leading to better generalization performance. The bene(cid:2)t in terms of ef(cid:2)ciency over
+the grid approach is evident even with just two hyperparameters. We also show the usefulness of our
+method for tuning more than two hyperparameters when optimizing validation functions such as the
+F measure and weighted error rate. This is particularly useful for imbalanced problems.
+This paper is organized as follows: In section 2, we discuss the general class of SVM models to
+which our method can be applied. In section 3, we describe our framework and provide the details
+of the gradient computation for general validation functions. In section 4, we discuss how to develop
+differentiable versions of several common performance validation functions. Empirical results are
+presented in section 5. We conclude this paper in section 6. Due to space limitations, several details
+have been omitted but can be found in the technical report (Keerthi et al. (2006)).
+
+2 SVM Classi(cid:2)cation Models
+
+In this section, we discuss the assumptions required for our method to be applicable. Consider SVM
+classi(cid:2)cation models of the form in (1). We assume that the kernel function k is a continuously
+differentiable function of h. Three commonly used SVM loss functions are: (1) hinge loss; (2)
+squared hinge loss; and (3) squared loss. In each of these cases, the solution of (1) is obtained by
+computing the vector (cid:11) that solves a dual problem. The solution usually leads to a linear system
+relating (cid:11) and b:
+P (cid:18) (cid:11)
+b (cid:19) = q
+where P and q are, in general, functions of h. We make the following assumption: Locally around
+h (at which we are interested in calculating the gradient of the validation function to be de(cid:2)ned
+soon) P and q are continuously differentiable functions of h. We write down P and q for the hinge
+loss function and discuss the validity of the above assumption. Details for other loss functions are
+similar.
+
+(4)
+
+(5)
+
+(cid:11)0 = 0;
+
+Hinge loss. l(oi ; yi ) = maxf0; 1 (cid:0) yi oi g. After the solution of (1), the training set indices get
+partitioned into three sets: I0 = fi : (cid:11)i = 0g, Ic = fi : (cid:11)i = C g and Iu = fi : 0 < (cid:11)i < C g. Let
+(cid:11)0 , (cid:11)c , (cid:11)u , yc , yu , ec , eu , (cid:10)uc , (cid:10)uu etc be appropriately de(cid:2)ned vectors and matrices. Then (4) is
+given by
+0 (cid:19) (cid:18) (cid:11)u
+(cid:19)
+(cid:11)c = C ec ; (cid:18) (cid:10)uu (cid:0)yu
+b (cid:19) = (cid:18) eu (cid:0) (cid:10)uc(cid:11)c
+(cid:0)yT
+yT
+c (cid:11)c
+u
+If the partitions I0 , Ic and Iu do not change locally around a given h then assumption 2 holds.
+Generically, this happens for almost all h.
+The modi(cid:2)ed Huber loss function can also be used, though the derivation of (4) for it is more
+complex than for the three loss functions mentioned above. Recently, weighted hinge loss with
+asymmetric margins (Grandvalet et al., 2005) has been explored for treating imbalanced problems.
+Weighted Hinge loss. l(oi ; yi ) = Ci maxf0; mi (cid:0) yi oi g. where Ci = C+ , mi = m+ if yi = 1
+and Ci = C(cid:0) , mi = m(cid:0) if yi = (cid:0)1. Because C+ and C(cid:0) are present, the hyperparameter C in (1)
+can be omitted. The SVM model with weighted hinge loss has four extra hyperparameters, C+ , C(cid:0) ,
+m+ and m(cid:0) , apart from the kernel hyperparameters. Our methods in this paper allow the possibility
+of ef(cid:2)ciently tuning all these parameters together with kernel parameters.
+The method described in this paper is not special to classi(cid:2)cation models only.
+It extends to a
+wide class of kernel methods for which the optimality conditions for minimizing a training objective
+function can be expressed as a linear system (4) in a continuously differentiable manner 1 . These
+include many models for multiclass classi(cid:2)cation, regression, structured output and semi-supervised
+learning (see Keerthi et al. (2006)).
+
+3 The gradient of a validation function
+
+Suppose that for the purpose of hyperparameter tuning, we are given a validation scheme involving
+a small number of (training set, validation set) partitions, such as: (1) using a single validation set,
+(2) k-fold cross validation, or (3) averaging over k randomly chosen (training set, validation set)
+partitions. Our method applies to any of these three schemes. To keep notations simple, we explain
+the ideas only for scheme (1) and expand on the other schemes towards the end of this section. Note
+that throughout the hyperparameter optimization process, the training-validation splits are (cid:2)xed.
+l=1 denote the validation set. Let ~Kli = k( ~xl ; xi ) involving a kernel calculation between
+Let f ~xl ; ~yl g ~n
+an element of a validation set with an element of the training set. The output on the l th validation
+example is ~ol = Pi (cid:11)i yi ~Kli (cid:0) b which, for convenience, we will rewrite as
+~ol =  T
+(6)
+l (cid:12)
+where (cid:12) is a vector containing (cid:11) and b, and  l is a vector containing yi ~Kli , i = 1; : : : ; n and (cid:0)1 as
+the last element (corresponding to b). Let us suppose that the model selection problem is formulated
+as a non-linear optimization problem:
+h? = argmin
+h
+where f is a differentiable validation function of the outputs ~ol which implicitly depend on h. In the
+next section, we will outline the construction of such functions for criteria like error rate, F measure
+etc. We now discuss the computation of rh f . Let (cid:18) denote a generic parameter in h and let us
+represent partial derivative of some quantity, say v , with respect to (cid:18) as _v . Before writing down
+expressions for _f , let us discuss how to get _(cid:12) . Differentiating (4) with respect to (cid:18) gives
+P _(cid:12) + _P (cid:12) = _q ) _(cid:12) = P (cid:0)1 ( _q (cid:0) _P (cid:12) )
+~nXl=1
+1 Infact, the main ideas easily extend when the optimality conditions form a non-linear system in ((cid:11); b) (e.g.,
+in Kernel Logistic Regression).
+
+Now let us write down _f .
+
+(@ f =@ ~ol ) _~ol
+
+f (~o1 ; : : : ; ~o ~n )
+
+_f =
+
+(7)
+
+(8)
+
+(9)
+
+where _~ol is obtained by differentiating (6):
+_(cid:12) + _ T
+_~ol =  T
+(10)
+l (cid:12)
+l
+The computation of _(cid:12) in (8) is the most expensive step, mainly because it requires P (cid:0)1 . Note that,
+for hinge loss, P (cid:0)1 can be computed in a somewhat cheaper way: only a matrix of the dimension
+of Iu needs to be inverted. Even then, in large scale problems the dimension of the matrix to be
+inverted can become so large that even storing it may be a problem; even when large storage is
+possible, the inverse can be very expensive. Most times, the effective rank of P is much smaller
+than its dimension. Thus, instead of computing P (cid:0)1 in (8), we can instead solve
+P _(cid:12) = ( _q (cid:0) _P (cid:12) )
+(11)
+for _(cid:12) approximately using decomposition methods or iterative methods such as conjugate-gradients.
+This can improve ef(cid:2)ciency as well as take care of memory issues by storing P only partially and
+computing the remaining parts of P as and when needed. Since the right-hand-side vector ( _q (cid:0) _P (cid:12) )
+in (11) changes for each different (cid:18) with respect to which we are differentiating, we need to solve
+(11) for each element of h. If the number of elements of h is not small (say, we want to use (3) with
+the MNIST dataset which has more than 700 features) then, even with (11), the computations can
+still remain very expensive.
+We now give a simple trick that shows that if the gradient calculations are re-organized, then ob-
+taining the solution of just a single linear system suf(cid:2)ces for computing the full gradient of f with
+respect to all elements of h. Let us denote the coef(cid:2)cient of _~ol in the expression for _f in (9) by (cid:14)l ,
+i.e.,
+
+(12)
+
+(13)
+
+(14)
+
+(cid:14)l _ l )T (cid:12)
+
+(cid:14)l = @ f =@ ~ol
+Using (10) and plugging the expression for _(cid:12) from (8) into (9) gives
+_f = Xl
+(cid:14)l _~ol = Xl
+l (cid:12) ) = dT ( _q (cid:0) _P (cid:12) ) + (Xl
+l P (cid:0)1 ( _q (cid:0) _P (cid:12) ) + _ T
+(cid:14)l ( T
+where d is the solution of
+P T d = (Xl
+(cid:14)l l )
+The beauty of the reorganization in (13) is that d is the same for all variables (cid:18) in h about which the
+differentiation is being done. Thus (14) needs to be solved only once. In concurrent work (Seeger,
+2006) has used a similar idea for kernel logistic regression.
+As a word of caution, note that P may not be symmetric. See, e.g., the P arising from (5) for
+the hinge loss case. Also, the parts corresponding to zero components should be omitted from
+calculations and the special structure of P should be utilized,e.g., for hinge loss when computing
+_P (cid:12) the parts of _P corresponding to (cid:11)0 (see (5)) can be ignored. The linear system in the above
+equation can be ef(cid:2)ciently solved using conjugate gradient techniques.
+The sequence of steps for the computation of the full gradient of f with respect to h is as follows.
+First compute (cid:14)l from (12). For various choices of validation function, we outline this computation
+in the next section. Then solve (14) for d. Then, for each (cid:18) use (13) to get all the derivatives of
+f . The computation of _P (cid:12) has to be performed for each hyperparameter separately. In problems
+with many hyperparameters, this is the most expensive part of the gradient computation. Note that
+_P (cid:12) is immediately obtained. For (cid:18) = (cid:13) or (cid:13)t , when using (2,3), one
+in some cases, e.g., (cid:18) = C ,
+can cache pairwise distance computations while computing the kernel matrix. We have found (see
+section 5) that the cost of computing the gradient of f with respect to h to be usually much less than
+the cost of solving (1) and then obtaining f .
+We can also employ the above ideas in a validation scheme where one uses k training-validation
+splits (e.g in k-fold cross-validation). In this case, for each partition one obtains the linear system
+(4), corresponding validation outputs (6) and the linear system in (14). The gradient is simply
+_f = Pk
+_f (k) where _f (k) is given by (13) using
+computed by summing over the k partitions, i.e.,
+j=1
+the quantities P ; q ; d etc associated with the k th partition.
+The model selection problem (7) may now be solved using, e.g., Quasi-Newton methods such as
+BFGS which only require function value and gradient at a hyperparameter setting.
+In particular,
+
+In our implementations we terminate
+reaching the minimizer of f too closely is not important.
+optimization iterations when the following loose termination criterion is met: jf (hk+1 ) (cid:0) f (hk )j (cid:20)
+10(cid:0)3 jf (hk )j, where hk+1 and hk are consecutive iterates in the optimization process.
+A general concern with descent methods is the presence of local minima. In section 5, we make
+some encouraging empirical observations in this regard, e.g., local minima problems did not occur
+for the C; (cid:13) tuning task; for several other tasks, starting points that work surprisingly well could be
+easily obtained.
+
+4 Smooth validation functions
+
+We consider validation functions that are general functions of the confusion matrix, of the form
+f (tp; f p) where tp is the number of true positives and f p is the number of false positives. Let u(z )
+denote the unit step function which is 0 when z < 0 and 1 otherwise. Denote ~u l = u( ~yl ~ol ), which
+evaluates to 1 if the l th example is correctly classi(cid:2)ed and 0 otherwise. Then, tp and f p can be
+written as tp = Pl: ~yl=+1 ~ul , f p = Pl: ~yl=(cid:0)1 (1 (cid:0) ~ul ). Let ~n+ and ~n(cid:0) be the number of validation
+examples in the positive and negative classes. The most commonly used validation function is error
+rate.
+Error rate (er) is simply the percentage of incorrect predictions, i.e., er = (~n+ (cid:0) tp + f p)=~n.
+For classi(cid:2)cation problems with imbalanced classes it is usual to consider either weighted error rate
+or a function of precision and recall such as the F measure.
+Weighted Error rate (wer) is given by wer = (~n+ (cid:0) tp + (cid:17)f p)=(~n+ + (cid:17) ~n(cid:0) ), where (cid:17) is the ratio
+of the cost of misclassi(cid:2)cations of the negative class to that of the positive class.
+F measure (F ) is the harmonic mean of precision and recall: F = 2tp=(~n+ + tp + f p)
+Alternatively, one may want to maximize precision under a recall constraint, or maximize the area
+under the ROC Curve or maximize the precision-recall breakeven point. See Keerthi et al. (2006)
+for a discussion on how to treat these cases.
+It is common practice to evaluate measures like precision, recall and F measure while varying the
+threshold on the real-valued classi(cid:2)er output, i.e., at any given threshold (cid:27)0 , tp and f p can be
+rede(cid:2)ned in terms of the following,
+
+(15)
+~ul = u ( ~yl (~ol (cid:0) (cid:27)0 ))
+For imbalanced problems one may wish to maximize a score such as the F measure over all values
+of (cid:27)0 . In such cases, it is appropriate to incorporate (cid:27)0 as an additional hyperparameter that needs
+to be tuned. Such bias-shifting is particularly also useful as a compensation mechanism for the
+mismatch between training objective function and validation function; often one uses an SVM as
+the underlying classi(cid:2)er even though it is not explicitly trained to minimize the validation function
+that the practitioner truly cares about. In section 5, we make some empirical observations related to
+this point.
+The validation functions discussed above are based on discrete counts. In order to use gradient-based
+methods smooth functions of h are needed. To develop smooth versions of validation functions, we
+de(cid:2)ne ~sl , which is a sigmoidal approximation to ~ul (15) of the following form:
+(16)
+~sl = 1=[1 + exp ((cid:0)(cid:27)1 ~yl (~ol (cid:0) (cid:27)0 ))]
+where (cid:27)1 > 0 is a sigmoidal scale factor. In general, (cid:27)0 ; (cid:27)1 may be functions of the validation out-
+puts. (As discussed above, one may alternatively wish to treat (cid:27)0 as an additional hyperparameter.)
+The scale factor (cid:27)1 in(cid:3)uences how closely ~sl approximates the step function ~ul and hence controls
+the degree of smoothness in building the sigmoidal approximation. As the hyperparameter space
+is probed, the magnitude of the outputs can vary quite a bit. (cid:27)1 takes the scale of the outputs into
+account. Below we discuss various methods to set (cid:27)0 ; (cid:27)1 .
+We build a differentiable version of such a function by simply replacing ~u l by ~sl . Thus, we have
+f = f (~s1 : : : ~s ~n ). The value of (cid:14)l (12) is given by:
+@(cid:27)1 ! @(cid:27)1
++  Xr
+@(cid:27)0 ! @(cid:27)0
++  Xr
+@ ~sr
+@ ~sr
+@ ~ol
+@ ~ol
+
+@ f
+@ ~sr
+
+@ f
+@ ~sr
+
+(17)
+
+(cid:14)l =
+
+@ f
+@ ~sl
+
+@ ~sl
+@ ~ol
+
+Smooth Val Error Rate (er)
+
+Test Error Rate
+
+C
+ 
+g
+o
+L
+
+6
+
+4
+
+2
+
+0
+
+−2
+
+0
+Log gamma
+
+2
+
+C
+ 
+g
+o
+L
+
+6
+
+4
+
+2
+
+0
+
+−2
+
+0
+Log gamma
+
+2
+
+Figure 1: Performance contours for IJCNN with 2000 training points. The sequence of points gen-
+erated by Grad are shown by (cid:3) (best is in red). The point chosen by Grid is shown by (cid:14) in red.
+
+where the partial derivatives of ~sl with respect to ~ol ; (cid:27)0 ; (cid:27)1 can be easily derived from (16) and
+(@ f =@ ~sl ) = (@ f =@ tp)(@ tp=@ ~sl ) + (@ f =@ f p)(@ f p=@ ~sl ).
+We now discuss three methods to compute the sigmoidal parameters (cid:27)0 ; (cid:27)1 . For each of these
+methods the partial derivatives of (cid:27)0 ; (cid:27)1 with respect to ~ol can be obtained (Keerthi et al. (2006))
+and used for computing (17).
+Direct Method. Here, we simply set, (cid:27)0 = 0, (cid:27)1 = t=(cid:26), where (cid:26) denotes standard deviation
+of the outputs f~ol g and t is a constant which is heuristically set to some (cid:2)xed value in order to
+well-approximate the step function. In our implementation we use t = 10.
+Hyperparameter Bias Method. Here, we treat (cid:27)0 as a hyperparameter and set (cid:27)1 as above.
+Minimization Method. In this method, we obtain (cid:27)0 ; (cid:27)1 by performing sigmoidal (cid:2)tting based
+on unconstrained minimization of some smooth criterion N , i.e., ((cid:27)0 ; (cid:27)1 ) = argminR2 N . A
+natural choice of N is based on Platt’s method (Platt (1999)) where ~s l is interpreted as the posterior
+probability that the class of l th validation example is ~yl , and we take N to be the Negative-Log-
+Likelihood: N = Nnll = (cid:0) Pl log(~sl ). Sigmoidal (cid:2)tting based on Nnll has also been previously
+proposed in Chapelle et al. (2002). The probabilistic error rate: per = Pl (1 (cid:0) ~sl )=~n and f = Nnll
+are suitable validation functions which go well with the choice N = Nnll .
+5 Empirical Results
+
+We demonstrate the effectiveness of our method on several binary classi(cid:2)cation problems. The SVM
+model with hinge loss was used. SVM training was done using the SMO algorithm. Five fold cross
+validation was used to form the validation functions. Four datasets were used: Adult, IJCNN, Vehicle
+and Splice. The (cid:2)rst three were taken from http://www.csie.ntu.edu.tw/(cid:152)cjlin/libsvmtools/datasets/
+and Splice was taken from http://ida.(cid:2)rst.fraunhofer.de/(cid:152)raetsch/. The number of examples/features
+in these datasets are: Adult: 32561/123; IJCNN: 141691/22; Vehicle: 98528/100; and Splice:
+3175/60. For each dataset, training sets of different sizes were chosen in a class-wise strati(cid:2)ed
+fashion; the remaining examples formed the test set.
+The Gaussian kernel (2) and the ARD-Gaussian kernel (3) were used. For (C; (cid:13) ) tuning with the
+Gaussian Kernel, we also tried the popular Grid over a 15 (cid:2) 15 grid of values. For C; (cid:13) tuning with
+the gradient method, the starting point C = (cid:13) = 1 was used.
+Comparison of validation functions. Figure 1 shows the contours of the smoothed validation
+error rate and the actual test error rate for the IJCNN dataset with 2000 training examples on the
+(log C; log (cid:13) ) plane. Grid and Grad respectively denote the grid and the gradient methods applied
+to the (C; (cid:13) ) tuning task. We used f = er smoothed with the direct method for Grad. It can be seen
+that the contours are quite similar. We also generated corresponding contours (omitted) for f = per
+and f = Nnll (see end of section 4) and found that the validation er with the direct method better
+represents the test error rate. Figure 1 also shows that the gradient method very quickly plunges into
+the high-performance region in the (C; (cid:13) ) space.
+Comparison of Grid and Grad methods. For various training set sizes of IJCNN, in Table 1, we
+compare the speed and generalization performance of Grid and Grad, Clearly Grad is much more
+
+ef(cid:2)cient than Grid. The good speed improvement is seen even at small training set sizes. Although
+the ef(cid:2)ciency of Grid can be improved in certain ways (say, by performing a crude search followed
+by a re(cid:2)ned search, by avoiding unnecessary exploration of dif(cid:2)cult regions in the hyperparame-
+ter space etc) Grad determines the optimal hyperparameters more precisely.
+Table 2 compares
+Grid and Grad on Adult and Vehicle datasets for various training sizes. Though the generalization
+performance of the two methods are close, Grid is much slower.
+
+ntrg
+
+cpu
+
+erate
+
+Table 1: Comparison of Grid, Grad & Grad-ARD on IJCNN & Splice. nf= number of hyperparam-
+eter vectors tried. (For Grid, nf= 225.) cpu= cpu time in minutes. erate=% test error rate.
+Grad-ARD
+Grad
+Grid
+cpu
+cpu
+erate
+IJCNN
+4.58
+11.40
+68.58
+127.03
+382.20
+Splice
+7.57
+
+10.03
+38.77
+218.92
+1130.37
+5331.15
+
+5.63
+8.40
+38.58
+154.03
+269.16
+
+2000
+4000
+8000
+16000
+32000
+
+2.65
+2.14
+1.50
+1.08
+0.82
+
+nf
+
+11
+12
+14
+12
+9
+
+13
+
+nf
+
+28
+13
+17
+20
+7
+
+37
+
+2.95
+2.42
+1.76
+1.24
+0.91
+
+9.19
+
+2.87
+2.42
+1.77
+1.26
+0.91
+
+8.17
+
+35.04
+
+3.49
+
+2000
+
+11.42
+
+erate
+
+Table 2: Comparison of Grad & Grid methods on Adult & Vehicle. De(cid:2)nitions of nf, cpu & erate
+are as in Table 1. For Vehicle and ntrg =16000, Grid was discontinued after 5 days of computation.
+Vehicle
+Adult
+
+ntrg
+2000
+4000
+8000
+16000
+
+nf
+9
+16
+10
+6
+
+Grad
+cpu
+2.50
+8.60
+83.10
+360.88
+
+Grid
+
+erate
+13.58
+13.29
+12.84
+12.58
+
+cpu
+15.25
+135.28
+1458.12
+(cid:150)
+
+erate
+13.84
+13.30
+12.82
+(cid:150)
+
+Grad
+cpu
+3.62
+15.98
+52.17
+256.40
+
+Grid
+
+erate
+16.21
+15.64
+15.69
+15.40
+
+cpu
+8.66
+37.53
+306.25
+3667.90
+
+erate
+16.14
+15.95
+15.59
+15.37
+
+nf
+7
+5
+9
+6
+
+Feature Weighting Experiments. To study the effectiveness of our gradient-based approach when
+many hyperparameters are present, we use the ARD-Gaussian kernel in (3) and tune C together
+with all the (cid:13) t ’s. As before, we used f = er smoothed with the direct method. The solution for
+Gaussian kernel was seeded as the starting point for the optimization. Results are reported in Table
+1 as Grad-ARD where cpu denotes the extra time for this optimization. We see that Grad-ARD
+achieves signi(cid:2)cant improvements in generalization performance over Grad without increasing the
+computational cost by much even though a large number of hyperparameters are being tuned.
+Maximizing F-measure by threshold adjustment. In section 4 we mentioned about the possi-
+ble value of threshold adjustment when the validation/test function of interest is a quantity that is
+different from error rate. We now illustrate this by taking the Adult dataset, with F measure. The
+size of the training set is 2000. Gaussian kernel (2) was used. We implemented two methods: (1)
+we set (cid:27)0 = 0 and tuned only C and (cid:13) ; (2) we tuned the three hyperparameters C , (cid:13) and (cid:27)0 . We
+ran the methods on ten different random training set/test set splits. Without (cid:27)0 , the mean (standard
+deviation) of F measure values on 5-fold cross validation and on the test set were: 0.6385 (0.0062)
+and 0.6363 (0.0081). With (cid:27)0 , the corresponding values improved: 0.6635 (0.0095) and 0.6641
+(0.0044). Clearly, the use of (cid:27)0 yields a very signi(cid:2)cant improvement on the F-measure. The ability
+to easily include the threshold as an extra hyperparameter is a very useful advantage for our method.
+Optimizing weighted error rate in imbalanced problems. In imbalanced problems where the
+proportion of examples in the positive class is small, one usually minimizes weighted error rate
+wer (see section 4) with a small value of (cid:17) . One can think of four possible methods in which,
+apart from the kernel parameter (cid:13) and threshold (cid:27)0 (we used the Hyperparameter bias method for
+smoothening), we include other parameters by considering sub-cases of the weighted hinge loss
+model (see section 2) (cid:150) (1) Usual SVM: Set m+ = m(cid:0) = 1, C+ = C , C(cid:0) = C and tune C . (2)
+Set m+ = m(cid:0) = 1, C+ = C , C(cid:0) = (cid:17)C and tune C . (3) Set m+ = m(cid:0) = 1 and tune C+ and
+C(cid:0) treating them as independent parameters. (4) Use the full Weighted Hinge loss model and tune
+
+C+ , C(cid:0) , m+ and m(cid:0) . To compare the performance of these methods we took the IJCNN dataset,
+randomly choosing 2000 training examples and keeping the remaining examples as the test set. Ten
+such random splits were tried. We take (cid:17) = 0:01. The top half of Table 3 reports weighted error
+rates associated with validation and test. The weighted hinge loss model performs best.
+
+Table 3: Mean (standard deviation) of weighted ((cid:17) = 0:01) error rate values on the IJCNN dataset.
+C+ = C , C(cid:0) = C C+ = C , C(cid:0) = (cid:17)C
+C+ , C(cid:0) tuned
+Full Weighted Hinge
+With (cid:27)0
+0.0419 (0.0060)
+0.0571 (0.0183)
+0.0490 (0.0104)
+0.0638 (0.0160)
+0.0549 (0.0098)
+0.0571 (0.0136)
+Without (cid:27)0
+0.1008 (0.0607)
+0.1051 (0.0164)
+0.0897 (0.0154)
+0.0969 (0.0502)
+
+0.1953 (0.0557)
+0.1861 (0.0540)
+
+0.0364 (0.0061)
+0.0469 (0.0076)
+
+Validation
+Test
+
+Validation
+Test
+
+0.0357 (0.0063)
+0.0461 (0.0078)
+
+The presence of the threshold parameter (cid:27)0 is important for the (cid:2)rst three methods. The bottom half
+of Table 3 gives the performance statistics of the methods when threshold is not tuned. Interestingly,
+for the weighted hinge loss method, tuning of threshold has little effect. Grandvalet et al. (2005)
+also make the observation that this method appropriately sets the threshold on its own.
+Cost Break-up. In the gradient-based solution process, each step of the optimization requires the
+evaluation of f and rh f . In doing this, there are three steps that take up the bulk of the computa-
+tional cost: (1) training using the SMO algorithm; (2) the solution of the linear system in (14); and
+(3) the remaining computations associated with the gradient, of which the computation of _P (cid:12) in (13)
+is the major part. We studied the relative break-up of the costs for the IJCNN dataset (training set
+sizes ranging from 2000 to 32000), for solution by Grad and Grad-ARD methods. On an average,
+the cost of solution by SMO forms 85 to 95% of the total computational time. Thus, the gradient
+computation is very cheap. We also found that the _P (cid:12) cost of Grad-ARD doesn’t become large in
+spite of the fact that 23 hyperparameters are tuned there. This is mainly due to the ef(cid:2)cient reusage
+of terms in the ARD-Gaussian calculations that we mentioned in section 4.
+
+6 Conclusion
+
+The main contribution of this paper is a fast method of computing the gradient of a validation func-
+tion with respect to hyperparameters for a range of SVM models; together with a nonlinear optimiza-
+tion technique it can be used to ef(cid:2)ciently determine the optimal values of many hyperparameters.
+Even in models with just two hyperparameters our approach is faster and offers a more precise hy-
+perparameter placement than the Grid approach. Our approach is particularly of great value for
+large scale problems. The ability to tune many hyperparameters easily should be used with care.
+On a text classi(cid:2)cation problem involving many thousands of features we placed an independent
+feature weight for each feature and optimized all these weights (together with C ) only to (cid:2)nd severe
+over(cid:2)tting taking place. So, for a given problem it is important to choose the set of hyperparameters
+carefully, in accordance with the richness of the training set.
+
+References
+S. S. Keerthi, V. Sindhwani and O. Chapelle. An ef(cid:2)cient method for gradient-based adaptation of
+hyperparameters in SVM models. Technical Report, 2006.
+O. Chapelle, V. Vapnik, O. Bousquet and S. Mukherjee. Choosing multiple parameters for support
+vector machines. Machine Learning, 46:131(cid:150)159, 2002.
+Y. Grandvalet, J. Mari ·ethoz and S. Bengio. A probabilistic interpretation of SVMs with an applica-
+tion to unbalanced classi(cid:2)cation. NIPS, 2005.
+J. Platt. Probabilities for support vector machines. In Advances in Large Margin Classi(cid:2)ers. MIT
+Press, Cambridge, Massachusetts, 1999.
+M. Seeger. Cross validation optimization for structured Hessian kernel methods. Tech. Report, MPI
+for Biological Cybernetics, T ¤ubingen, Germany, May 2006.
+
+

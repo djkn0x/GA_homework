@@ -1,0 +1,695 @@
+Consistent Minimization of Clustering Objective
+Functions
+
+Ulrike von Luxburg
+Max Planck Institute for Biological Cybernetics
+ulrike.luxburg@tuebingen.mpg.de
+
+S ´ebastien Bubeck
+INRIA Futurs Lille, France
+sebastien.bubeck@inria.fr
+
+Stefanie Jegelka
+Max Planck Institute for Biological Cybernetics
+stefanie.jegelka@tuebingen.mpg.de
+
+Michael Kaufmann
+University of T ¨ubingen, Germany
+mk@informatik.uni-tuebingen.de
+
+Abstract
+
+Clustering is often formulated as a discrete optimization problem. The objective is
+to ﬁnd, among all partitions of the data set, the best one according to some quality
+measure. However, in the statistical setting where we assume that the ﬁnite data
+set has been sampled from some underlying space, the goal is not to ﬁnd the best
+partition of the given sample, but to approximate the true partition of the under-
+lying space. We argue that the discrete optimization approach usually does not
+achieve this goal. As an alternative, we suggest the paradigm of “nearest neighbor
+clustering”. Instead of selecting the best out of all partitions of the sample, it only
+considers partitions in some restricted function class. Using tools from statistical
+learning theory we prove that nearest neighbor clustering is statistically consis-
+tent. Moreover, its worst case complexity is polynomial by construction, and it
+can be implemented with small average case complexity using branch and bound.
+
+1
+Introduction
+Clustering is the problem of discovering “meaningful” groups in given data. Many algorithms try to
+achieve this by minimizing a certain quality function Qn , for example graph cut objective functions
+such as ratio cut or normalized cut, or various criteria based on some function of the within- and
+between-cluster similarities. The objective of clustering is then stated as a discrete optimization
+problem. Given a data set Xn = {X1 , . . . , Xn } and a clustering quality function Qn , the ideal
+clustering algorithm should take into account all possible partitions of the data set and output the
+one that minimizes Qn . The implicit understanding is that the “best” clustering can be any partition
+out of the set of all possible partitions of the data set. The algorithmic challenge is to construct an
+algorithm which is able to ﬁnd this clustering. We will call this approach the “discrete optimization
+approach to clustering”.
+If we look at clustering from the perspective of statistical learning theory we assume that the ﬁnite
+data set has been sampled from an underlying data space X according to some probability measure.
+The ultimate goal in this setting is not to discover the best possible partition of the data set Xn , but
+to learn the “true clustering” of the underlying space. In an approach based on quality functions,
+this “true clustering” can be deﬁned easily. We choose a clustering quality function Q on the set of
+partitions of the entire data space X , and deﬁne the true clustering f ∗ to be the partition minimizing
+Q. In this setting, a very important property of a clustering algorithm is consistency. Denoting the
+clustering constructed on the ﬁnite sample by fn , we require that Q(fn ) converges to Q(f ∗ ) when
+n→∞. The most important insight of statistical learning theory is that in order to be consistent,
+learning algorithms have to choose their functions from some “small” function space only. To mea-
+sure the size of a function space F one uses the quantity NF (x1 , .., xn ) which denotes the number
+
+1
+
+of ways in which the points x1 , . . . , xn can be partitioned by functions in F . One can prove that
+in the standard setting of statistical learning theory, a necessary condition for consistency is that
+E log NF (x1 , .., xn )/n → 0 (cf. Theorem 2.3 in Vapnik, 1995, Section 12.4 of Devroye et al., 1996).
+Stated like this, it becomes apparent that the two viewpoints described above are not compatible
+with each other. While the discrete optimization approach on any given sample attempts to ﬁnd
+the best of all (exponentially many) partitions, the statistical learning theory approach restricts the
+set of candidate partitions to have sub-exponential size. Hence, from the statistical learning theory
+perspective, an algorithm which is considered ideal in the discrete optimization setting is likely to
+overﬁt. One can construct simple examples (cf. Bubeck and von Luxburg, 2007) which show that
+this indeed can happen: here the partitions constructed on the ﬁnite sample do not converge to the
+In practice, for most cases the discrete optimization approach
+true clustering of the data space.
+cannot be performed perfectly as the corresponding optimization problem is NP hard.
+Instead,
+people resort to heuristics. One approach is to use local optimization procedures potentially ending
+in local minima only (this is what happens in the k-means algorithm). Another approach is to
+construct a relaxation of the original problem which can be solved efﬁciently (spectral clustering is
+an example for this). In both cases, one usually cannot guarantee how close the heuristic solution
+is to the global ﬁnite sample optimum. This situation is clearly unsatisfactory: for most clustering
+algorithms, we neither have guarantees on the ﬁnite sample behavior of the algorithm, nor on its
+statistical consistency in the limit.
+The following alternative approach looks much more promising. Instead of attempting to solve the
+discrete optimization problem over the set of all partitions, and then resorting to relaxations due to
+the NP-hardness of this problem, we turn the tables. Directly from the outset, we only consider
+candidate partitions in some restricted class Fn containing only polynomially many functions. Then
+the discrete optimization problem of minimizing Qn over Fn is no longer NP hard – it can trivially
+be solved in polynomially many steps by trying all candidates in Fn . From a theoretical point of
+view this approach has the advantage that the resulting clustering algorithm has the potential of
+being consistent. In addition, it also leads to practical beneﬁts: rather than dealing with uncontrolled
+relaxations of the original problem, we restrict the function class to some small enough subset Fn of
+“reasonable” partitions. Within this subset, we then have complete control over the solution of the
+optimization problem and can ﬁnd the global optimum. Put another way, one can also interpret this
+approach as some controlled way of sparsifying the NP hard optimization problem, with the positive
+side effect of obeying the rules of statistical learning theory.
+
+2 Nearest neighbor clustering
+
+In the following we assume that we are given a set of data points Xn = {X1 , . . . , Xn } and pairwise
+distances dij = d(Xi , Xj ) or pairwise similarities sij = s(Xi , Xj ). Let Qn be the ﬁnite sample
+quality function to optimize on the sample. To follow the approach outlined above we have to
+optimize Qn over a “small” set Fn of partitions of Xn . Essentially, we have three requirements
+on Fn : First, the number of functions in Fn should be at most polynomial in n. Second, in the
+limit of n → ∞ the class Fn should be rich enough to approximate any measurable partition of
+the underlying space. Third, in order to perform the optimization we need to be able to enumerate
+all members of this class, that is the function class Fn should be “constructive” in some sense. A
+convenient choice satisfying all those properties is the class of “nearest neighbor partitions”. This
+class contains all functions which can be generated as follows. Fix a subset of m (cid:28) n “seed points”
+Xs1 , . . . , Xsm among the given data points. Assign all other data points to their closest seed points,
+that is for all j = 1, . . . , m deﬁne the set Zj as the subset of data points whose nearest seed point is
+Xsj . Then consider all partitions of Xn which are constant on the sets Zj . More formally, for given
+seeds we deﬁne the set Fn as the set of all functions f : X → {1, . . . , K } which are constant on the
+cells of the Voronoi partition induced by the seeds. Here K denotes the number of clusters we want
+to construct. The function class Fn contains K m functions, which is polynomial in n if the number
+m of seeds satisﬁes m = O(log n). Given Fn , the simplest polynomial-time optimization algorithm
+is then to evaluate Qn (f ) for all f ∈ Fn and choose the solution fn = argminf ∈Fn Qn (f ). We call
+the resulting clustering the nearest neighbor clustering and denote it by NNC(Qn ). In practice, the
+seeds will be chosen randomly among the given data points.
+
+2
+
+3 Consistency of nearest neighbor clustering
+
+In this section we prove that nearest neighbor clustering is statistically consistent for many clustering
+quality functions. Due to the complexity of the proofs and the page restriction we can only present
+sketches of the proofs. All details can be found in von Luxburg et al. (2007). Let us start with some
+notation. For any clustering function f : Rd → {1, . . . , K } we denote by the predicate A(f ) a
+property of the function which can either be true or false. As an example, deﬁne A(f ) to be true if
+all clusters have at least a certain minimal size. Moreover, we need to introduce a predicate An (f )
+which will be an “estimator” of A(f ) based on the ﬁnite sample only. Let m := m(n) ≤ n be the
+number of seeds used in nearest neighbor clustering. To simplify notation we assume in this section
+that the seeds are the ﬁrst m data points; all results remain valid for any other (even random) choice
+of seeds. As data space we use X = Rd . We deﬁne:
+NNm (x) := NNm(n) (x) := argminy∈{X1 ,...,Xm } kx − yk ( for x ∈ Rd )
+F := {f : Rd → {1, . . . , K } | f continuous P-a.e. and A(f ) true}
+eFn := S
+Fn := FX1 ,...,Xn := {f : Rd → {1, . . . , K } | f satisﬁes f (x) = f (NNm (x)), and An (f ) is true}
+X1 ,...,Xn∈Rd FX1 ,...,Xn
+Furthermore, let Q : F → R be the quality function we aim to minimize, and Qn : Fn → R an
+estimator of this quality function on a ﬁnite sample. With this notation, the true clustering f ∗ on the
+underlying space and the nearest neighbor clustering fn introduced in the last section are given by
+fn ∈ argminf ∈Fn Qn (f ).
+f ∗ ∈ argminf ∈F Q(f )
+and
+ef ∗ (x) := f ∗ (NNm (x)).
+Later on we will also need to work with the functions
+n ∈ argminf ∈Fn Q(f )
+f ∗
+As distance function between different clusterings f , g we will use
+Ln (f , g) := P(f (X ) 6= g(X ) | X1 , . . . , Xn )
+(we need the conditioning in case f or g depend on the data, it has no effect otherwise).
+
+and
+
+Theorem 1 (Consistency of nearest neighbor clustering) Let (Xi )i∈N be a sequence of points
+drawn i.i.d. according to some probability measure P on Rd , and m := m(n) the number of
+Qn : eFn → R its estimator, and A(f ) and An (f ) some predicates. Assume that:
+seed points used in nearest neighbor clustering. Let Q : F → R be a clustering quality function,
+1. Qn (f ) is a consistent estimator of Q(f ) which converges sufﬁciently fast:
+∀ε > 0, K m (2n)(d+1)m2 supf ∈ eFn
+P(|Qn (f ) − Q(f )| > ε) → 0.
+P(An ( ef ∗ ) true) → 1
+2. An (f ) is an estimator of A(f ) which is “consistent” in the following way:
+P(A(fn ) true) → 1.
+and
+3. Q is uniformly continuous with respect to the distance Ln between F and Fn :
+∀ε > 0 ∃δ(ε) > 0 ∀f ∈ F ∀g ∈ Fn : Ln (f , g) ≤ δ(ε) =⇒ |Q(f ) − Q(g)| ≤ ε.
+4. limn→∞m(n) = +∞.
+Then nearest neighbor clustering as introduced in Section 2 is weakly consistent, that is Q(fn ) →
+Q(f ∗ ) in probability.
+Proof. (Sketch, for details see von Luxburg et al. (2007)). We split the term P(|Q(fn ) − Q(f ∗ )| ≥ ε)
+into its two sides P(Q(fn ) − Q(f ∗ ) ≤ −ε) and P(Q(fn ) − Q(f ∗ ) ≥ ε). It is a straightforward
+P(cid:0)Q(fn ) − Q(f ∗ ) ≥ ε(cid:1) ≤ P(cid:0)Q(fn ) − Q(f ∗
+n ) ≥ ε/2(cid:1) + P(cid:0)Q(f ∗
+n ) − Q(f ∗ ) ≥ ε/2(cid:1).
+consequence of Condition (2) that the ﬁrst term converges to 0. The main work consists in bounding
+the second term. As usual we consider the estimation and approximation errors
+3
+
+First we bound the estimation error. In a few lines one can show that
+P(Q(fn ) − Q(f ∗
+n ) ≥ ε/2) ≤ P(supf ∈Fn |Qn (f ) − Q(f )| ≥ ε/4).
+Note that even though the right hand side resembles the standard quantities often considered in
+statistical learning theory, it is not straightforward to bound as we do not assume that Q(f ) =
+EQn (f ). Moreover, note that the function class Fn is data dependent as the seed points used in
+by the larger class eFn , which is not data dependent. Using symmetrization by a ghost sample (cf.
+the Voronoi partition are data points. To circumvent this problem, we replace the function class Fn
+P(cid:0)|Qn (f ) − Q(f )| ≥ ε/16(cid:1)
+P(cid:0) sup
+|Qn (f ) − Q(f )| ≥ ε/4(cid:1) ≤ 2SK ( eFn , 2n)
+Section 12.3 of Devroye et al., 1996), we then move the supremum out of the probability:
+P(cid:0)|Qn (f ) − Q(f )| ≤ ε/8(cid:1)
+supf ∈ eFn
+inf f ∈ eFn
+(1)
+f ∈Fn
+assume Q(f ) = EQn (f ). The quantity SK ( eFn , 2n) denotes the shattering coefﬁcient, that is the
+Note that the unusual denominator in Eq. (1) emerges in the symmetrization step as we do not
+maximum number of ways that 2n points can be partitioned into K sets using the functions in eFn .
+It is well known (e.g., Section 21.5 of Devroye et al., 1996) that the number of Voronoi partitions
+clusterings into K classes is bounded by SK ( eFn , n) ≤ K mn(d+1)m2
+of n points using m cells in Rd is bounded by n(d+1)m2 , hence the number of nearest neighbor
+same holds for the estimation error. To deal with the approximation error, observe that if An ( ef ∗ ) is
+. Under Condition (1) of the
+Theorem we now see that for ﬁxed ε and n → ∞ the right hand side of (1) converges to 0. Thus the
+true, then ef ∗ ∈ Fn , and by the deﬁnition of f ∗
+n ) − Q(f ∗ ) ≤ Q( ef ∗ ) − Q(f ∗ ) and thus
+n we have
+P(cid:0)Q(f ∗
+n ) − Q(f ∗ ) ≥ ε(cid:1) ≤ P(An ( ef ∗ ) false) + P(cid:0) ef ∗ ∈ Fn and Q( ef ∗ ) − Q(f ∗ ) ≥ ε(cid:1).
+Q(f ∗
+(2)
+P(cid:0) ef ∗ ∈ Fn , Q( ef ∗ ) − Q(f ∗ ) ≥ ε(cid:1) ≤ P(cid:0)Q( ef ∗ ) − Q(f ∗ ) ≥ ε(cid:1) ≤ P(cid:0) Ln (f ∗ , ef ∗ ) ≥ δ(ε)(cid:1).
+The ﬁrst expression on the right hand side converges to 0 by Condition (2) in the theorem. Using
+Condition (3), we can bound the second expression in terms of the distance Ln to obtain
+Now we use techniques from Fritz (1975) to show that if n is large enough, then the distance between
+a function f ∈ F evaluated at x and the same function evaluated at NNm (x) is small. Namely, for
+any f ∈ F and any ε > 0 there exists some b(δ(ε)) > 0 which does not depend on n and f such that
+P(Ln (f , f (NNm (·))) > δ(ε)) ≤ (2/δ(ε)) e−mb(δ(ε)) .
+The quantity δ(ε) has been introduced in Condition (3). For every ﬁxed ε, this term converges to 0
+due to Condition (4), thus the approximation error vanishes.
+,
+Now we want to apply our general theorem to particular objective functions. We start with the
+normalized cut. Let s : Rd × Rd → R+ be a similarity function which is upper bounded by a constant
+C . For a clustering f : Rd → {1, . . . , K } denote by fk (x) := 1f (x)=k the indicator function of the
+Pn
+k-th cluster. Deﬁne the empirical and true cut, volume, and normalized cut as follows:
+(cid:0)fk (X )(1 − fk (Y ))s(X, Y )(cid:1)
+i,j=1 fk (Xi )(1 − fk (Xj ))s(Xi , Xj )
+cutn (fk ) := 1
+n(n−1)
+(cid:0)fk (X )s(X, Y )(cid:1)
+Pn
+cut(fk ) := EX,Y
+Ncutn (f ) := PK
+Ncut(f ) := PK
+voln (fk ) := 1
+vol(fk ) := EX,Y
+i,j=1 fk (Xi )s(Xi , Xj )
+n(n−1)
+cut(fk )
+cutn (fk )
+k=1
+k=1
+vol(fk )
+voln (fk )
+Note that E Ncutn (f ) 6= Ncut(f ), but E cutn (f ) = cut(f ) and E voln (f ) = vol(f ). We ﬁx a
+constant a > 0, a sequence (an )n∈N with an ≥ an+1 and an → a and deﬁne the predicates
+A(f ) is true : ⇐⇒ vol(fk ) > a ∀k = 1, . . . , K
+An (f ) is true : ⇐⇒ voln (fk ) > an ∀k = 1, . . . , K
+(3)
+Theorem 2 (Consistency of NNC(Ncutn )) Let (Xi )i∈N be a sequence of points drawn i.i.d. ac-
+cording to some probability measure P on Rd and s : Rd × Rd → R+ be a similarity function which
+is upper bounded by a constant C . Let m := m(n) be the number of seed points used in nearest
+neighbor clustering, a > 0 an arbitrary constant, and (an )n∈N a monotonically decreasing se-
+quence with an → a. Then nearest neighbor clustering using Q := Ncut, Qn := Ncutn , and A
+and An as deﬁned in (3) is weakly consistent if m(n) → ∞ and m2 log n/(n(a − an )2 ) → 0.
+
+4
+
+Proof. We will check that all conditions of Theorem 1 are satisﬁed. First we establish that
+{| cutn (fk ) − cut(fk )| ≤ aε} ∩ {| voln (fk ) − vol(fk )| ≤ aε} ⊂ {| cutn (fk )
+− cut(fk )
+| ≤ 2ε}.
+Applying the McDiarmid inequality to cutn and voln , respectively, we obtain that for all f ∈ eFn
+voln (fk )
+vol(fk )
+(cid:18)
+(cid:19)
+− na2 ε2
+P(| Ncut(f ) − Ncutn (f )| > ε) ≤ 4K exp
+.
+8C 2K 2
+Together with m2 log n/(n(a − an )2 ) → 0 this shows Condition (1) of Theorem 1. The proof of
+Condition (2) is rather technical, but in the end also follows by applying the McDiarmid inequality
+to voln (f ). Condition (3) follows by establishing that for f ∈ F and g ∈ Fn we have
+| Ncut(f ) − Ncut(g)| ≤ 4CK
+a
+,
+In fact, Theorem 1 can be applied to a large variety of clustering objective functions. As examples,
+RatioCut(f ) := PK
+RatioCutn (f ) := PK
+consider ratio cut, within-sum of squares, and the ratio of between- and within-cluster similarity:
+Pn
+PK
+k=1 fk (Xi )kXi − ck,nk2 WSS(f ) := E PK
+cut(fk )
+cutn (fk )
+k=1
+k=1
+BW := PK
+BWn := PK
+Efk (X )
+nk
+k=1 fk (X )kX − ck k2
+WSSn (f ) := 1
+i=1
+n
+:= P
+cut(fk )
+cutn (fk )
+P
+voln (fk )−cutn (fk )
+vol(fk )−cut(fk )
+k=1
+k=1
+i fk (Xi )/n is the fraction of points in the k-th cluster, and ck,n
+Here nk
+i fk (Xi )Xi /(nnk ) and ck := Efk (X )X/Efk (X ) are the empirical and true cluster centers.
+Theorem 3 (Consistency of NNC(RatioCutn ), NNC(WSSn ), and NNC(BWn )) Let fn
+and f ∗ be the empirical and true minimizers of nearest neighbor clustering using RatioCutn ,
+WSSn , or BWn , respectively. Then, under conditions similar to the ones in Theorem 2, we have
+RatioCut(fn ) → RatioCut(f ∗ ), WSS(fn ) → WSS(f ∗ ), and BW(fn ) → BW(f ∗ ) in probabil-
+ity. See von Luxburg et al. (2007) for details.
+
+Ln (f , g).
+
+:=
+
+4
+
+Implementation using branch and bound
+
+It is an obvious question how nearest neighbor clustering can be implemented in a more efﬁcient way
+than simply trying all functions in Fn . Promising candidates are branch and bound methods. They
+are guaranteed to achieve an optimal solution, but in most cases are much more efﬁcient than a naive
+implementation. As an example we introduce a branch and bound algorithm for solving NNC(Ncut)
+for K = 2 clusters. For background reading see Brusco and Stahl (2005). First of all, observe that
+minimizing Ncutn over the nearest neighbor function set Fn is the same as minimizing Ncutm over
+¯s(Zs , Zt ) := P
+all partitions of a contracted data set consisting of m “super-points” Z1 , . . . , Zm (super-point Zi
+contains all data points assigned to the i-th seed point), endowed with the “super-similarity” function
+s(Xi , Xj ). Hence nearest neighbor clustering on the original data set
+Xi∈Zs ,Xj ∈Zt
+with n points can be performed by directly optimizing Ncut on the contracted data set consisting of
+only m super-points. Assume we already determined the labels l1 , . . . , li−1 ∈ {±1} of the ﬁrst i− 1
+super-points. For those points we introduce the sets A = {Z1 , . . . , Zi−1 }, A− := {Zj | j < i, lj =
+−1}, A+ := {Zj | j < i, lj = +1}, for the remaining points the set B = {Zi , . . . , Zm}, and the
+set V := A ∪ B of all points. By default we label all points in B with −1 and, in recursion level
+i, decide about moving Zi to cluster +1. Analogously to the notation fk of the previous section, in
+case K = 2 we can decompose Ncut(f ) = cut(f+1 ) · (1/ vol(f+1 ) + 1/ vol(f−1 )); we call the ﬁrst
+term the “cut term” and the second term the “volume term”. As it is standard in branch and bound
+we have to investigate whether the “branch” of clusterings with the speciﬁc ﬁxed labels on A could
+contain a solution which is better than all the previously considered solutions. We use two criteria
+for this purpose. The ﬁrst one is very simple: assigning at least one point in B to +1 can only
+lead to an improvement if this either decreases the cut term or the volume term of Ncut. Necessary
+conditions for this are maxj≥i ¯s(Zj , A+ ) − ¯s(Zj , A− ) ≥ 0 or vol(A+ ) ≤ vol(V )/2, respectively.
+If neither is satisﬁed, we retract. The second criterion involves a lower bound θl on the Ncut value of
+
+5
+
+Branch and bound algorithm for Ncut: f ∗ = bbncut( ¯S , i, f , θu ){
+1. Set g := f ; set A−, A+, and B as described in the text
+2. // Deal with special cases:
+• If i = m and A− = ∅ then return f .
+• If i = m and A− 6= ∅:
+– Set gi = +1.
+– If Ncut(g) < Ncut(f ) return g, else return f .
+3. // Pruning:
+• If vol(A+ ) > vol(A ∪ B )/2 and maxj≥i (¯s(j, A+ ) − ¯s(j, A− )) ≤ 0 return f .
+• Compute lower bound θl as described in the text.
+• If θl ≥ θu then return f .
+4. // If no pruning possible, recursively call bbncut:
+u := min{Ncut(g), θu }, call g 0 := bbncut( ¯S , g , i + 1, θ 0
+• Set gi = +1, θ 0
+u )
+• Set gi = −1, θ 00
+u }, call g 00 := bbncut( ¯S , g , i + 1, θ 00
+u := min{Ncut(g 0 ), θ 0
+u )
+• If Ncut(g 0 ) ≤ Ncut(g 00 ) then return g 0, else return g 00.
+
+}
+
+Figure 1: Branch and bound algorithm for NNC(Ncut) for K = 2. The algorithm is initially called
+with the super-similarity matrix ¯S , i = 2, f = (+1, −1, . . . , −1), and θu the Ncut value of f .
+
+all solutions in the current branch. It compares θl to an upper bound θu on the optimal Ncut value,
+namely to the Ncut value of the best function we have seen so far. If θl ≥ θu then no improvement
+Using the conventions ¯s(A, B ) = P
+is possible by any clustering in the current branch of the tree, and we retract. To compute θl , assume
+we assign a non-empty set B+ ⊂ B to label +1 and the remaining set B− = B \ B+ to label -1.
+(cid:26)minj≥i s(Zj , A+ )
+Zi∈A,Zj ∈B ¯sij and ¯s(A, ∅) = 0, the cut term is bounded by
+if A− = ∅
+cut(A+ ∪ B+ , A− ∪ B− ) ≥
+¯s(A+ , A− ) + minj≥i ¯s(Zj , A− )
+otherwise.
+The volume term can be maximally decreased in case vol(A+ ) < vol(V )/2, when choosing B+
+such that vol(A+ ∪ B+ ) = vol(A− ∪ B− ) = vol(V )/2. If vol(A+ ) > vol(V )/2, then an increase
+(4/ vol(V )
+of the volume term is unavoidable; this increase is minimal when we move one vertex only to A+ :
+if vol(A+ ) ≤ vol(V )/2
+(vol(A+ ∪ Zj ) vol(A− ∪ B \ Zj )) otherw.
+vol(V )/max
+j≥i
+Combining both bounds we can now deﬁne the lower bound θl as the product of Eq. (4) and (5).
+The entire algorithm is presented in Fig. 1. On top of the basic algorithm one can apply various
+heuristics to improve the retraction behavior and thus the average running time of the algorithm. For
+example, in our experience it is of advantage to sort the super-points by decreasing degree, and from
+one recursion level to the next one alternate between ﬁrst visiting branch gi = 1 and gi = −1.
+
+vol(A−∪B− ) ≥
+1
+
+vol(A+∪B+ ) +
+1
+
+(4)
+
+(5)
+
+5 Experiments
+
+The main point about nearest neighbor clustering is its statistical consistency: for large n it reveals
+an approximately correct clustering. In this section we want to show that it also behaves reason-
+ably on smaller samples. Given an objective function Qn (such as WSS or Ncut) we compare the
+NNC results to heuristics designed to optimize Qn directly (such as k-means or spectral clustering).
+As numeric data sets we used classiﬁcation benchmark data sets from different repositories (UCI
+repository, repository by G. R ¨atsch) and microarray data from Spellman et al. (1998). Moreover, we
+use graph data sets of the internet graph and of biological, social, and political networks: COSIN
+collection, collection by M. Newman, email data by Guimer `a et al. (2003), electrical power network
+by Watts and Strogatz (1998), and protein interaction networks of Jeong et al. (2001) and Tsuda
+et al. (2005). Due to space constraints we focus on the case of constructing K = 2 clusters using
+the objective functions WSS and Ncut. We always set the number m of seed points for NNC to
+m = log n. In case of WSS, we compare the result of the k-means algorithm to the result of NNC
+using the WSS objective function and the Euclidean distance to assign data points to seed points.
+
+6
+
+Numeric
+data sets
+breast-c.
+
+diabetis
+
+german
+
+heart
+
+splice
+
+bcw
+
+ionosph.
+
+pima
+
+cellcycle
+
+WSS
+K -means
+6.95 ± 0.19
+7.12 ± 0.20
+6.62 ± 0.22
+6.72 ± 0.22
+18.26 ± 0.27
+18.35 ± 0.30
+10.65 ± 0.46
+10.75 ± 0.46
+68.99 ± 0.24
+69.03 ± 0.24
+3.97 ± 0.26
+3.98 ± 0.26
+25.72 ± 1.63
+25.76 ± 1.63
+6.62 ± 0.22
+6.73 ± 0.23
+0.78 ± 0.03
+0.78 ± 0.03
+
+NNC
+7.04 ± 0.21
+7.12 ± 0.22
+6.71 ± 0.22
+6.72 ± 0.22
+18.56 ± 0.28
+18.45 ± 0.32
+10.77 ± 0.47
+10.74 ± 0.46
+69.89 ± 0.24
+69.18 ± 0.25
+3.98 ± 0.26
+3.98 ± 0.26
+25.77 ± 1.63
+25.77 ± 1.63
+6.73 ± 0.23
+6.73 ± 0.23
+0.78 ± 0.03
+0.78 ± 0.02
+
+Ncut
+NNC
+SC
+0.09 ± 0.02
+0.11 ± 0.02
+0.22 ± 0.07
+0.21 ± 0.07
+0.03 ± 0.02
+0.03 ± 0.02
+0.04 ± 0.03
+0.05 ± 0.05
+0.02 ± 0.02
+0.02 ± 0.02
+0.03 ± 0.03
+0.04 ± 0.08
+0.18 ± 0.03
+0.17 ± 0.02
+0.28 ± 0.03
+0.30 ± 0.07
+0.44 ± 0.16
+0.36 ± 0.10
+0.66 ± 0.18
+0.58 ± 0.09
+0.02 ± 0.01
+0.02 ± 0.01
+0.04 ± 0.01
+0.08 ± 0.07
+0.06 ± 0.03
+0.04 ± 0.01
+0.14 ± 0.12
+0.12 ± 0.11
+0.03 ± 0.03
+0.03 ± 0.03
+0.09 ± 0.13
+0.05 ± 0.04
+0.12 ± 0.02
+0.10 ± 0.01
+0.16 ± 0.02
+0.15 ± 0.03
+
+Network data
+ecoli.interact
+ecoli.metabol
+helico
+beta3s
+AS-19971108
+AS-19980402
+AS-19980703
+AS-19981002
+AS-19990114
+AS-19990402
+netscience
+polblogs
+power
+email
+yeastProtInt
+protNW1
+protNW2
+protNW3
+protNW4
+
+NNC
+0.06
+0.03
+0.16
+0.00
+0.02
+0.01
+0.02
+0.04
+0.08
+0.11
+0.01
+0.11
+0.00
+0.27
+0.04
+0.00
+0.08
+0.01
+0.03
+
+SC
+0.06
+0.04
+0.16
+0.00
+0.02
+1.00
+0.02
+0.04
+0.05
+0.10
+0.01
+0.11
+0.00
+0.27
+0.06
+0.00
+1.00
+0.80
+0.76
+
+Table 1: Left: Numeric data. Results for K -means algorithm, NNC(WSS) with Euclidean distance;
+spectral clustering (SC); NNC(Ncut) with commute distance. The top line always shows the results
+on the training set, the second line the extended results on the test set. Right: Network data.
+NNC(Ncut) with commute distance and spectral clustering, both trained on the entire graph.
+
+Note that one cannot run K -means on pure network data, which does not provide coordinates. In
+case of Ncut, we use the Gaussian kernel as similarity function on the numeric data sets. The kernel
+width σ is set to the mean distance of a data point to its k-th nearest neighbor. We then build the
+k-nearest neighbor graph (both times using k = ln n). On the network data, we directly use the given
+graph. For both types of data, we use the commute distance on the graph (e.g., Gutman and Xiao,
+2004) as distance function to determine the nearest seed points for NNC.
+In the ﬁrst experiment we compare the values obtained by the different algorithms on the training
+sets. From the numeric data sets we generated z = 40 training sets by subsampling n/2 points.
+On each training set, we repeated all algorithms r = 50 times with different random initializations
+(the seeds in NNC; the centers in K -means; the centers in the K -means post-processing step in
+spectral clustering). Denoting the quality of an individual run of the algorithm by q , we then report
+the values meanz (minr q) ± standarddevz (minr q). For the network data sets we ran spectral
+clustering and NNC on the whole graph. Again we use r = 50 different initializations, and we report
+minr q . All results can be found in Table 1. For both the numeric data sets (left table, top lines) and
+the network data sets (right table) we see that the training performance of NNC is comparable to the
+other algorithms. This is what we had hoped, and we ﬁnd it remarkable as NNC is in fact a very
+simple clustering algorithm.
+In the second experiment we try to measure the amount of overﬁtting induced by the different algo-
+rithms. For each of the numeric data sets we cluster n/2 points, extend the clustering to the other
+n/2 points, and then compute the objective function on the test set. For the extensions we proceed
+in a greedy way: for each test point, we add this test point to the training set and then give it the
+label +1 or -1 that leads to the smaller quality value on the augmented training set. We also tried
+several other extensions suggested in the literature, but the results did not differ much. To compute
+the test error, we then evaluate the quality function on the test set labeled according to the exten-
+sion. For Ncut, we do this based on the k-nearest neighbor graph on the test set only. Note that this
+experiment does not make sense on the network data, as there is no default procedure to construct
+the subgraphs for training and testing. The results on the numeric data sets are reported in Table 1
+(left table, bottom lines). We see that NNC performs roughly comparably to the other algorithms.
+This is not really what we wanted to obtain, our hope was that NNC obtains better test values as it is
+less prone to overﬁtting. The most likely explanation is that both K -means and spectral clustering
+have already reasonably good extension properties. This can be due to the fact that as NNC, both
+algorithms consider only a certain subclass of all partitions: Voronoi partitions for K -means, and
+partitions induced by eigenvectors for spectral clustering. See below for more discussion.
+
+7
+
+6 Discussion
+In this paper we investigate clustering algorithms which minimize quality functions. Our main point
+is that, as soon as we require statistical consistency, we have to work with “small” function classes
+Fn . If we even choose Fn to be polynomial, then all problems due to NP hardness of discrete op-
+timization problems formally disappear as the remaining optimization problems become inherently
+polynomial. From a practical point of view, the approach of using a restricted function class Fn can
+be seen as a more controlled way of simplifying NP hard optimization problems than the standard
+approaches of local optimization or relaxation. Carefully choosing the function class Fn such that
+overly complex target functions are excluded, we can guarantee to pick the best out of all remaining
+target functions. This strategy circumvents the problem that solutions of local optimization or relax-
+ation heuristics can be arbitrarily far away from the optimal solution.
+The generic clustering algorithm we studied in this article is nearest neighbor clustering, which pro-
+duces clusterings that are constant on small local neighborhoods. We have proved that this algorithm
+is statistically consistent for a large variety of popular clustering objective functions. Thus, as op-
+posed to other clustering algorithms such as the K -means algorithm or spectral clustering, nearest
+neighbor clustering is guaranteed to converge to a minimizer of the true global optimum on the
+underlying space. This statement is much stronger than the results already known for K -means or
+spectral clustering. For K -means it has been proved that the global minimizer of the WSS objec-
+tive function on the sample converges to a global minimizer on the underlying space (e.g., Pollard,
+1981). However, as the standard K -means algorithm only discovers a local optimum on the discrete
+sample, this result does not apply to the algorithm used in practice. A related effect happens for
+spectral clustering, which is a relaxation attempting to minimize Ncut (see von Luxburg (2007) for
+a tutorial). It has been shown that under certain conditions the solution of the relaxed problem on
+the ﬁnite sample converges to some limit clustering (e.g., von Luxburg et al., to appear). However,
+it has been conjectured that this limit clustering is not necessarily the optimizer of the Ncut objec-
+tive function. So for both cases, our consistency results represent an improvement: our algorithm
+provably converges to the true limit minimizer of K -means or Ncut, respectively. The same result
+also holds for a large number of alternative objective functions used for clustering.
+
+References
+M. Brusco and S. Stahl. Branch-and-Bound Applications in Combinatorial Data Analysis. Springer, 2005.
+S. Bubeck and U. von Luxburg. Overﬁtting of clustering and how to avoid it. Preprint, 2007.
+Data repository by G. R ¨atsch. http://ida.ﬁrst.fraunhofer.de/projects/bench/benchmarks.htm.
+Data repository by M. Newman. http://www-personal.umich.edu/˜mejn/netdata/.
+Data repository by UCI. http://www.ics.uci.edu/˜mlearn/MLRepository.html.
+Data repository COSIN. http://151.100.123.37/data.html.
+L. Devroye, L. Gy ¨orﬁ, and G. Lugosi. A Probabilistic Theory of Pattern Recognition. Springer, 1996.
+J. Fritz. Distribution-free exponential error bound for nearest neighbor pattern classiﬁcation. IEEE Trans. Inf.
+Th., 21(5):552 – 557, 1975.
+R. Guimer `a, L. Danon, A. D´ıaz-Guilera, F. Giralt, and A. Arenas. Self-similar community structure in a network
+of human interactions. Phys. Rev. E, 68(6):065103, 2003.
+I. Gutman and W. Xiao. Generalized inverse of the Laplacian matrix and some applications. Bulletin de
+l’Academie Serbe des Sciences at des Arts (Cl. Math. Natur.), 129:15 – 23, 2004.
+H. Jeong, S. Mason, A. Barabasi, and Z. Oltvai. Centrality and lethality of protein networks. Nature, 411:
+41 – 42, 2001.
+D. Pollard. Strong consistency of k-means clustering. Annals of Statistics, 9(1):135 – 140, 1981.
+P. Spellman, G. Sherlock, M. Zhang, V. Iyer, M. Anders, M. Eisen, P. Brown, D. Botstein, and B. Futcher. Com-
+prehensive identiﬁcation of cell cycle-regulated genes of the yeast saccharomyces cerevisiae by microarray
+hybridization. Mol Biol Cell, 9(12):3273–97, 1998.
+K. Tsuda, H. Shin, and B. Sch ¨olkopf. Fast protein classiﬁcation with multiple networks. Bioinformatics, 21
+(Supplement 1):ii59 – ii65, 2005.
+V. Vapnik. The Nature of Statistical Learning Theory. Springer, 1995.
+U. von Luxburg. A tutorial on spectral clustering. Statistics and Computing, 17(4), 2007.
+U. von Luxburg, S. Bubeck, S. Jegelka, and M. Kaufmann. Supplementary material to ”Consistent minimization
+of clustering objective functions”, 2007. http://www.tuebingen.mpg.de/˜ule.
+U. von Luxburg, M. Belkin, and O. Bousquet. Consistency of spectral clustering. Annals of Statistics, to appear.
+D. Watts and S. Strogatz. Collective dynamics of small world networks. Nature, 393:440–442, 1998.
+
+8
+
+

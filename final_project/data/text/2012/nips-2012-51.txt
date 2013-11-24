@@ -1,0 +1,981 @@
+Multiplicative Forests for Continuous-Time Processes
+
+Jeremy C. Weiss
+University of Wisconsin
+Madison, WI 53706, USA
+jcweiss@cs.wisc.edu
+
+Sriraam Natarajan
+Wake Forest University
+Winston Salem, NC 27157, USA
+snataraj@wakehealth.edu
+
+David Page
+University of Wisconsin
+Madison, WI 53706, USA
+page@biostat.wisc.edu
+
+Abstract
+
+Learning temporal dependencies between variables over continuous time is an
+important and challenging task. Continuous-time Bayesian networks effectively
+model such processes but are limited by the number of conditional intensity matri-
+ces, which grows exponentially in the number of parents per variable. We develop
+a partition-based representation using regression trees and forests whose param-
+eter spaces grow linearly in the number of node splits. Using a multiplicative
+assumption we show how to update the forest likelihood in closed form, produc-
+ing efﬁcient model updates. Our results show multiplicativ e forests can be learned
+from few temporal trajectories with large gains in performance and scalability.
+
+1 Introduction
+
+The modeling of temporal dependencies is an important and challenging task with applications in
+ﬁelds that use forecasting or retrospective analysis, such as ﬁnance, biomedicine, and anomaly de-
+tection. While analyses over time series data with ﬁxed, dis crete time intervals are well studied, as
+for example in [1], there are domains in which discretizing the time leads to intervals where no ob-
+servations are made, producing “missing data ” in those peri ods, or there is no natural discretization
+available and so the time series assumptions are restrictive. Of note, experiments in previous work
+provide evidence that coercing continuous-time data into time series and conducting time series
+analysis is less effective than learning models built with continuous-time data in mind [2].
+
+We investigate a subset of continuous-time models: probabilistic models over ﬁnite event spaces
+across continuous time. The prevailing model in this ﬁeld is
+the continuous-time Markov process
+(CTMP), a model that provides an initial distribution over states and a rate matrix parameterizing the
+rate of transitioning between states. However, this model does not scale for the case where a CTMP
+state is a joint state over many variable states. Because the number of joint states is exponential
+in the number of variables, the size of the CTMP rate matrix grows exponentially in the number
+of variables. Continuous-time Bayesian networks (CTBNs), a family of CTMPs with a factored
+representation, encode rate matrices for each variable and the dependencies among variables [3].
+Figure 1 shows a complete trajectory, i.e., a timeline where the state of each variable is known for
+all times t, for a CTMP with four joint states (a, b), (a, B ), (A, b), and (A, B ) factorized into two
+binary CTBN variables α and β (with states a and A, and b and B , respectively).
+
+Previous work on CTBNs includes several approaches to performing CTBN inference [4, 5, 6, 7, 8]
+and learning [2, 3]. Brie ﬂy, CTBNs do not admit exact inferen ce without transformation to the
+exponential-size CTMP. Approximate inference methods including expectation propagation [4],
+mean ﬁeld [6], importance sampling-based methods [7], and M CMC [8] have been applied, and
+while these methods have helped mitigate the inference problem, inference in large networks re-
+mains a challenge. CTBN learning involves parameter learning using sufﬁcient statistics (e.g. num-
+bers of transitions M and durations T in Figure 1) and structure learning over a directed (possibly
+cyclic) graph over the variables to maximize a penalized likelihood score. Our work addresses learn-
+ing in a generalized framework to which the inference methods mentioned above can be extended.
+
+1
+
+In this work we introduce a generalization of CTBNs: partition-based CTBNs. Partition-based
+CTBNs remove the restriction used in CTBNs of storing one rate matrix per parents setting for
+every variable. Instead partition-based CTBNs de ﬁne parti tions over the joint state space and de ﬁne
+the transition rate of each variable to be dependent on the membership of the current joint state
+to an element (part) of a partition. As an example, suppose we have partition P composed of
+parts p1 = {(a, b), (A, b)} and p2 = {(a, B ), (A, B )}. Then the transition into si from joint state
+(A, B ) in Figure 1 would be parameterized by transition rate qa|p2 . Partition-based CTBNs store
+one transition rate per part, as opposed to one transition rate matrix per parents setting. Later we
+will show that, for a particular choice of partitions, a partition-based CTBN is equivalent to a CTBN.
+However, the more general framework offers other choices of partitions which may be more suitable
+for learning from data.
+
+Partition-based CTBNs avoid one limitation of
+CTBNs:
+that the model size is necessarily ex-
+ponential in the maximum number of parents per
+variable. For networks with sparse incoming con-
+nections, this issue is not apparent. However,
+in many real domains, a variable’s transition rate
+may be a function of many variables.
+
+Given the framework of partition-based CTBNs,
+we need to provide a way to determine useful
+partitions. Thus, we introduce partition-based
+CTBN learning using regression tree modiﬁca-
+tions in place of CTBN learning using graph op-
+erators of adding, reversing, and deleting edges.
+In the spirit of context-speciﬁc independence [9],
+we can view tree learning as a method for learn-
+ing compact partition-based dependencies. How-
+ever,
+tree learning induces recursive subparti-
+tions, which limits their ability to partition the
+joint state space. We therefore introduce mul-
+tiplicative forests for CTBNs, which allow the
+model to represent up to an exponential number
+of transition rates with parameters still linear in
+the number of splits.
+
+A
+
+a
+
+B
+
+b
+
+X
+
+si
+
+ti
+
+Ma|B
+Ta|B
+
+Mb
+Tb
+
+Time
+
+Figure 1: Example of a complete trajectory in
+a two-node CTBN. The arrows show the tran-
+sitions and time intervals that are aggregated to
+compute selected sufﬁcient statistics (M’s and
+T’s). A and a denote two states for one variable,
+and B and b two states for a second variable.
+
+Following canonical tree learning methods, we perform greedy tree and forest learning using it-
+erative structure modiﬁcations. We show that the partition -based change in log likelihood can be
+calculated efﬁciently in closed form using a multiplicativ e assumption. We also show that using
+multiplicative forests, we can efﬁciently calculate the ML parameters. Thus, we can calculate the
+maximum change in log likelihood for a forest modiﬁcation pr oposal, which gives us the best itera-
+tive update to the forest model.
+
+Finally, we conduct experiments to compare CTBNs, regression tree CTBNs (treeCTBNs) and mul-
+tiplicative forest CTBNs (mfCTBNs) on three data sets. Our hypothesis is twofold: ﬁrst, that learn-
+ing treeCTBNs and mfCTBNs will scale better towards large domains because of their compact
+model structures, and second, that mfCTBNs will outperform both CTBNs and treeCTBNs with
+fewer data points because of their ability to capture multiplicative dependencies.
+
+The rest of the paper is organized as follows: in Section 2 we provide background on CTBNs. In
+Section 3 we present partition-based CTBNs, show that they subsume CTBNs and de ﬁne the parti-
+tions that tree and forest structures induce. We also describe theoretical advantages of using forests
+for learning and how to learn these models efﬁciently. We pre sent results in Section 4 showing that
+forest CTBNs are scalable to large state spaces and learn better than CTBNs, from fewer examples
+and in less time. Finally, in Sections 5 and 6 we identify connections to functional gradient boost-
+ing and related continuous-time processes and discuss how our work addresses one limitation that
+prevents CTBNs from ﬁnding widespread use.
+
+2
+
+2 Background
+
+CTBNs are probabilistic graphical models that capture dependencies between variables over con-
+tinuous time. A CTBN is de ﬁned by 1) a distribution for the ini tial state over variables X given
+by a Bayesian Network B , and 2) a directed (possibly cyclic) graph over variables X with a set of
+Conditional Intensity Matrices (CIMs) for each variable X ∈ X that hold the rates (intensities) qx|u
+of variable transitions given their parents UX in the directed graph. Here a CTBN variable X ∈ X
+has states x1 , . . . , xk , and there is an intensity qx|u for every state x ∈ X given an instantiation
+over its parents u ∈ UX . The intensity corresponds to the rate of transitioning out of state x; the
+probability density function for staying in state x given an instantiation of parents u is qx|ue−qx|u t .
+Given a transition, X moves to some other state x0 with probability Θxx0 |u . Taking the product over
+intervals bounded by single transitions, we obtain the CTBN trajectory likelihood:
+Mxx0 |u
+Mx|u
+x|u e−qx|uTx|u Y
+Y
+Y
+Y
+q
+xx0 |u
+x0 6=x
+u∈UX
+x∈X
+X ∈X
+where the Mx|u and Mxx0 |u are the sufﬁcient statistics indicating the number of trans itions out of
+state x (total, and to x0 , respectively), and the Tx|u are the sufﬁcient statistics for the amount of time
+spent in x given the parents are in state u.
+
+Θ
+
+3 Partition-based CTBNs
+
+Here we de ﬁne partition-based CTBNs, an alternative framew ork for determining variable transition
+rates. We give the syntax and semantics of our model, providing the generative model and likelihood
+formulation. We then show that CTBNs are one instance in our framework. Next, we introduce
+regression trees and multiplicative forests and describe the partitions they induce, which are then
+used in the partition-based CTBN framework. Finally, we discuss the advantages of using trees and
+forests in terms of learning compact models efﬁciently.
+
+Let X be a ﬁnite set of discrete variables X of size n, with each variable X having a discrete
+set of states {x1 , x2 , . . . , xk }, where k may differ for each variable. We de ﬁne a joint state
+s = {x1 , x2 , . . . , xn } over X where the subscript indicates the variable index. We also de ﬁne
+the partition space P = X 1 . We will shortly de ﬁne set partitions P over P , composed of disjoint
+parts p, each of which holds a set of elements s.
+
+Next we de ﬁne the dynamics of the model, which form a continuo us-time process over X . Each
+variable X transitions among its states with rate parameter qx0 |s for entering state x0 given the joint
+state s2 . This rate parameter (called an intensity) parameterizes the exponential distribution for
+transitioning into x0 , given by the pdf: p(x0 , s, t) = qx0 |se−qx0 |s t for time t ∈ [0, ∞).
+A partition-based CTBN has a collection of set partitions P over P , one Px0 for every variable state
+x0 . For shorthand, we will often denote p = Px0 (s) to indicate the part p of partition Px0 to which
+state s belongs. We de ﬁne the intensity parameter as qx0 |s = qx0 |p for all s ∈ p. Note that this ﬁxes
+this intensity to be the same for every s ∈ p, and also note that the set of parts p covers P . The pdf
+for transitioning is given by p(x0 , s, t) = p(x0 , Px0 (s), t) = qx0 |pe−qx0 |p t for all s in p.
+Now we are ready to de ﬁne the partition-based CTBN model. A pa rtition-based CTBN model M is
+composed of a distribution over the initial state of our variables, de ﬁned by a Bayesian network B ,
+and a set of partitions Px0 for every variable state x0 with corresponding sets of intensities qx0 |p .
+The partition-based CTBN provides a generative framework for producing a trajectory z de ﬁned by a
+sequence of (state, time) pairs (si , ti ). Given an initial state s0 , transition times are sampled for each
+variable state x0 according to p(x0 , Px0 (s0 ), t). The next state is selected based on the transition to
+the x0 with the shortest time, after which the transition times are resampled according to p(x0 , si , t).
+Due to the memoryless property of exponential distributions, no resampling of the transition time
+for x0 is needed if p(x0 , si , t) = p(x0 , si−1 , t). The trajectory terminates when all sampled transition
+times exceed a speciﬁed ending time.
+
+1Note we can generalize this to larger spaces P = R × X , where R is an external state space as in [10].
+but for our analysis we restrict R to be a single element r , i.e. P ∼
+= X .
+2Of note, partition-based CTBNs are modeling the intensity of transitioning to the recipient state x
+than from the donor state x because we are more often interested in the causes of entering a state.
+
+0 , rather
+
+3
+
+Given a trajectory z , we can also de ﬁne the model likelihood. For each interval
+ti , the joint state
+remains unchanged, and then one variable transitions into x0 . The likelihood given the interval is:
+qx0 |si−1 QX Qx∈X e−qx|si−1 ti , i.e., the product of the probability density for x0 and the probability
+that no other variable transitions before ti . Taking the product over all intervals in z , we get the
+model likelihood:
+
+Y
+Y
+x0∈X
+X ∈X
+where Mx0 |s is the number of transitions into x0 from state s, and Ts is the total duration spent in
+s. Combining terms based on the membership of s to p and de ﬁning Mx0 |p = Ps∈p Mx0 |s and
+Tp = Ps∈p Ts , we get:
+
+Y
+s
+
+Mx0 |s
+x0 |s e−qx0 |s Ts
+q
+
+(1)
+
+Eq.(1) = Y
+X ∈X
+
+Y
+x0∈X
+
+Y
+p∈Px0
+
+Mx0 |p
+x0 |p e−qx0 |p Tp
+q
+
+3.1 CTBN as a partition-based CTBN
+
+Here we show that CTBNs can be viewed as an instance of partition-based CTBNs. Each variable
+X is given a parent set UX , and the transition intensities qx|u are recorded for leaving donor states
+x given the current setting of the parents u ∈ UX . The CTBN likelihood can be shown to be:
+
+Y
+X ∈X
+
+Y
+u∈UX
+as in [5], where qxx0 |u and Mxx0 |u denote the intensity and number of transitions from state x to
+state x0 given parents setting u, and Px0 6=x qxx0 |u = qx|u . Rearranging the product from equation
+2, we achieve a likelihood in terms of recipient states x0 :
+
+e−qx|uTx|u Y
+x0 6=x
+
+Y
+x∈X
+
+Mxx0 |u
+q
+xx0 |u
+
+(2)
+
+Eq. (2) = Y
+X ∈X
+= Y
+X ∈X
+
+Y
+x∈X
+Y
+x0∈X
+
+Y
+u∈UX
+Y
+p∈Px0
+
+Mxx0 |u
+xx0 |u e−qxx0 |u Tx|u
+q
+
+Y
+x0 6=x
+Mx0 |p
+x0 |p e−qx0 |p Tp
+q
+
+(3)
+
+where we de ﬁne p as {x}× {u}× (X \ (X ×UX )) in each partition Px0 , and likewise: qx0 |p = qxx0 |u ,
+Mx0 |p = Mxx0 |u , and Tp = Tx|u . Thus, CTBNs are one instance of partition-based CTBNs, with
+partitions corresponding to a speciﬁed donor state x and parents setting u.
+
+3.2 Tree and forest partitions
+
+Trees and forests induce partitions over a space de ﬁned by th e set of possible split criteria [11]. Here
+we will de ﬁne the Conditional Intensity Trees (CITs): regre ssion trees that determine the intensities
+qx0 |p by inducing a partition over P . Similarly, we will de ﬁne Conditional Intensity Forests (C IFs),
+where tree intensities are named intensity factors whose product determines qx0 |p . An example of a
+CIF, composed of a collection of CITs, is shown later in the experiment results in Figure 4.
+Formally, a Conditional Intensity Tree (CIT) fx0 is a directed tree structure on a graph G(V , E ) with
+nodes V and edges E (Vi , Vj ). Internal nodes Vi of the tree hold splits σVi = (πVi , {E (Vi , ·)})
+composed of surjective maps πVi : s 7→ E (Vi , Vj ) and lists of the outgoing edges. The maps π
+induce partitions over P and endow each outgoing edge E (Vi , Vj ) with part pVj . External nodes
+l , or leaves, hold non-negative real values qCIT
+x0 |p called intensities. A path ρ from the root to a leaf
+induces a part p, which is the intersection of the parts on the edges of the path: p = TE (Vi ,Vj )∈ρ pVj .
+The parts corresponding to paths of a CIT form a partition over P , which can be shown easily using
+induction and the fact that the maps πVi induce disjoint parts pVj that cover P .
+A Conditional Intensity Forest (CIF) Fx0 is a set of CITs {fx0 }. Because the parts of each CIT
+form a partition, a CIF induces a joint partition over P where a part p is the set of states s that have
+the same paths through all CITs. Finally, a CIF produces intensities from joint states by taking the
+x0 |pCIF = Qfx0 qCIT
+product over the intensity factors from each CIT: qCIF
+x0 |pCIT .
+
+4
+
+Using regression trees and forests can greatly reduce the number of model parameters. In CTBNs,
+the number of parameters grows exponentially in the number of parents per node. In tree and forest
+CTBNs, the number of parameters may be linear in the number of parents per node, exploiting the
+efﬁciency of using partitions. Notably, however, tree CTBN s are limited to having one intensity
+per parameter. In forest CTBNs, the number of intensities can be exponential in the number of
+parameters. Thus, the forest model has much greater potential expressivity per parameter than the
+other models. We quantify these differences in the Supplementary Materials at our website.
+
+3.3 Forest CTBN learning
+
+Here we discuss the reasoning for using the multiplicative assumption and derive the changes in like-
+lihood given modiﬁcations to the forest structure. Previou s forests learners have used an additive
+assumption, e.g. averaging and aggregating, thereby taking advantage of properties of ensembles
+[12, 13]. However, if we take the sum over the intensity factors from each tree, there are no direct
+methods for calculating the change in likelihood aside from calculating the likelihood before and af-
+ter a forest modiﬁcation, which would require scanning the f ull data once per modiﬁcation proposal.
+Furthermore, summing intensity factors could lead to intensities outside the valid domain [0, ∞).
+Instead we use a multiplicative assumption since it gives us the correct range over intensities. As we
+show below, using the multiplicative assumption also has the advantage that it is easy to compute
+the change in log likelihood with changes in forest structure. Consider a partition-based CTBN
+M = (B , {Fx0 }) where the partitions Px0 and intensities qx0 |p are given by the CIFs {Fx0 }. We
+focus on change in forest structure for one state x0 ∈ X and remove x0 from the subscript notation
+for simplicity. Given a current forest structure F and its partition P , we formulate the change in
+likelihood by adding a new CIT f 0 and its partition P 0 . One example of f 0 is a new a one-split stub.
+Another example of f 0 is a tree copied to have the same structure as a CIT f in F with all intensity
+factors set to one, except at one leaf node where a split is added. This is equivalent to adding a split
+to f . We denote ˆP as the joint partition of P and P 0 and parts ˆp ∈ ˆP , p ∈ P , and p0 ∈ P 0 . We
+consider the change in log likelihood ∆LL given the new and old models:
+
+Mp log qp − qpTp )
+
+M ˆp log q ˆp − q ˆpT ˆp ) − (X
+p
+M ˆp (log qp0 + log qp ) − q ˆpT ˆp ) − (X
+p
+
+Mp log qp − qpTp )
+
+qpTp
+
+M ˆp log qp0 − q ˆpT ˆp ) + X
+p
+q ˆpT ˆp + X
+p
+
+Mp0 log qp0 − X
+ˆp
+
+∆LL = (X
+ˆp
+= (X
+ˆp
+= (X
+ˆp
+= X
+p0
+
+qpTp
+
+(4)
+
+We make use of the multiplicative assumption that q ˆp = qp0 qp and Pp Mp = Pp0 Mp0 = P ˆp M ˆp
+to arrive at equation 4. The ﬁrst and third terms are easy to co mpute given the old intensities and
+new intensity factors. The second term is slightly more complicated:
+
+X
+ˆp
+
+q ˆpT ˆp = X
+ˆp
+
+qp0 qpT ˆp = X
+p0
+
+qp0 X
+ˆp∼p0
+
+qpT ˆp
+
+We introduce the notation ˆp ∼ p0 to denote the parts ˆp that correspond to the part p0 . The second
+term is a summation over parts ˆp; we have simply grouped together terms by membership in p0 .
+
+The number of parts in the joint partition set ˆP can be exponentially large, but the only remaining
+dependency on the joint partition space in the change in log likelihood is the term P ˆp∼p0 qpT ˆp .
+We can keep track of this value as we progress through the trajectories, so the actual time cost is
+linear in the number of trajectory intervals. Thinking of intensities q as rates, and given durations
+T , we observe that the second and third terms in equation 4 are expected numbers of transitions:
+E ˆp = P ˆp q ˆpT ˆp and Ep = Pp qpTp . We additionally de ﬁne Ep0 = P ˆp∼p0 qpT ˆp . Speciﬁcally, the
+expectations Ep0 and Ep are the expected number of transitions in part p0 and p using the old model
+intensities, respectively, whereas E ˆp is the expected number of transitions using the new intensities.
+
+5
+
+3.4 Maximum-likelihood parameters
+
+The change in log likelihood is dependent on the intensity factor values {qp0 } we choose for the new
+partition. We calculate the maximum likelihood parameters by setting the derivative with respect to
+Mp0
+Mp0
+these factors to zero to get qp0 =
+. Following the derivation in [2], we assign
+=
+P ˆp∼p0 qp T ˆp
+Ep0
+priors to the sufﬁcient statistics calculations. Note, how ever, that the priors affect the multiplicative
+intensity factors, so a tree may split on the same partition set twice to get a stronger effect on the
+intensity, with the possible risk of undesirable over ﬁttin g.
+
+3.5 Forest implementation
+
+We use greedy likelihood maximization steps to learn multiplicative forests (mfCTBNs). Each itera-
+tion requires repeating three steps: (re)initialization, sufﬁcient statistics updates, and model updates.
+Initially we are given a blank forest Fx0 per state x0 containing a blank tree fx0 , that is, a single root
+node acting as a leaf with an intensity factor of one. We also are given sets of possible splits {σ} and
+a penalty function κ(|Z |, |M|) to penalize increased model complexity. First, for every leaf l in M,
+we (re)initialize the sufﬁcient statistics Ml and El in M, as well as sufﬁcient statistics for potential
+forest modiﬁcations: Ml,σ , El,σ , ∀l, σ . Then, we traverse each of our trajectories z ∈ Z to update
+each leaf. For every (state, duration) pair (si , ti ), where ti is the time spent in state si−1 before the
+transition to si , we update the sufﬁcient statistics that compose equation 4 . Finally, we compute the
+change in likelihood for possible forest modiﬁcations, and choose the modiﬁcation with the greatest
+score. If this score is greater than the cost of the additional model complexity, κ, we accept the
+modiﬁcation. We replace the selected leaf with a branch node split upon the selected σ . The new
+leaf intensity factors are the product of the old intensity (factor) ql and the intensity factor qp0 .
+Unlike most forest learning algorithms, mfCTBNs learn trees neither in series nor in parallel. No-
+tably, the best split is determined solely by the change in log likelihood, regardless of the tree to
+which it belongs. If it belongs to the blank tree at the end of the forest, that tree produces non-trivial
+factors and a new blank tree is appended to the forest. In this way, as mfCTBN learns, it automat-
+ically determines the forest size and tree depth according to the evidence in the data. We provide
+code and Supplementary Materials at our website.
+
+4 Experiments
+
+smoking
+
+glucose level
+
+gender
+
+bmi
+
+age
+
+H D L
+
+blood pressure
+
+We evaluate our tree learning and forest learn-
+ing algorithms on samples from three models.
+The ﬁrst model, which we call “Nodelman ”,
+is the benchmark model developed in [3, 2].
+The second is a simpliﬁed cardiovascular health
+model we call “CV health ” shown in Figure
+2. The cause of pathologies in this ﬁeld are
+known to be multifactorial [14]. For example, it
+has been well-established that independent pos-
+itive risk factors for atherosclerosis include be-
+ing male, a smoker, in old age, having high glu-
+cose, high BMI, and high blood pressure. The
+primary tool for prediction in this ﬁeld is risk
+factor analysis, where transformations over the
+product of risk factor values determines overall
+risk. The third model we call “S100 ” is a large-
+scale model with one hundred binary variables.
+Parents are determined by the binomial distri-
+bution B (0.05, 200) over variable states, with
+intensity factor ratios of 1 : 0.5. Our goal is to show that treeCTBNs and mfCTBNs can scale to
+much larger model types and still learn effectively. In our experiments we set the potential splits
+{σ} to be the set of binary splits determined by indicators for each variable state x0 . We set κ to be
+zero and terminate model learning when the tune set likelihood begins to decrease.
+
+Figure 2: The cardiovascular health (CV health)
+structure used in experiments.
+
+abnormal heart electrophysiology
+
+thrombolytic therapy
+
+troponin levels
+
+chest pain
+
+stroke
+
+M I
+
+atherosclerosis
+
+arrhythmia
+
+6
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+L
+ 
+g
+o
+l
+
+0
+2
+−
+
+0
+3
+−
+
+0
+4
+−
+
+0
+5
+−
+
+0
+6
+−
+
+0
+7
+−
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+L
+ 
+g
+o
+l
+
+0
+2
+−
+
+0
+4
+−
+
+0
+6
+−
+
+0
+8
+−
+
+0
+0
+1
+−
+
+Truth
+TreeCTBN
+mfCTBN
+N−CTBN
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+L
+ 
+g
+o
+l
+
+0
+
+0
+5
+−
+
+0
+0
+1
+−
+
+0
+5
+1
+−
+
+0
+0
+2
+−
+
+Truth
+TreeCTBN
+mfCTBN
+N−CTBN
+
+Truth
+TreeCTBN
+mfCTBN
+
+10
+
+1000
+100
+Trajectories
+
+10000
+
+10
+
+1000
+100
+Trajectories
+
+10000
+
+10
+
+1000
+100
+Trajectories
+
+10000
+
+Figure 3: Average testing set log likelihood varying the training set size for each model: Nodelman
+(left), CV health (center), and S100 (right). N-CTBN averages are omitted on the S100 model as
+one third of the runs did not terminate.
+
+We compare our algorithms against the learning algorithm presented in [2] using code from [15],
+which we will call N-CTBN. N-CTBNs perform a greedy Bayesian structure search, adding, remov-
+ing, or reversing arcs to maximize the Bayesian information criterion score, a tradeoff between the
+likelihood and a combination of parameter and data size. Our algorithms use a tune set by sieving
+off one quarter of the original training set trajectories. We use the same Laplace prior as used in
+[15]. We use the same training and testing set for each algorithm. The trajectories are sampled
+from the ground truth models for durations 10, 10 and 2 units of time, respectively. We evaluate the
+three models using the testing set average log likelihood. To provide an experimental comparison
+of model performance, we choose to analyze the p-values for a two-sided paired t-test for the aver-
+age log likelihoods between mfCTBNs and N-CTBNs for each training set size. The results come
+from testing sets with one thousand sampled trajectories. Additional evaluation criteria assessing
+structural recovery were also analyzed and are provided in the Supplementary Materials.
+
+4.1 Results
+
+Figure 3 (left) shows that the mfCTBN substantially outperforms both the treeCTBN and the N-
+CTBN on the Nodelman model in terms of average log likelihood. This effect is most pronounced
+with relatively few trajectories, suggesting that mfCTBNs are able to learn more quickly than either
+of the other models.
+
+We observe an even larger difference between the mfCTBN and the other models in the CV health
+model in Figure 3 (center). With relatively few trajectories, the mfCTBN is able to identify the
+multifactorial causes as observed in the high log likelihood and structural recall. For runs with
+fewer than 500 training set trajectories, many N-CTBN models have nodes including every other
+node as a parent, requiring the estimation of about 300,000 parameters on average, shown in the
+Supplementary Materials. Figure 3 (right) shows that mfCTBNs can effectively learn dense models
+an order of magnitude larger than those previously studied. The expected number of parents per node
+in the S100 model is approximately 20. In order to exactly reconstruct the S100 model, a traditional
+CTBN would then need to estimate 221 intensity values. For many applications, variables need
+more parents than this. We observe that N-CTBNs have difﬁcul ty scaling to models of this size.
+The N-CTBN learning time on this data set ranges from 4 hours to more than 3 days; runs were
+stopped if they had not terminated in that time. About one third of the runs failed to complete,
+and the runs that did complete suggested that N-CTBN performed poorly, similar to the differences
+observed in the CV health experiment. We suspect the algorithm may be similarly building nodes
+with many parents; the model might need to estimate 2100 parameters, a bottleneck at minimum. By
+comparison, all runs using treeCTBNs and mfCTBNs completed in less than 1 hour. The averaged
+results of N-CTBNs on the S100 model are omitted accordingly.
+
+We tested for signiﬁcant differences in the average log like lihoods between the N-CTBN and
+mfCTBN learning algorithms. In the Nodelman model, the differences were signiﬁcant at level
+of p =1e-10 for sizes 10 through 500, p = 0.05 for sizes 1000 and 5000, and not signiﬁcant for size
+10000. In the CV health model, the differences were signiﬁca nt at p =1e-9 for all training set sizes.
+We were unable to generate a t-test comparison of the S100 model.
+
+7
+
+Normal BP
+
+Youth
+
+Normal weight
+
+<50% atherosclerotic
+
+Normal weight
+
+Hypertensive
+
+Normal glucose
+
+<50% atherosclerotic
+
+True
+
+False
+
+False
+
+True
+
+True
+
+False
+
+True
+
+False
+
+False
+
+True
+
+False
+
+True
+
+True
+
+False
+
+True
+
+False
+
+  1.0
+
+  2.0
+
+  1.0
+
+ 0.10
+
+  1.0
+
+  2.0
+
+0.010
+
+  1.0
+
+  1.3
+
+ 0.68
+
+0.020
+
+Female
+
+ 0.36
+
+Hypertensive
+
+0.0080
+
+  1.4
+
+False
+
+True
+
+True
+
+False
+
+Frequent smoker
+
+Normal glucose
+
+Male
+
+Frequent smoker
+
+ 0.13
+
+  1.1
+
+  3.5
+
+Youth
+
+True
+
+False
+
+False
+
+True
+
+False
+
+True
+
+  2.0
+
+  1.0
+
+  2.0
+
+  1.0
+
+0.020
+
+0.050
+
+False
+
+True
+
+ 0.18
+
+ 0.38
+
+True
+
+False
+
+ 0.12
+
+  1.1
+
+Figure 4: Ground truth (left) and mfCTBN forest learnt from 1000 trajectories (right) for inten-
+sity/rate of developing severe atherosclerosis.
+
+Figure 4 shows the ground truth forest and the mfCTBN forest learned for the “severe atheroscle-
+rosis” state in the CV health model. To calculate the intensi ty of transitioning into this state, we
+identify the leaf in each forest that matches the current state and take the product of their intensity
+factors. Figure 4 (right) shows the recovery of the correct dependencies in approximately the right
+ratios. Full forest models can be found in the Supplementary Materials.
+
+5 Related Work
+
+We discuss the relationships between mfCTBNs and related work in two areas: forest learning and
+continuous-time processes. Forest learning with a multiplicative assumption is equivalent to forest
+learning in the log space with an additive assumption and exponentiating the result. This suggests
+that our method shares similarities with functional gradient boosting (FGB), a leading method for
+constructing regression forests, run in the log space [16]. However, our method is different in its
+direct use of a likelihood-based objective function and in its ability to modify any tree in the forest at
+any iteration. Further discussion comparing the methods is provided in the Supplementary Materials.
+
+Several other works that model variable dependencies over continuous time also exist. Poisson pro-
+cess networks and cascades model variable dependencies and event rates [17, 18]. Perhaps the most
+closely related work, piecewise-constant conditional intensity models (PCIMs), reframes the con-
+cept of a factored CTMP to allow learning over arbitrary basis state functions with trees, possibly
+piecewise over time [10]. These models focus on the “positiv e class”, i.e. the observation or count
+of observations of an event. The trouble with this is that the data used to learn the model may be in-
+complete. Given a timeline, we receive all observations of events but not necessarily all occurrences
+of the events, and we would like to include this uncertainty in our model. For Poisson processes in
+particular, the representation of the “negative ” class is m issing, when in some cases it is the absent
+state of a variable that triggers a process, as for example in the case of gene expression networks and
+negative regulation. Finally other related work includes non-parametric continuous-time processes,
+which produce exchangeable distributions over transition rate sets in unfactored CTMPs [19].
+
+6 Conclusion
+
+We presented an alternative representation of the dynamics of CTBNs using partition-based CTBNs
+instantiated by trees and forests. Our models grow linearly in the number of forest node splits, while
+CTBNs grow exponentially in the number of parent nodes per variable. Motivated by the domain
+over intensities, we introduced multiplicative forests and showed that CTBN likelihood updates
+can be efﬁciently computed using changes in log likelihood.
+Finally, we showed that mfCTBNs
+outperform both treeCTBNs and N-CTBNs in three experiments and that mfCTBNs are scalable to
+problems with many variables. With our contributions in developing scalable CTBNs and efﬁcient
+learning, along with continued improvements in inference, CTBNs can be a powerful statistical tool
+to model complex processes over continuous time.
+
+7 Acknowledgments
+
+We gratefully acknowledge CIBM Training Program grant 5T15LM007359, NIGMS grant
+R01GM097618-01, NLM grant R01LM011028-01, and ICTR NIH NCATS grant UL1TR000427.
+
+8
+
+References
+
+[1] T. Dean and K. Kanazawa, “A model for reasoning about pers istence and causation,” Compu-
+tational Intelligence, vol. 5, no. 2, pp. 142 –150, 1989.
+[2] U. Nodelman, C. R. Shelton, and D. Koller, “Learning cont inuous time Bayesian networks,” in
+UAI, 2003.
+[3] U. Nodelman, Continuous time Bayesian networks. PhD thesis, Stanford University, 2007.
+[4] U. Nodelman, D. Koller, and C. R. Shelton, “Expectation p ropagation for continuous time
+Bayesian networks,” in UAI, 2005.
+[5] S. Saria, U. Nodelman, and D. Koller, “Reasoning at the ri ght time granularity,” in UAI, 2007.
+[6] I. Cohn, T. El-Hay, N. Friedman, and R. Kupferman, “Mean ﬁ
+eld variational approximation
+for continuous-time Bayesian networks,” in UAI, 2009.
+[7] Y. Fan and C. R. Shelton, “Sampling for approximate infer ence in continuous time Bayesian
+networks,” in AI and Mathematics, 2008.
+[8] V. Rao and Y. Teh, “Fast MCMC sampling for Markov jump proc esses and continuous time
+Bayesian networks,” in UAI, 2011.
+[9] D. Heckerman, “Causal independence for knowledge acqui sition and inference,” in UAI,
+pp. 122 –127, 1993.
+[10] A. Gunawardana, C. Meek, and P. Xu, “A model for temporal dependencies in event streams,”
+in NIPS, 2011.
+[11] C. Strobl, J. Malley, and G. Tutz, “An introduction to re cursive partitioning: rationale, applica-
+tion, and characteristics of classiﬁcation and regression trees, bagging, and random forests.,”
+Psychological methods, vol. 14, no. 4, p. 323, 2009.
+[12] Y. Freund and R. Schapire, “A desicion-theoretic gener alization of on-line learning and an
+application to boosting,” in Computational learning theory, 1995.
+[13] L. Breiman, “Random forests,” Machine learning, vol. 45, no. 1, pp. 5 –32, 2001.
+[14] W. Kannel, “Blood pressure as a cardiovascular risk fac tor,” JAMA, vol. 275, no. 20, p. 1571,
+1996.
+[15] C. Shelton, Y. Fan, W. Lam, J. Lee, and J. Xu, “Continuous time Bayesian network reasoning
+and learning engine,” JMLR, vol. 11, pp. 1137 –1140, 2010.
+[16] J. Friedman, “Greedy function approximation: a gradie nt boosting machine,” Annals of Statis-
+tics, 2001.
+[17] S. Rajaram, T. Graepel, and R. Herbrich, “Poisson-netw orks: A model for structured point
+processes,” in AI and Statistics, 2005.
+[18] A. Simma, Modeling Events in Time Using Cascades Of Poisson Processes. PhD thesis, EECS
+Department, University of California, Berkeley, Jul 2010.
+[19] A. Saeedi and A. Bouchard-Ct, “Priors over recurrent co ntinuous time processes,” in NIPS,
+2011.
+
+9
+
+

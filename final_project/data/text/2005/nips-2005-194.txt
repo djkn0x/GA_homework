@@ -1,0 +1,606 @@
+Extracting Dynamical Structure Embedded in
+Neural Activity
+
+Byron M. Yu1 , Afsheen Afshar1,2 , Gopal Santhanam1 ,
+Stephen I. Ryu1,3 , Krishna V. Shenoy1,4
+1Department of Electrical Engineering, 2School of Medicine, 3Department of
+Neurosurgery, 4Neurosciences Program, Stanford University, Stanford, CA 94305
+{byronyu,afsheen,gopals,seoulman,shenoy}@stanford.edu
+
+Maneesh Sahani
+Gatsby Computational Neuroscience Unit, UCL
+London, WC1N 3AR, UK
+maneesh@gatsby.ucl.ac.uk
+
+Abstract
+
+Spiking activity from neurophysiological experiments often exhibits dy-
+namics beyond that driven by external stimulation, presumably reﬂect-
+ing the extensive recurrence of neural circuitry. Characterizing these
+dynamics may reveal important features of neural computation, par-
+ticularly during internally-driven cognitive operations. For example,
+the activity of premotor cortex (PMd) neurons during an instructed de-
+lay period separating movement-target speciﬁcation and a movement-
+initiation cue is believed to be involved in motor planning. We show
+that the dynamics underlying this activity can be captured by a low-
+dimensional non-linear dynamical systems model, with underlying re-
+current structure and stochastic point-process output. We present and
+validate latent variable methods that simultaneously estimate the system
+parameters and the trial-by-trial dynamical trajectories. These meth-
+ods are applied to characterize the dynamics in PMd data recorded
+from a chronically-implanted 96-electrode array while monkeys perform
+delayed-reach tasks.
+
+1
+
+Introduction
+
+At present, the best view of the activity of a neural circuit is provided by multiple-electrode
+extracellular recording technologies, which allow us to simultaneously measure spike trains
+from up to a few hundred neurons in one or more brain areas during each trial. While the
+resulting data provide an extensive picture of neural spiking, their use in characterizing the
+ﬁne timescale dynamics of a neural circuit is complicated by at least two factors. First,
+extracellularly captured action potentials provide only an occasional view of the process
+from which they are generated, forcing us to interpolate the evolution of the circuit between
+the spikes. Second, the circuit activity may evolve quite differently on different trials that
+are otherwise experimentally identical.
+
+The usual approach to handling both problems is to average responses from different trials,
+and study the evolution of the peri-stimulus time histogram (PSTH). There is little alter-
+native to this approach when recordings are made one neuron at a time, even when the
+dynamics of the system are the subject of study. Unfortunately, such averaging can obscure
+important internal features of the response. In many experiments, stimulus events provide
+the trigger for activity, but the resulting time-course of the response is internally regulated
+and may not be identical on each trial. This is especially important during cognitive pro-
+cessing such as decision making or motor planning. In this case, the PSTH may not reﬂect
+the true trial-by-trial dynamics. For example, a sharp change in ﬁring rate that occurs with
+varying latency might appear as a slow smooth transition in the average response.
+
+An alternative approach is to adopt latent variable methods and to identify a hidden dy-
+namical system that can summarize and explain the simultaneously-recorded spike trains.
+The central idea is that the responses of different neurons reﬂect different views of a com-
+mon dynamical process in the network, whose effective dimensionality is much smaller
+than the total number of neurons in the network. While the underlying state trajectory may
+be slightly different on each trial, the commonalities among these trajectories can be cap-
+tured by the network’s parameters, which are shared across trials. These parameters deﬁne
+how the network evolves over time, as well as how the observed spike trains relate to the
+network’s state at each time point.
+
+Dimensionality reduction in a latent dynamical model is crucial and yields beneﬁts beyond
+simple noise elimination. Some of these beneﬁts can be illustrated by a simple physical
+example. Consider a set of noisy video sequences of a bouncing ball. The trajectory of
+the ball may not be identical in each sequence, and so simply averaging the sequences to-
+gether would provide little information about the dynamics. Independently smoothing the
+dynamics of each pixel might identify a dynamical process; however, correctly rejecting
+noise might be difﬁcult, and in any case this would yield an inefﬁcient and opaque rep-
+resentation of the underlying physical process. By contrast, a hidden dynamical system
+account could capture the video sequence data using a low-dimensional latent variable that
+represented only the ball’s position and momentum over time, with dynamical rules that
+captured the physics of ballistics and elastic collision. This representation would exploit
+shared information from all pixels, vastly simplifying the problem of noise rejection, and
+would provide a scientiﬁcally useful depiction of the process.
+
+The example also serves to illustrate the two broad beneﬁts of this type of model. The ﬁrst is
+to obtain a low dimensional summary of the dynamical trajectory in any one trial. Besides
+the obvious beneﬁts of denoising, such a trajectory can provide an invaluable representa-
+tion for prediction of associated phenomena. In the video sequence example, predicting the
+loudness of the sound on impact might be easy given the estimate of the ball’s trajectory
+(and thus its speed), but would be difﬁcult from the raw pixel trajectories, even if denoised.
+In the neural case, behavioral variables such as reaction time might similarly be most easily
+predicted from the reconstructed trajectory. The second broad goal is systems identiﬁca-
+tion: learning the rules that govern the dynamics. In the video example this would involve
+discovery of various laws of physics, as well as parameters describing the ball such as its
+coefﬁcient of elasticity. In the neural case this would involve identifying the structure of
+dynamics available to the circuit: the number and relationship of attractors, appearance of
+oscillatory limit cycles and so on.
+
+The use of latent variable models with hidden dynamics for neural data has, thus far, been
+limited. In [1], [2], small groups of neurons in the frontal cortex were modeled using hidden
+Markov models, in which the latent dynamical system is assumed to transition between a
+set of discrete states. In [3], a state space model with linear hidden dynamics and point-
+process outputs was applied to simulated data. However, these restricted latent models
+cannot capture the richness of dynamics that recurrent networks exhibit.
+In particular,
+systems that converge toward point or line attractors, exhibit limit cycle oscillations, or
+
+even transition into chaotic regimes have long been of interest in neural modeling. If such
+systems are relevant to real neural data, we must seek to identify hidden models capable of
+reﬂecting this range of behaviors.
+
+In this work, we consider a latent variable model having (1) hidden underlying recurrent
+structure with continuous-valued states, and (2) Poisson-distributed output spike counts
+(conditioned on the state), as described in Section 2. Inference and learning for this nonlin-
+ear model are detailed in Section 3. The methods developed are applied to a delayed-reach
+task described in Section 4. Evidence of motor preparation in PMd is given in Section 5.
+In Section 6, we characterize the neural dynamics of motor preparation on a trial-by-trial
+basis.
+
+2 Hidden non-linear dynamical system
+
+A useful dynamical system model capable of expressing the rich behavior expected of
+neural systems is the recurrent neural network (RNN) with Gaussian perturbations
+xt | xt−1 ∼ N (ψ(xt−1 ), Q)
+(1)
+ψ(x) = (1 − k)x + kW g(x),
+(2)
+where xt ∈ IRp×1 is the vector of the node values in the recurrent network at time
+t ∈ {1, . . . , T }, W ∈ IRp×p is the connection weight matrix, g is a non-linear activa-
+tion function which acts element-by-element on its vector argument, k ∈ IR is a parameter
+related to the time constant of the network, and Q ∈ IRp×p is a covariance matrix. The
+initial state is Gaussian-distributed
+x0 ∼ N (p0 , V0 ) ,
+(3)
+where p0 ∈ IRp×1 and V0 ∈ IRp×p are the mean vector and covariance matrix, respectively.
+Models of this class have long been used, albeit generally without stochastic pertubation,
+to describe the dynamics of neuronal responses (e.g., [4]). In this classical view, each node
+of the network represents a neuron or a column of neurons. Our use is more abstract. The
+RNN is chosen for the range of dynamics it can exhibit, including convergence to point
+or surface attractors, oscillatory limit cycles, or chaotic evolution; but each node is simply
+an abstract dimension of latent space which may couple to many or all of the observed
+neurons.
+
+The output distribution is given by a generalized linear model that describes the relationship
+t ∈ IR of neuron i ∈ {1, . . . , q} in
+between all nodes in the state xt and the spike count y i
+(cid:3)
+(cid:3)
+(cid:2)
+(cid:2)
+the tth time bin
+ci · xt + di
+t | xt ∼ Poisson
+y i
+Δ
+(4)
+,
+h
+where ci ∈ IRp×1 and di ∈ IR are constants, h is a link function mapping IR → IR+ ,
+and Δ ∈ IR is the time bin width. We collect the spike counts from all q simultaneously-
+recorded physical neurons into a vector yt ∈ IRq×1 , whose ith element is y i
+t . The choice of
+the link functions g and h is discussed in Section 3.
+
+3
+
+Inference and Learning
+
+The Expectation-Maximization (EM) algorithm [5] was used to iteratively (1) infer the
+underlying hidden state trajectories (i.e., recover a distribution over the hidden sequence
+W, Q, k , p0 , V0 , {ci}, {di }(cid:5)
+(cid:4)
+{x}T
+1 corresponding to the observations {y}T
+1 ), and (2) learn the model parameters (i.e.,
+estimate θ =
+), given only a set of observation sequences.
+
+(cid:3)
+(cid:2){x}T
+1 | {y}T
+for each
+Inference (the E-step) involves computing or approximating P
+1 , θk
+sequence, where θk are the parameter estimates at the k th EM iteration. A variant of the
+Extended Kalman Smoother (EKS) was used to approximate these joint smoothed state
+posteriors. As in the EKS, the non-linear time-invariant state system (1)-(2) was trans-
+formed into a linear time-variant sytem using local linearization. The difference from EKS
+(cid:2)
+(cid:3)
+(cid:3) ∝ P (yt | xt ) P
+(cid:2)
+arises in the measurement update step of the forward pass
+xt | {y}t−1
+xt | {y}t
+(5)
+P
+.
+1
+1
+Because P (yt | xt ) is a product of Poissons rather than a Gaussian, the ﬁltered state pos-
+terior P (xt | {y}t
+1 ) cannot be easily computed. Instead, as in [3], we approximated this
+posterior with a Gaussian centered at the mode of log P (xt | {y}t
+1 ) and whose covariance
+is given by the negative inverse Hessian of the log posterior at that mode. Certain choices
+of h, including ez and log (1 + ez ), lead to a log posterior that is strictly concave in xt . In
+(cid:7)
+(cid:6)
+(cid:8)(cid:9)
+these cases, the unique mode can easily be found by Newton’s method.
+{x}T
+1 , {y}T
+1 | θ
+log P
+Learning (the M-step) requires ﬁnding the θ that maximizes E
+,
+where the expectation is taken over the posterior state distributions found in the E-step.
+Note that, for multiple sequences that are independent conditioned on θ , we use the sum
+of expectations over all sequences. Because the posterior state distributions are approxi-
+mated as Gaussians in the E-step, the above expectation is a Gaussian integral that involves
+non-linear functions g and h and cannot be computed analytically in general. Fortunately,
+this high-dimensional integral can be reduced to many one-dimensional Gaussian integrals,
+which can be accurately and reasonably efﬁciently approximated using Gaussian quadra-
+ture [6], [7].
+
+(cid:10) z
+We found that setting g to be the error function
+2√
+π
+
+g(z ) =
+
+0
+
+−t2
+e
+
+dt
+
+(6)
+
+made many of the one-dimensional Gaussian integrals involving g analytically tractable.
+Those that were not analytically tractable were approximated using Gaussian quadrature.
+The error function is one of a family of sigmoid activation functions that yield similar
+behavior in a RNN.
+
+If h were chosen to be a simple exponential, all the Gaussian integrals involving h could be
+computed exactly. Unfortunately, this exponential mapping would distort the relationship
+between perturbations in the latent state (whose size is set by the covariance matrix Q)
+and the resulting ﬂuctuations in ﬁring rates. In particular, the size of ﬁring-rate ﬂuctations
+would grow exponentially with the mean, an effect that would then add to the usual linear
+increase in spike-count variance that comes from the Poisson output distribution. Since
+neural ﬁring does not show such a severe scaling in variability, such a model would ﬁt
+poorly. Therefore, to maintain more even ﬁring-rate ﬂuctuations, we instead take
+
+h(z ) = log (1 + ez ) .
+
+(7)
+
+The corresponding Gaussian integrals must then be approximated by quadrature methods.
+Regardless of the forms of g and h chosen, numerical Newton methods are needed for
+maximization with respect to {ci } and {di }.
+The main drawback of these various approximations is that the overall observation likeli-
+hood is no longer guaranteed to increase after each EM iteration. However, in our simula-
+tions, we found that sensible results were often produced. As long as the variances of the
+posterior state distribution did not diverge, the output distributions described by the learned
+model closely approximated those of the actual model that generated the simulated data.
+
+4 Task and recordings
+
+We trained a rhesus macaque monkey to perform delayed center-out reaches to visual tar-
+gets presented on a fronto-parallel screen. On a given trial, the peripheral target was pre-
+sented at one of eight radial locations (30, 70, 110, 150, 190, 230, 310, 350°) 10 cm
+away, as shown in Figure 1. After a pseudo-randomly chosen delay period of 200, 750, or
+1000 ms, the target increased in size as the go cue and the monkey reached to the target. A
+96-channel silicon electrode array (Cyberkinetics, Inc.) was implanted straddling PMd and
+motor cortex (M1). Spike sorting was performed ofﬂine to isolate 22 single-neuron and
+109 multi-neuron units.
+
+s
+ 
+/
+ 
+s
+e
+k
+i
+p
+s
+
+100
+
+0
+
+ 200 ms
+
+Delay 
+Delay 
+Activity
+Activity
+
+Peri-Movement 
+Peri-Movement 
+Activity
+Activity
+
+Figure 1: Delayed reach task and average action potential (spike) emission rate from one
+representative unit. Activity is arranged by target location. Vertical dashed lines indicate
+peripheral reach target onset (left) and movement onset (right).
+
+5 Motor preparation in PMd
+
+Motor preparation is often studied using the “instructed delay” behavioral paradigm, as
+described in Section 4, where a variable-length “planning” period temporally separates an
+instruction stimulus from a go cue [8]–[13]. Longer delay periods typically lead to shorter
+reaction times (RT, deﬁned as time between go cue and movement onset), and this has been
+interpreted as evidence for a motor preparation process that takes time [11], [12], [14], [15].
+In this view, the delay period allows for motor preparation to complete prior to the go cue,
+thus shortening the RT.
+
+Evidence for motor preparation at the neural level is taken from PMd (and, to a lesser
+degree, M1), where neurons show sustained activity during the delay period (Figure 1,
+delay activity) [8]–[10]. A number of ﬁndings support the hypothesis that such activity
+is related to motor preparation. First, delay period activity typically shows tuning for the
+instruction (i.e., location of reach target; note that the PMd neuron in Figure 1 has greater
+delay activity before leftward than before rightward reaches), consistent with the idea that
+something speciﬁc is being prepared [8], [9], [11], [13]. Second, in the absence of a delay
+period, a brief burst of similarly-tuned activity is observed during the RT interval, consistent
+with the idea that motor preparation is taking place at that time [12].
+
+Third, we have recently reported that ﬁring rates across trials to the same reach target
+become more consistent as the delay period progresses [16]. The variance of ﬁring rate,
+
+measured across trials, divided by mean ﬁring rate (similar to the Fano factor) was com-
+puted for each unit and each time point. Averaged across 14 single- and 33 multi-neuron
+−10 ) from
+units, we found that this Normalized Variance (NV) declined 24% (t-test, p <10
+200 ms before target onset to the median time of the go cue. This decline spanned ∼119 ms
+just after target onset and appears to, at least roughly, track the time-course of motor prepa-
+ration.
+
+The NV may be interpreted as a signature of the approximate degree of motor prepara-
+tion yet to be accomplished. Shortly after target onset, ﬁring rates are frequently far from
+their mean. If the go cue arrives then, it will take time to correct these “errors” and RTs
+will therefore be longer. By the time the NV has completed its decline, ﬁring rates are
+consistently near their mean (which we presume is near an “optimal” conﬁguration for the
+impending reach), and RTs will be shorter if the go cue arrives then. This interpretation
+assumes that there is a limit on how quickly ﬁring rates can converge to their ideal values
+(a limit on how quickly the NV can drop) such that a decline during the delay period saves
+time later. The NV was found to be lower at the time of the go cue for trials with shorter
+RTs than those with longer RTs [16].
+
+The above data strongly suggest that the network underlying motor preparation exhibits
+rich dynamics. Activity is initially variable across trials, but appears to settle during the
+delay period. Because the RNN (1)-(2) is capable of exhibiting such dynamics and may
+underly motor preparation, we sought to identify such a dynamical system in delay activity.
+
+6 Results and discussion
+
+The NV reveals an average process of settling by measuring the convergence of ﬁring
+across different trials. However, it provides little insight into the course of motor planning
+on a single trial. A gradual fall in trial-to-trial variance might reﬂect a gradual convergence
+on each trial, or might reﬂect rapid transitions that occur at different times on different
+trials. Similarly, all the NV tells us about the dynamic properties of the underlying network
+is the basic fact of convergence from uncontrolled initial conditions to a consistent pre-
+movement preparatory state. The structure of any underlying attractors and corresponding
+basins of attraction is unobserved. Furthermore, the NV is ﬁrst computed per-unit and
+averaged across units, thus ignoring any structure that may be present in the correlated
+ﬁring of units on a given trial. The methods presented here are well-suited to extending the
+characterization of this settling process.
+We ﬁt the dynamical system model (1)–(4) with three latent dimensions (p = 3) to training
+data, consisting of delay activity preceding 70 reaches to the same target (30°). Spike
+counts were taken in non-overlapping Δ = 20 ms bins at 20 ms time steps from 50 ms
+after target onset to 50 ms after the go cue. Then, the ﬁtted model parameters were used to
+infer the latent space trajectories for 146 test trials, which are plotted in Figure 2. Despite
+the trial-to-trial variability in the delay period neural responses, the state evolves along
+a characteristic path on each trial.
+It could have been that the neural variability across
+trials would cause the state trajectory to evolve in markedly different ways on different
+trials. Even with the characteristic structure, the state trajectories are not all identical,
+however. This presumably reﬂects the fact that the motor planning process is internally-
+regulated, and its timecourse may differ from trial to trial, even when the presented stimulus
+(in this case, the reach target) is identical. How these timecourses differ from trial to trial
+would have been obscured had we combined the neural data across trials, as with the NV
+in Section 5.
+
+Is this low-dimensional description of the system dynamics adequate to describe the ﬁring
+of all 131 recorded units? We transformed the inferred latent trajectories into trial-by-trial
+
+Target onset + 50 ms
+Go cue + 50 ms
+
+3
+ 
+n
+o
+i
+s
+n
+e
+m
+i
+D
+ 
+t
+n
+e
+t
+a
+L
+
+50
+
+0
+
+  -50
+
+-2
+
+-1
+L
+ate
+nt Dim
+e
+nsio
+n 1
+
+0
+
+0
+
+20
+n t  D i m
+
+a t e
+
+L
+
+1
+
+-20
+
+60
+
+40
+
+n
+
+e
+
+s i o
+
+n   2
+
+Figure 2: Inferred modal state trajectories in latent (x) space for 146 test trials. Dots
+indicate 50 ms after target onset (blue) and 50 ms after the go cue (green). The radius of
+the green dots is logarithmically-related to delay period length (200, 750, or 1000ms).
+
+inhomogeneous ﬁring rates using the output relationship from (4)
+(cid:3)
+(cid:2)
+ci · xt + di
+
+λi
+t = h
+
+,
+
+(8)
+
+where λi
+t is the imputed ﬁring rate of the ith unit at the tth time bin. Figure 3 shows the
+imputed ﬁring rates for 15 representative units overlaid with empirical ﬁring rates obtained
+by directly averaging raw spike counts across the same test trials. If the imputed ﬁring rates
+truly reﬂect the rate functions underlying the observed spikes, then the mean behavior of
+the imputed ﬁring rates should track the empirical ﬁring rates. On the other hand, if the
+latent system were inadequate to describe the activity, we should expect to see dynamical
+features in the empirical ﬁring that could not be captured by the imputed ﬁring rates. The
+strong agreement observed in Figure 3 and across all 131 units suggests that this simple
+dynamical system is indeed capable of capturing signiﬁcant components of the dynamics
+of this neural circuit. We can view the dyamical system approach adopted in this work as a
+form of non-linear dynamical embedding of point-process data. This is in contrast to most
+current embedding algorithms that rely on continuous data. Figure 2 effectively represents
+a three-dimensional manifold in the space of ﬁring rates along which the dynamics unfold.
+
+Beyond the agreement of imputed means demonstrated by Figure 3, we would like to di-
+rectly test the ﬁt of the model to the neural spike data. Unfortunately, current goodness-
+of-ﬁt methods for spike trains, such as those based on time-rescaling [17], cannot be ap-
+plied directly to latent variable models. The difﬁculty arises because the average trajectory
+obtained from marginalizing over the latent variables in the system (by which we might
+hope to rescale the inter-spike intervals) is not designed to provide an accurate estimate of
+the trial-by-trial ﬁring rate functions. Instead, each trial must be described by a distinct
+trajectory in latent space, which can only be inferred after observing the spike trains them-
+selves. This could lead to overﬁtting. We are currently exploring extensions to the standard
+methods which infer latent trajectories using a subset of recorded neurons, and then test
+the quality of ﬁring-rate predictions for the remaining neurons. In addition, we plan to
+compare models of different latent dimensionalities; here, the latent space was arbitrarily
+chosen to be three-dimensional. To validate the learned latent space and inferred trajecto-
+ries, we would also like to relate these results to trial-by-trial behavior. In particular, given
+the evidence from Section 5, how “settled” the activity is at the time of the go cue should
+be predictive of RT.
+
+80
+
+40
+
+0
+
+80
+
+40
+
+0
+
+80
+
+40
+
+0
+
+)
+s
+/
+s
+e
+k
+i
+p
+s
+(
+ 
+e
+t
+a
+r
+ 
+g
+n
+i
+r
+i
+F
+
+500
+0
+0
+500
+1000
+Time relative to target onset (ms)
+
+1000
+
+0
+
+500
+
+1000
+
+0
+
+500
+
+1000
+
+0
+
+500
+
+1000
+
+Figure 3: Imputed trial-by-trial ﬁring rates (blue) and empirical ﬁring rates (red). Gray
+vertical line indicates the time of the go cue. Each panel corresponds to one unit. For
+clarity, only test trials with delay periods of 1000 ms (44 trials) are plotted for each unit.
+
+Acknowledgments
+
+This work was supported by NIH-NINDS-CRCNS-R01, NSF, NDSEGF, Gatsby, MSTP,
+CRPF, BWF, ONR, Sloan, and Whitaker. We would like to thank Dr. Mark Churchland for
+valuable discussions and Missy Howard for expert surgical assistance and veterinary care.
+
+References
+
+[1] M. Abeles, H. Bergman, I. Gat, I. Meilijson, E. Seidemann, N. Tishby, and E. Vaadia.
+Proc Natl Acad Sci USA, 92:8616–8620, 1995.
+[2] I. Gat, N. Tishby, and M. Abeles. Network, 8(3):297–322, 1997.
+[3] A. Smith and E. Brown. Neural Comput, 15(5):965–991, 2003.
+[4] S. Amari. Biol Cybern, 27(2):77–87, 1977.
+[5] A. Dempster, N. Laird, and D. Rubin. J R Stat Soc Ser B, 39:1–38, 1977.
+[6] S. Julier and J. Uhlmann. In Proc. AeroSense: 11th Int. Symp. Aerospace/Defense
+Sensing, Simulation and Controls, pp. 182–193, 1997.
+[7] U. Lerner. Hybrid Bayesian networks for reasoning about complex systems. PhD
+thesis, Stanford University, Stanford, CA, 2002.
+[8] J. Tanji and E. Evarts. J Neurophysiol, 39:1062–1068, 1976.
+[9] M. Weinrich, S. Wise, and K. Mauritz. Brain, 107:385–414, 1984.
+[10] M. Godschalk, R. Lemon, H. Kuypers, and J. van der Steen. Behav Brain Res,
+18:143–157, 1985.
+[11] A. Riehle and J. Requin. J Neurophysiol, 61:534–549, 1989.
+[12] D. Crammond and J. Kalaska. J Neurophysiol, 84:986–1005, 2000.
+[13] J. Messier and J. Kalaska. J Neurophysiol, 84:152–165, 2000.
+[14] D. Rosenbaum. J Exp Psychol Gen, 109:444–474, 1980.
+[15] A. Riehle and J. Requin. J Behav Brain Res, 53:35–49, 1993.
+[16] M. Churchland, B. Yu, S. Ryu, G. Santhanam, and K. Shenoy. Soc. for Neurosci.
+Abstr., 2004.
+[17] E. Brown, R. Barbieri, V. Ventura, R. Kass, and L. Frank. Neural Comput, 14(2):325–
+346, 2002.
+
+

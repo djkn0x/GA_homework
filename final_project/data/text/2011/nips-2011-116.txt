@@ -1,0 +1,706 @@
+Matrix Completion for
+Multi-label Image Classiﬁcation
+
+João P. Costeira† , Alexandre Bernardino†
+Ricardo S. Cabral†,‡ Fernando De la Torre‡
+† ISR - Instituto Superior Técnico,
+‡Carnegie Mellon University,
+Lisboa, Portugal
+Pittsburgh, PA
+rscabral@cmu.edu, ftorre@cs.cmu.edu, {jpc,alex}@isr.ist.utl.pt
+
+Abstract
+
+Recently, image categorization has been an active research topic due to the urgent
+need to retrieve and browse digital images via semantic keywords. This paper for-
+mulates image categorization as a multi-label classiﬁcation problem using recent
+advances in matrix completion. Under this setting, classiﬁcation of testing data
+is posed as a problem of completing unknown label entries on a data matrix that
+concatenates training and testing features with training labels. We propose two
+convex algorithms for matrix completion based on a Rank Minimization criterion
+speciﬁcally tailored to visual data, and prove its convergence properties. A major
+advantage of our approach w.r.t. standard discriminative classiﬁcation methods
+for image categorization is its robustness to outliers, background noise and par-
+tial occlusions both in the feature and label space. Experimental validation on
+several datasets shows how our method outperforms state-of-the-art algorithms,
+while effectively capturing semantic concepts of classes.
+
+1
+
+Introduction
+
+With the ever-growing amount of digital image data in multimedia databases, there is a great need
+for algorithms that can provide effective semantic indexing. Categorizing digital images using key-
+words, however, is the quintessential example of a challenging classiﬁcation problem. Several as-
+pects contribute to the difﬁculty of the image categorization problem, including the large variability
+in appearance, illumination and pose of different objects. Moreover, in the multi-label setting the
+interaction between objects also needs to be modeled.
+Over the last decade, progress in the image classiﬁcation problem has been achieved by using more
+powerful classiﬁers and building or learning better image representations. On one hand, standard
+discriminative approaches such as Support Vector Machines or Boosting have been extended to the
+multi-label case [28, 14] and incorporated under frameworks such as Multiple Instance Learning
+[31, 33, 32, 20, 27] and Multi-task Learning [26]. However, a major limitation of discriminative
+approaches is the lack of robustness to outliers and missing data. Recall most discriminative ap-
+proaches project the data directly onto linear or non-linear spaces, thus lacking a noise model for it.
+To address this issue, we propose formulating the image classiﬁcation problem under a matrix com-
+pletion framework, that has been fueled by recent advances in Rank Minimization [7, 18]. Using
+this paradigm, we can easily deal with incomplete descriptions and errors in features and labels. On
+the other hand, traversal to the use of more powerful classiﬁers, better image representations, such
+as SIFT [17] or GIST [21] have boosted recognition and categorization performance. A common ap-
+proach to represent an object has been to group local descriptors using the bag of words model [24].
+Our algorithms make use of the fact that in this model the histogram of an entire image contains
+information of all of its subparts. By modeling the error in the histogram, our matrix completion
+algorithm is able to capture semantically discriminative portions of the image, thus obviating the
+need for training with precise localization, as required by previous methods [31, 33, 32, 20, 27].
+
+1
+
+Our main contributions are twofold: (1) We propose two new Rank Minimization algorithms, MC-
+Pos and MC-Simplex, motivated by the image categorization problem. We study the advantages
+of matrix completion over classic discriminative approaches and show that performing classiﬁcation
+under this paradigm not only improves state-of-the-art results on several datasets, but it does so with-
+out recurring to bounding boxes or other precise localization methods in its labeling or modeling.
+(2) We prove that MC-Pos and MC-Simplex enjoy the same convergence properties of Fixed Point
+Continuation methods for Rank Minimization without constraints. We also show that this result
+extends to the framework presented by [11], whose convergence was only empirically veriﬁed.
+
+2 Previous Work
+
+This section reviews related work in the area of image categorization and the problem of Matrix
+Completion using a Rank Minimization criterion, optimized with Nuclear Norm methods.
+
+Image Categorization Since the seminal work of Barnard et al. [3], many researchers have ad-
+dressed the problem of associating words to images. Image semantic understanding is now typically
+formulated as a multi-label problem. In this setting, each image may be simultaneously categorized
+into more than one of a set of predeﬁned categories. An important difference between multi-class
+classiﬁcation and multi-label classiﬁcation is that classes in multi-class classiﬁcation are assumed to
+be mutually exclusive whereas in multi-label classiﬁcation are normally interdependent from one an-
+other. Therefore, many multi-class techniques such as SVM, LDA and Boosting have been modiﬁed
+to make use of label correlations to improve multi-label classiﬁcation performance [28, 14].
+Additionally, Multiple Instance Learning (MIL) approaches can be used to explicitly model the re-
+lations between labels and speciﬁc regions of the image, as initially proposed by Maron et al. [19].
+This framework allows for the localization and classiﬁcation tasks to beneﬁt from each other, thus
+reducing noise in the corresponding feature space and making the learned semantic models more ac-
+curate [31, 33, 32, 20, 27, 26]. Although promising, the MIL framework is combinatorial, so several
+approaches have been proposed to avoid local minima and deal with the prohibitive number of pos-
+sible subregions in an image. Zha et al. [32] make use of hidden CRFs while Vijayanarasimhan et
+al. [27] recur to multi-set kernels to emphasize instances differently. Yang et al. [31] exploit asym-
+metric loss functions to balance false positives and negatives. These methods, however, require an
+explicit enumeration of instances in the image. This is usually obtained by pre-segmenting images
+to a small ﬁxed number of parts or applied in settings where detectors perform well, such as the
+problem of associating faces to captioned names [4]. On the other hand, to avoid explicitly enumer-
+ating the instances, Nguyen et al. [20] couple constraint generation algorithms with a branch and
+bound method for fast localization. Multi-task learning has also been proposed as a way to regular-
+ize the MIL problem, so as to avoid local minima due to many available degrees of freedom. In this
+setting, the MIL problem is jointly learned with an easier fully supervised task such as geometric
+context [26].
+
+Matrix Completion using Rank Minimization Rank Minimization has recently received much
+attention due to its success in matrix completion problems such as the Netﬂix challenge, where one
+wishes to predict a user’s movie preferences based on a subset of his and other people’s choices, or
+minimum order control [10], where the goal is to ﬁnd the least complex controller achieving some
+performance measure.
+A major breakthrough by [7] states the minimization of the rank function, under broad conditions,
+can be achieved using the minimizer obtained with the Nuclear Norm (sum of singular values).
+Since the natural reformulation of the Nuclear Norm gives rise to a Semideﬁnite Program, existing
+interior point methods can only handle problems with a number of variables in the order of the
+hundreds. Thus, several methods have been devised to perform this optimization efﬁciently [15, 6,
+18, 25, 13, 1, 7, 2]. In the last few years, incremental matrix completion methods have also been
+proposed [1, 2, 5].
+In the context of Computer Vision, minimization of the Nuclear Norm has been applied to several
+problems: Structure from Motion [1, 8, 5], Robust PCA [29], Subspace Alignment [22], Subspace
+Segmentation [16] and Tag Reﬁnement [34].
+
+2
+
+,
+
+Z0 =
+
+(1)
+
+(2)
+
+Z =
+
+=
+
+l
+
+yj , [W b]
+
+3 Multi-label classiﬁcation using Matrix Completion
+In a supervised setting, a classiﬁer learns a mapping1 W : X → Y between the space of features X
+and the space of labels Y , from Ntr tuples of known features and labels. Linear classiﬁers deﬁne
+(xj , yj ) ∈ RF × RK , where F is the feature dimension and K the number of classes, and minimize
+(cid:20) xj
+(cid:18)
+(cid:21)(cid:19)
+NtrX
+the loss l between the output space and the projection of the input space, as
+minimize
+1
+W,b
+j=1
+with parameters W ∈ RK×F , b ∈ RK . Given (1), Goldberg et al. [11] note that the problem of
+classifying Ntst test entries can be cast as a Matrix Completion. For this purpose, they concatenate
+all labels and features into matrices Ytst ∈ RK×Ntst , Ytr ∈ RK×Ntr , Xtst ∈ RF ×Ntst , Xtr ∈
+ Ytr Ytst
+ ,
+RF ×Ntr . If the linear model holds, then the matrix
+Xtr Xtst
+1>
+should be rank deﬁcient. The classiﬁcation process consists in ﬁlling the unknown entries in Ytst
+such that the Nuclear Norm of Z0 , the convex envelope of rank [7], is minimized. Since in practice
+we may have errors and partial knowledge in the training labels and in the feature space, let us
+deﬁne ΩX and ΩY as the set of known feature and label entries and zero out unknown entries in Z0 .
+ EY tr
+ Ytr Ytst
+ +
+ = Z0 + E,
+#
+" ZY
+Additionally, let the data matrix Z be deﬁned as a sum of Z0 with an error term E, as
+0
+EX tr EX tst
+Xtr Xtst
+ZX
+0>
+1>
+Z1
+where ZY , ZX , Z1 respectively stand for the label, feature and last rows of Z. Then, classiﬁcation
+can be posed as an optimization problem that ﬁnds the best label assignment Ytst and error matrix
+X
+X
+E such that the rank of Z is minimized. The resulting optimization problem, MC-1 [11], is
+1
+µkZk∗ +
+cx (zij , z0 ij ) + λ
+|ΩY |
+|ΩX |
+ij∈ΩX
+ij∈ΩY
+Z = Z0 + E
+Z1 = 1> .
+Note that the constraint that Z1 remains equal to one is necessary for dealing with the bias b in (1).
+To avoid trivial solutions, large distortions of Z from known entries in Z0 are penalized according
+to losses cy (·) and cx (·): in [11], the former is deﬁned as the Least Squares error, while the latter is
+a log loss to emphasize the error on entries switching classes as opposed to their absolute numerical
+difference. The parameters λ, µ are positive trade-off weights between better feature adaptation and
+X
+X
+label error correction. We note this problem is equivalent to
+1
+µkZk∗ +
+cx (zij , z0 ij ) + λ
+|ΩY |
+|ΩX |
+ij∈ΩX
+ij∈ΩY
+
+minimize
+Z
+subject to Z1 = 1>
+which can be solved using a Fixed Point Continuation method [18], described in Sec. 4.1.
+1 Bold capital letters denote matrices (e.g., D), bold lower-case letters represent column vectors (e.g., d).
+hd, di = P
+i denotes the squared Euclidean Norm of the vector d. tr(A) = P
+All non-bold letters denote scalar variables. dj is the j th column of the matrix D. dij denotes the scalar in
+the row i and column j of D. hd1 , d2 i denotes the inner product between two vectors d1 and d2 . ||d||2
+2 =
+i aii is the trace of the
+i d2
+matrix A. ||A||∗ designates the Nuclear Norm (sum of singular values) of A.kA||2
+F = tr(A>A) = tr(AA> )
+designates the squared Frobenius Norm of A. 1k ∈ Rk×1 is a vector of ones, 0k×n ∈ Rk×n is a matrix of
+zeros and Ik ∈ Rk×k denotes the identity matrix (dimensions are omitted when trivially inferred).
+
+minimize
+Ytst ,EX tr ,EY tr ,EX tst
+
+cy (zij , z0 ij )
+
+(3)
+
+(4)
+
+(5)
+
+subject to
+
+cy (zij , z0 ij )
+
+3
+
+4 Matrix completion for multi-label classiﬁcation of visual data
+
+In this section, we present the main contributions of this paper: the application of Matrix Completion
+to the multi-label image classiﬁcation problem and its convergence proof. In the bag of (visual)
+words (BoW) model [24], visual data is encoded by the distribution of features among entries from
+a codebook. The codebook is typically created by clustering local feature representations such as
+SIFT [17] or GIST [21]. In this setting, the formulation MC-1 (5) is inadequate because it introduces
+negative values to the histograms in ZX . To address this issue, we replace the penalties used so they
+reﬂect the nature of data: we replace the Least-Squares penalty in cx (·) by Pearson’s χ2 distance,
+FX
+FX
+that takes into account the asymmetry in histogram data, as
+(zij − z0 ij )2
+χ2 (zj , z0 j ) =
+i (zij , z0 ij ) =
+χ2
+zij + z0 ij
+i=1
+i=1
+As the modiﬁcation to cx (·) alone does not ensure that data retains its histogram nature, we add to
+X
+X
+(5) a constraint that all feature vectors in ZX are either positive, resulting in the MC-Pos formulation
+1
+µkZk∗ +
+i (zij , z0 ij ) + λ
+minimize
+χ2
+|ΩX |
+|ΩY |
+Z
+ij∈ΩY
+ij∈ΩX
+subject to ZX ≥ 0
+Z1 = 1> ,
+or alternatively, that they belong to the Probability Simplex P (positive elements that sum to 1),
+X
+X
+resulting in the MC-Simplex formulation
+1
+µkZk∗ +
+minimize
+|ΩX |
+Z
+ij∈ΩX
+ij∈ΩY
+subject to ZX ∈ P
+Z1 = 1> ,
+depending on whether we wish to perform normalization on the data or not. Additionally, we note
+that the Log label error in cy (·), albeit asymmetric, incurs in unnecessary penalization of entries
+belonging to the same class as the original entry (see Fig. 1). Therefore, we generalize this loss to
+progressively resemble smooth version of the Hinge loss, speciﬁed by the parameter γ as
+1
+log(1 + exp (−γ z0 ij zij )).
+γ
+
+i (zij , z0 ij ) + λ
+χ2
+|ΩY |
+
+cy (zij , z0 ij ) =
+
+cy (zij , z0 ij )
+
+cy (zij , z0 ij )
+
+.
+
+(6)
+
+(7)
+
+(8)
+
+(9)
+
+Figure 1: Comparison of Generalized Log loss with Log loss (γ = 1).
+
+4.1 Fixed Point continuation (FPC) for MC-1
+
+Albeit convex, the Nuclear Norm operator makes (5), (7), (8) not smooth. Since the natural refor-
+mulation of a Nuclear Norm minimization is a Semideﬁnite Program, existing off-the-shelf interior
+point methods are not applicable due to the large dimension of Z. Thus, several methods have been
+devised to efﬁciently optimize this problem class [15, 6, 18, 25, 13, 1, 7, 2]. The FPC method [18],
+in particular, is comprised by a series of gradient updates h(·) = I (·) − τ g(·) with step size τ
+and gradient g(·) given by the error penalizations cx (·) and cy (·). These steps are alternated with a
+shrinkage operator Sν (·) = max (0, · − ν ), applied to the singular values of the resulting matrix, so
+the rank is minimized. Provided h(·) is a contraction, this method provably converges to the optimal
+solution for the unconstrained problem. However, the formulation MC-1 (5) is constrained so in [11]
+
+4
+
+(cid:239)0.8(cid:239)0.6(cid:239)0.4(cid:239)0.200.20.40.60.8100.51zcy(1,z)  Log Loss ((cid:97) = 1)Gen. Log Loss ((cid:97) = 3)Gen. Log Loss ((cid:97) = 30)a projection step is added to the algorithm (see Alg. 1), whose convergence was only empirically
+veriﬁed. In this paper, we prove the convergence of FPC to the constrained problem class by using
+the fact that projections onto Convex sets are also non-expansive; thus, the composition of gradient,
+shrinkage and projection steps is also a contraction. Since the problem is convex, a unique ﬁxed
+point exists in the optimal solution of the problem. First, let us write some preliminary results.
+
+Algorithm 1 FPC algorithm for solving MC-1 (5)
+Input: Initial Matrix Z0
+Initialize Z as the rank-1 approximation of Z0
+for µ = µ1 > µ2 > · · · > µk do
+while Rel. Error >  do
+Gradient Descent: A = h(A) = Z − τ g(Z)
+Shrink: A = UΣV> , Z = USτ µ (Σ)V>
+Project onto feasible set: Z1 = 1>
+end while
+end for
+Output: Complete Matrix Z
+
+Lemma 1 Let pC (·) be a projection operator onto any given convex set C . Then, pC (·) is non-
+expansive. Moreover, kpC (Z) − pC (Z∗ )k = kZ − Z∗ k iff pC (Z) − pC (Z∗ ) = Z − Z∗ .
+Proof For the ﬁrst part, we apply the Cauchy-Schwarz inequality on the fact that (see [12, pg. 48])
+F ≤ hpC (Z) − pC (Z∗ ), Z − Z∗ i.
+kpC (Z) − pC (Z∗ )k2
+(10)
+For the second part, let us write
+kpC (Z) − pC (Z∗ ) − (Z − Z∗ ) k2
+F =
+F − 2hpC (Z) − pC (Z∗ ), Z − Z∗ i,
+kpC (Z) − pC (Z∗ )k2
+F + kZ − Z∗ k2
+where the inner product can be bounded by applying (10), yielding
+F −2kpC (Z)−pC (Z∗ )k2
+kpC (Z)−pC (Z∗ )− (Z − Z∗ ) k2
+F ≤ kpC (Z)−pC (Z∗ )k2
+F +kZ−Z∗ k2
+F . (12)
+Introducing our hypothesis kpC (Z) − pC (Z∗ )k = kZ − Z∗ k into (12) yields
+kpC (Z) − pC (Z∗ ) − (Z − Z∗ ) k2
+F ≤ 0,
+from which we conclude an equality is in place.
+Theorem 2 Let Z∗ be an optimal solution to (5). Then Z is also an optimal solution if
+kpC (Sν (h(Z))) − pC (Sν (h(Z∗ )))k = kZ − Z∗ k.
+(14)
+Proof Using the non-expansiveness of operators pC (·), Sν (·) and h(·) (Lemma 1 and [18, Lemmas
+1 and 2]), we can write
+kZ − Z∗ k = kpC (Sν (h(Z))) − pC (Sν (h(Z∗ )))k ≤
+≤ kSν (h(Z)) − Sν (h(Z∗ ))k ≤ kh(Z) − h(Z∗ ))k ≤ kZ − Z∗ k,
+so we conclude the inequalities are equalities. Using the second part of the Lemmas, we get
+pC (Sν (h(Z∗ ))) − pC (Sν (h(Z))) = Sν (h(Z∗ )) − Sν (h(Z)) = h(Z∗ ) − h(Z) = Z − Z∗ .
+Since Z∗ is optimal, by the projected subgradient method, we have
+pC (Sν (h(Z∗ ))) = Z∗ ,
+
+(15)
+
+(16)
+
+(17)
+
+(11)
+
+(13)
+
+which, in turn, implies that
+
+pC (Sν (h(Z))) = Z,
+from which we conclude Z is an optimal solution to (5).
+We are now ready to prove the convergence of MC-1 to a ﬁxed point Z∗ = pC (Sν (h(Z∗ ))), which
+allows us to state its result as an optimal solution of (5).
+Theorem 3 The sequence {Zk } generated by Alg. 1 converges to Z∗ , an optimal solution of (5).
+Proof Once we note the non-expansiveness of pC (·), Sν (·) and h(·) ensures the composite operator
+pC (Sν (h(·))) is also non-expansive, we can use the same rationale as in [18, Theorem 4].
+
+(18)
+
+5
+
+2
+ij
+
+(19)
+
+g(zij ) =
+
+4.2 Fixed Point Continuation for MC-Pos and MC-Simplex
+The condition that h(·) is a contraction [18, Lemma 2] used for proving the convergence of Alg. 1
+
+is still valid for the new loss functions proposed in (6) and (9), since the new gradient
+−z0 ij
+if zij ∈ ΩY ,
+λ|ΩY |
+1+exp (γ z0 ij zij )
+ij +2zij z0 ij −3z0
+if zij ∈ ΩX ,
+z2
+1|ΩX |
+(zij +z0 ij )2
+0
+otherwise
+is contractive, provided we choose a step size of τ ∈ [0, min ( 4|ΩY |
+λγ , τX |ΩX |)]. These values are
+easily obtained by noting the gradient of the Log loss function is Lipschitz continuous with L = 0.25
+and choosing τX such that the χ2 error, for the Non-Negative Orthant, is Lipschitz continuous with
+L = 1. Key to the feasibility of (7) and (8) within this algorithmic framework, however, is an efﬁ-
+cient way to project Z onto the newly deﬁned constraint sets. While for MC-Pos (7) projecting a vec-
+tor onto the Non-Negative Orthant is done in closed form by truncating negative components to zero,
+efﬁciently performing the projection onto the Probability Simplex in MC-Simplex (8) is not straight-
+forward. We note, however, this is a projection onto a convex subset of an ‘1 ball [9]. Therefore, we
+can explore the dual of the projection problem and use a sorting procedure to implement this projec-
+tion in closed form, as described in Alg. 2. The ﬁnal algorithms are summarized in Alg. 3 and Alg. 4.
+
+Algorithm 2 Projection of a vector onto probability Simplex
+n
+o
+Input: Vector v ∈ RF to be projected
+j (Pρ
+Sort v into µ : µ1 ≥ µ2 ≥ ... ≥ µF
+ρ (Pρ
+j ∈ n : µj − 1
+i=1 µi − 1) > 0
+Find ρ = max
+i=1 µi − 1)
+Compute θ = 1
+Output: w s.t. wi = max{vi − θ , 0}
+
+Algorithm 3 FPC Solver for MC-Pos (7)
+Input: Initial Matrix Z0
+Initialize Z as the rank-1 approximation of Z0
+for µ = µ1 > µ2 > · · · > µk do
+while Rel. Error >  do
+Gradient Descent: A = Z − τ g(Z)
+Shrink 1: A = UΣV>
+Shrink 2: Z = USτ µ (Σ)V>
+Project ZX : ZX = max (ZX , 0)
+Project Z1 : Z1 = 1>
+end while
+end for
+Output: Complete Matrix Z
+
+Algorithm 4 FPC Solver for MC-Simplex (8)
+Input: Initial Matrix Z0
+Initialize Z as the rank-1 approximation of Z0
+for µ = µ1 > µ2 > · · · > µk do
+while Rel. Error >  do
+Gradient Descent: A = Z − τ g(Z)
+Shrink: A = UΣV>
+Shrink: Z = USτ µ (Σ)V>
+Project ZX onto P (Alg. 2)
+Project Z1 : Z1 = 1>
+end while
+end for
+Output: Complete Matrix Z
+
+5 Experiments
+
+This section presents the performance evaluation of the proposed algorithms MC-Pos (7) and MC-
+Simplex (8) in image categorization tasks. We compare our results with MC-1 (5) and standard
+discriminative and MIL approaches [30, 20, 27, 26, 33, 32] on three datasets: CMU-Face , MSRC
+and 15 Scene. For our algorithms and MC-1, the values considered for the parameter tuning were
+γ ∈ {1, 3, 30}, λ ∈ [10−4 , 102 ]. The continuation steps require a decreasing sequence of µ, which
+we chose as µk = 0.25µk−1 , stopping when µ = 10−12 . We use µ0 = 0.25σ1 , where σ1 is the
+largest singular value of Z0 . Convergence was deﬁned as a relative change in the objective function
+smaller than 10−2 .
+
+CMU-Face dataset This dataset consists in 624 images of 20 subject faces with several expres-
+sions and poses, under two conditions: wearing sunglasses and not. We test single class classiﬁca-
+
+6
+
+tion and localization. As in [20], our training set is built using images of the ﬁrst 8 subjects (126
+images with glasses and 128 without), leaving the remainder for testing (370, equally split among
+the classes). We describe each image by extracting 10000 SIFT features [17] at random scales and
+positions and quantizing them onto a 1000 visual codebook, obtained by performing hierarchical
+k-means clustering on 100000 features randomly selected from the training set. For this dataset,
+note that subjects were captured in a very similar environment, so the most discriminative part is
+the eye region. Thus, Nguyen et al. [20] argue that better results are obtained when the classiﬁer
+training is restricted to that region. Since the face position varies, they propose using a Multiple
+Instance Learning framework (MIL-SegSVM), that localizes the most discriminative region in each
+image while learning a classiﬁer to split both classes.
+We compare the results of our classiﬁer to the ones obtained by MIL-SegSVM as well as a Support
+Vector Machine. For the SVM, we either trained with the entire image information (SVM-Img) or
+with only the features extracted from the relevant, manually labeled, region of the eyes. For MC-1,
+MC-Pos and MC-Simplex, we proceed as follows. We ﬁll Z with the label vector and the BoW
+histograms of each entire image and leave the test set labels Ytst as unknown entries. For the MC-
+Simplex case, we preprocess Z by ‘1 -normalizing each histogram in ZX . This is done to avoid the
+Simplex projection picking a single bin and zeroing out the others, due to scale disparities in the bin
+counts. The obtained results are presented in Table 1, in terms of area under ROC curve (AUROC).
+These indicate both the fully supervised and the MIL approaches are more robust to the variability
+introduced by background noise, when compared to what is obtained when training without local-
+ization information (SVM-Img). However, this is done at either the cost of cumbersome labeling
+efforts or iteratively approximating the solution of MIL, an integer quadratic problem. By using Ma-
+trix Completion, in turn, we are able to surpass these classiﬁcation scores by solving a single convex
+minimization, since our error term E removes noise introduced by non-discriminative parts of the
+image. To validate this hypothesis, we run a sliding window search in the images using the same size
+criteria of [20]. We search for the box having the normalized histogram most closely resemblant to
+the corrected version in ZX according to the χ2 distance, and get the results shown in Fig. 2 (sim-
+ilar results were obtained using MC-Simplex). These show how the corrected histograms capture
+the semantic concept being trained. When comparing Matrix Completion approaches, we note that
+while the previous method MC-1 achieves competitive performance against previous baselines, it
+is outperformed by both MC-Pos, showing the improvement introduced by the domain knowledge
+constraints. Moreover, MC-1 does not allow to pursue further localization of the class representative
+since it introduces erroneous negative numbers in the histograms (Fig. 5).
+
+Figure 2: Histograms corrected by MC-Pos (7) preserve semantic meaning.
+
+Table 1: AUROC result comparison for the
+CMU Face dataset.
+Method
+SVM-Img [20]
+SVM-FS [20]
+MIL-SegSVM [20]
+MC-1 [11]
+MC-Pos
+MC-Simplex
+
+AUROC
+0.90
+0.94
+0.96
+0.96
+0.97
+0.96
+
+Figure 3: Erroneous histogram correction per-
+formed by MC-1 (5). Top: Global view. Bot-
+tom: Rescaling shows negative entries.
+
+7
+
+02004006008001000050100binbin count02004006008001000(cid:239)4(cid:239)2024binbin countMSRC dataset Next, we run our method on a multi-label object recognition setting. The MSRC
+dataset consists of 591 real world images distributed among 21 classes, with an average of 3 classes
+present per image. We mimic the setup of [27] and use as features histograms of Textons [23]
+concatenated with histograms of colors in the L+U+V space. Our algorithm is given the task of
+classifying the presence of each object class in the images. We proceed as in the CMU-Face dataset.
+In this dataset, we compare our formulations to MC-1 and several state-of-the-art approaches for
+categorization using Multiple-Label Multiple Instance Learning: Multiple Set Kernel MIL SVM
+(MSK-MIL) by Vijayanarasimhan et al. [27], Multi-label Multiple Instance Learning (ML-MIL)
+approach by Zha [32] and the Multi-task Random Texton Forest (MTL-RF) method of Vezhnevets
+et al. [26]. For localization, [32, 27] enumerate possible instances as the result of pre-segmenting
+images into a ﬁxed number of parts, whereas [26] provides pixel level classiﬁcation. The obtained
+average AUROC scores using 5-fold cross validation are shown in Table 2. Results show our meth-
+ods signiﬁcantly outperform MC-1. Moreover, MC-Simplex (8) outperforms results given by MIL
+techniques. Again, the fact that feature errors are corrected allows us to achieve good results while
+training with the entire image. This is opposed to relying on full blown pixel classiﬁcation or seg-
+mentation techniques, which is still considered an open problem in Computer Vision. Moreover,
+we point out that MSK-MIL is a kernel approach as opposed to ours which, despite non-linear error
+penalizations, assumes a linear classiﬁcation model in the feature space.
+
+15 Scene dataset Finally, we test the performance of our algorithm for scene classiﬁcation. Scenes
+differ from objects in the sense that they do not necessarily have a constrained physical location
+in the image. The 15 scene dataset is a multi-label dataset with 4485 images. According to the
+feature study in [30], we use GIST [21], the non-histogram feature achieving best results on this
+dataset. Notice that while not a BoW model, this feature represents the output energy of a bank of
+24 ﬁlters, thus also positive. We run our algorithm on 10 folds, each comprised by 1500 training
+and 2985 test examples. The results on Table 3 show again that our method is able to achieve results
+comparable to state-of-the-art. One should note here that the state-of-the-art results are obtained by
+using a kernel space, whereas our method is essentially a linear technique aided by non linear error
+corrections. When we compare our results to using a linear kernel, MC-Simplex is able to achieve
+better performance. Relating to the results obtained for CMU-Face and MSRC datasets, we note
+that the roles of the MC-Pos and MC-Simplex are inverted, thus emphasizing the need for existence
+of models with and without normalization.
+
+Table 2: 5-fold CV AUROC comparison for the
+MSRC dataset (Std. Dev. negligible at this pre-
+cision).
+
+Method
+MSK-MIL[27]
+ML-MIL [32]
+MTL-RF [26]
+MC-1 [11]
+MC-Pos
+MC-Simplex
+
+Avg. AUROC
+0.90
+0.90
+0.89
+0.87
+0.92
+0.90
+
+Table 3: 10-fold CV AUROC comparison for
+the 15 Scene dataset (Std. Dev. negligible at
+this precision).
+Method
+1-vs-all Linear SVM [30]
+1-vs-all χ2 SVM [30]
+MC-1 [11]
+MC-Pos
+MC-Simplex
+
+Avg. AUROC
+0.94
+0.97
+0.90
+0.91
+0.94
+
+6 Conclusions
+
+We presented two new convex methods for performing semi-supervised multi-label classiﬁcation
+of histogram data, with proven convergence properties. Casting the classiﬁcation under a Matrix
+Completion framework allows for easily handling of partial data and labels and robustness to out-
+liers. Moreover, since histograms of full images contain the information for parts contained therein,
+the error embedded in our formulation is able to capture intra class variability arising from differ-
+ent backgrounds. Experiments show that our methods perform comparably to state-of-the-art MIL
+methods in several image datasets, surpassing them in several cases, without the need for precise
+localization of objects in the training set.
+Acknowledgements: Support for this research was provided by the Portuguese Foundation for Science and Technology through the Carnegie Mellon Portugal pro-
+gram under the project FCT/CMU/P11. Partially funded by FCT project Printart PTDC/EEA-CRO/098822/2008. Fernando De la Torre is partially supported by Grant
+CPS-0931999 and NSF IIS-1116583. Any opinions, ﬁndings and conclusions or recommendations expressed in this material are those of the author(s) and do not
+necessarily reﬂect the views of the National Science Foundation.
+
+8
+
+References
+[1] P. Aguiar, J. Xavier, and M. Stosic. Spectrally optimal factorization of incomplete matrices. In CVPR,
+2008.
+[2] L. Balzano, R. Nowak, and B. Recht. Online identiﬁcation and tracking of subspaces from highly incom-
+plete information. In Proceedings of the 48th Annual Allerton Conference, 2010.
+[3] K. Barnard and D. Forsyth. Learning the semantics of words and pictures. In ICCV, 2001.
+[4] T. L. Berg, A. C. Berg, J. Edwards, and D. A. Forsyth. Who’s in the Picture? In NIPS, 2004.
+[5] R. S. Cabral, J. P. Costeira, F. De la Torre, and A. Bernardino. Fast incremental method for matrix
+completion: an application to trajectory correction. In ICIP, 2011.
+[6] J.-F. Cai, E. J. Candes, and Z. Shen. A singular value thresholding algorithm for matrix completion. SIAM
+J. on Optimization, 20(4):1956–1982, 2008.
+[7] E. Candes and B. Recht. Exact low-rank matrix completion via convex optimization. In Allerton, 2008.
+[8] Y. Dai, H. Li, and M. He. Element-wise factorization for n-view projective reconstruction. In ECCV,
+2010.
+[9] J. Duchi, S. Shalev-Shwartz, Y. Singer, and T. Chandra. Efﬁcient projections onto the l1-ball for learning
+in high dimensions. In ICML, 2008.
+[10] M. Fazel, H. Hindi, and S. P. Boyd. A rank minimization heuristic with application to minimum order
+system approximation. In Proceedings American Control Conference, 2001.
+[11] A. B. Goldberg, X. Zhu, B. Recht, J. ming Xu, and R. Nowak. Transduction with matrix completion:
+Three birds with one stone. In NIPS, 2010.
+[12] J.-B. Hiriart-Urruty and C. Lemaréchal. Fundamentals of Convex Analysis. Grundlehren der mathematien
+Wissenschaften. Springer-Verlag, New York–Heildelberg–Berlin, 2001.
+[13] R. H. Keshavan, A. Montanari, and S. Oh. Matrix completion from a few entries. IEEE Trans. Inf. Theor.,
+56:2980–2998, June 2010.
+[14] V. Lavrenko, R. Manmatha, and J. Jeon. A model for learning the semantics of pictures. In NIPS, 2003.
+[15] Z. Lin and M. Chen. The Augmented Lagrange Multiplier Method for Exact Recovery of Corrupted
+Low-Rank Matrices. preprint.
+[16] G. Liu, Z. Lin, and Y. Yu. Robust subspace segmentation by low-rank representation. In ICML, 2010.
+[17] D. G. Lowe. Distinctive image features from scale-invariant keypoints. IJCV, 60(2):91–110, 2004.
+[18] S. Ma, D. Goldfarb, and L. Chen. Fixed point and bregman iterative methods for matrix rank minimiza-
+tion. Mathematical Programming, to appear.
+[19] O. Maron and A. Ratan. Multiple-instance learning for natural scene classiﬁcation. In ICML, 1998.
+[20] M. H. Nguyen, L. Torresani, F. De la Torre, and C. Rother. Weakly supervised discriminative localization
+and classiﬁcation: a joint learning process. In ICCV, 2009.
+[21] A. Oliva and A. Torralba. Modeling the shape of the scene: A holistic representation of the spatial
+envelope. IJCV, 42:145–175, 2001.
+[22] Y. Peng, A. Ganesh, J. Wright, W. Xu, and Y. Ma. Rasl: Robust alignment by sparse and low-rank
+decomposition for linearly correlated images. In CVPR, 2010.
+[23] J. Shotton, J. M. Winn, C. Rother, and A. Criminisi. Textonboost: Joint appearance, shape and context
+modeling for multi-class object recognition and segmentation. In ECCV, 2006.
+[24] J. Sivic and A. Zisserman. Video Google: A text retrieval approach to object matching in videos. In
+CVPR, 2003.
+[25] K.-C. Toh and S. Yun. An accelerated proximal gradient algorithm for nuclear norm regularized least
+squares problems. preprint, 2009.
+[26] A. Vezhnevets and J. Buhmann. Towards weakly supervised semantic segmentation by means of multiple
+instance and multitask learning. In CVPR, 2010.
+[27] S. Vijayanarasimhan and K. Grauman. What’s it going to cost you?: Predicting effort vs. informativeness
+for multi-label image annotations. In CVPR, 2009.
+[28] H. Wang, C. Ding, and H. Huang. Multi-label linear discriminant analysis. In ECCV, 2010.
+[29] J. Wright, A. Ganesh, S. Rao, and Y. Ma. Robust principal component analysis: Exact recovery of
+corrupted low-rank matrices by convex optimization. In NIPS, 2009.
+[30] J. Xiao, J. Hays, K. A. Ehinger, A. Oliva, and A. Torralba. SUN database: Large-scale scene recognition
+from abbey to zoo. In CVPR, 2010.
+[31] C. Yang, M. Dong, and J. Hua. Region-based image annotation using asymmetrical support vector
+machine-based multiple-instance learning. In CVPR, 2006.
+[32] Z.-j. Zha, X.-s. Hua, T. Mei, J. Wang, and G.-j. Q. Zengfu. Joint multi-label multi-instance learning for
+image classiﬁcation. In CVPR, 2008.
+[33] Z.-h. Zhou and M. Zhang. Multi-instance multi-label learning with application to scene classiﬁcation. In
+NIPS, 2006.
+[34] G. Zhu, S. Yan, and Y. Ma. Image tag reﬁnement towards low-rank, content-tag prior and error sparsity.
+In ICMM, 2010.
+
+9
+
+

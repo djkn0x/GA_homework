@@ -1,0 +1,621 @@
+Structured Learning for Cell Tracking
+
+Xinghua Lou, Fred A. Hamprecht
+Heidelberg Collaboratory for Image Processing (HCI)
+Interdisciplinary Center for Scientiﬁc Computing (IWR)
+University of Heidelberg, Heidelberg 69115, Germany
+{xinghua.lou,fred.hamprecht}@iwr.uni-heidelberg.de
+
+Abstract
+
+We study the problem of learning to track a large quantity of homogeneous objects
+such as cell tracking in cell culture study and developmental biology. Reliable
+cell tracking in time-lapse microscopic image sequences is important for modern
+biomedical research. Existing cell tracking methods are usually kept simple and
+use only a small number of features to allow for manual parameter tweaking or
+grid search. We propose a structured learning approach that allows to learn op-
+timum parameters automatically from a training set. This allows for the use of a
+richer set of features which in turn affords improved tracking compared to recently
+reported methods on two public benchmark sequences.
+
+1
+
+Introduction
+
+One distinguishing property of life is its temporal dynamics, and it is hence only natural that time
+lapse experiments play a crucial role in current research on signaling pathways, drug discovery and
+developmental biology [17]. Such experiments yield a very large number of images, and reliable
+automated cell tracking emerges naturally as a prerequisite for further quantitative analysis.
+Even today, cell tracking remains a challenging problem in dense populations, in the presence of
+complex behavior or when image quality is poor. Existing cell tracking methods can broadly be
+categorized as deformable models, stochastic ﬁltering and object association. Deformable models
+combine detection, segmentation and tracking by initializing a set of models (e.g. active contours) in
+the ﬁrst frame and updating them in subsequent frames (e.g. [17, 8]). Large displacements are difﬁ-
+cult to capture with this class of techniques and are better handled by state space models, e.g. in the
+guise of stochastic ﬁltering. The latter also allows for sophisticated observation models (e.g. [20]).
+Stochastic ﬁltering builds on a solid statistical foundation, but is often limited in practice due to its
+high computational demands. Object association methods approximate and simplify the problem by
+separating the detection and association steps: once object candidates have been detected and char-
+acterized, a second step suggests associations between object candidates at different frames. This
+class of methods scales well [21, 16, 13] and allows the tracking of thousands of cells in 3D [19].
+All of the above approaches contain energy terms whose parameters may be tedious or difﬁcult
+to adjust. Recently, great efforts have been made to produce better energy terms with helps of
+machine learning techniques. This was ﬁrst accomplished by casting tracking as a local afﬁnity
+prediction problem such as binary classiﬁcation with either ofﬂine [1] or online learning [11, 5, 15],
+weakly supervised learning with imperfect oracles [27], manifold appearance model learning [25],
+or ranking [10, 18]. However, these local methods fail to capture the very important dependency
+among associations, hence the resulting local afﬁnities do not necessarily guarantee a better global
+association [26]. To address this limitation, [26] extended the RankBoost method from [18] to rank
+global associations represented as a Conditional Random Field (CRF). Regardless of this, it has
+two major drawbacks. Firstly, it depends on a set of artiﬁcially generated false association samples
+that can make the training data particularly imbalanced and the training procedure too expensive
+
+1
+
+for large-scale tracking problems. Secondly, RankBoost desires the ranking feature to be positively
+correlated with the ﬁnal ranking (i.e. the association score) [10]. This in turn requires careful pre-
+adjustment of the sign of each feature based on some prior knowledge [18]. Actually, this prior
+knowledge may not always be available or reliable in practice.
+The contribution of this paper is two-fold. We ﬁrst present an extended formulation of the object
+association models proposed in the literature. This generalization improves the expressiveness of the
+model, but also increases the number of parameters. We hence, secondly, propose to use structured
+learning to automatically learn optimum parameters from a training set, and hence proﬁt fully from
+this richer description. Our method addresses the limitations of aforementioned learning approaches
+in a principled way.
+The rest of the paper is organized as follows. In section 2, we present the extended object association
+models and a structured learning approach for global afﬁnity learning. In section 3, an evaluation
+shows that our framework inherits the runtime advantage of object association while addressing
+many of its limitations. Finally, section 4 states our conclusions and discusses future work.
+
+2 Structured Learning for Cell Tracking
+
+2.1 Association Hypotheses and Scoring
+
+We assume that a previous detection and segmentation step has identiﬁed object candidates in all
+frames, see Fig. 1. We set out to ﬁnd that set of object associations that best explains these obser-
+vations. To this end, we admit the following set E of standard events [21, 13]: a cell can move
+or divide and it can appear or disappear. In addition, we allow two cells to (seemingly) merge, to
+account for occlusion or undersegmentation; and a cell can (seemingly) split, to allow for the lifting
+of occlusion or oversegmentation. These additional hypotheses are useful to account for the errors
+that typically occur in the detection and segmentation step in crowded or noisy data. The distinction
+between division and split is reasonable given that typical ﬂuorescence stains endow the anaphase
+with a distinctive appearance.
+
+Figure 1: Toy example: two sets of object candidates, and a small subset of the possible associa-
+tion hypotheses. One particular interpretation of the scene is indicated by colored arrows (left) or
+equivalently by a conﬁguration of binary indicator variables z (rightmost column in table).
+
+Given a pair of object candidate lists x = {C , C (cid:48)} in two neighboring frames, there is a multitude
+of possible association hypotheses, see Fig. 1. We have two tasks: ﬁrstly, to allow only consistent
+associations (e.g. making sure that each cell in the second frame is accounted for only once); and
+secondly to identify, among the multitude of consistent hypotheses, the one that is most compatible
+as an inner product (cid:10)f e
+c,c(cid:48) we (cid:11). Here, f e
+with the observations, and with what we have learned from the training data.
+We express this compatibility of the association between c ∈ P (C ) and c(cid:48) ∈ P (C (cid:48) ) by event e ∈ E
+c,c(cid:48) is a feature vector that characterizes the discrepancy (if
+any) between object candidates c and c(cid:48) ; and we is a parameter vector that encodes everything we
+
+2
+
+HypothesesFrame t1cFrame t+1Input Frame Pair2c3c1c2c3c4c5c4c5c1c1c2c3c2c3c1c2c1c2c1c2c1cmoves tomoves todivides tomoves todivides tosplits toFeaturesmove,11ccfmove,21ccfdivide},{,211cccfmove,12ccfdivide},{,322cccfsplit},{,543cccf},,{32ccc1C},,,,{5432ccccc1Ccc5c3cmoves to…       …                       …                …             …            …move,53ccf4c3cmoves tomove,43ccfzmove,11cczmove,21cczdivide},{,211ccczmove,12cczdivide},{,322ccczsplit},{,543ccczmove,53cczmove,43cczValue10001100e(1)
+
+(cid:88)
+(cid:88)
+(cid:88)
+have learned from the training data. Summing over all object candidates in either of the frames and
+over all types of events gives the following compatibility function:
+c,c(cid:48) , we (cid:105)z e
+L(x, z ; w) =
+(cid:104)f e
+(cid:88)
+c,c(cid:48) = 1 and (cid:88)
+(cid:88)
+s. t. (cid:88)
+c,c(cid:48)
+e∈E
+c(cid:48)∈P (C (cid:48) )
+c∈P (C )
+c,c(cid:48) ∈ {0, 1}
+c,c(cid:48) = 1 with z e
+z e
+z e
+e∈E
+e∈E
+c(cid:48)∈P (C (cid:48) )
+c∈P (C )
+The constraints in the last line involve binary indicator variables z that reﬂect the consistency re-
+quirements: each candidate in the ﬁrst frame must have a single fate, and each candidate from the
+second frame a unique history. As an important technical detail, note that P (C ) := C ∪ (C ⊗ C )
+is a set comprising each object candidate, as well as all ordered pairs of object candidates from
+a frame1 . This allows us to conveniently subsume cell divisions, splits and mergers in the above
+equation. Overall, the compatibility function L(x, z ; w), i.e. the global afﬁnity measure, states how
+well a set of associations z matches the observations f (x) computed from the raw data x, given the
+knowledge w from the training set.
+The remaining tasks, discussed next, are how to learn the parameters w from the training data
+(section 2.2); given these, how to ﬁnd the best possible associations z (section 2.3); and ﬁnding
+useful features (section 2.4).
+
+(2)
+
+2.2 Structured Max-Margin Parameter Learning
+
+In learning the parameters automatically from a training set, we pursue two goals: ﬁrst, to go beyond
+manual parameter tweaking in obtaining the best possible performance; and second, to make the
+process as facile as possible for the user. This is under the assumption that most experimentalists
+ﬁnd it easier to specify what a correct tracking should look like, rather than what value a more-or-less
+obscure parameter should have.
+n}, n = 1, . . . , N ,
+Given N training frame pairs X = {xn} and their correct associations Z ∗ = {z ∗
+the best set of parameters is the optimizer of
+R(w ; X , Z ∗ ) + λΩ(w)
+(3)
+arg min
+w
+Here, R(w; X, Z ∗ ) measures the empirical loss of the current parametrization w given the train-
+ing data X , Z ∗ . To prevent overﬁtting to the training data, this is complemented by the reg-
+ularizer Ω(w) that favors parsimonious models. We use L1 or L2 regularization (Ω(w) =
+p/p, p = {1, 2}), i.e. a measure of the length of the parameter vector w . The latter is of-
+||w||p
+(cid:80)N
+ten used for its numerical efﬁciency, while the former is popular thanks to its potential to in-
+duce sparse solutions (i.e., some parameters can become zero). The empirical loss is given by
+R(w ; X , Z ∗ ) = 1
+n , ˆzn (w; xn )). Here ∆(z ∗ , ˆz ) is a loss function that measures the
+i=1 ∆(z ∗
+discrepancy between a true association z ∗ and a prediction by specifying the fraction of missed
+N
+(cid:88)
+(cid:88)
+(cid:88)
+events w.r.t. the ground truth:
+∆(z ∗ , ˆz ) =
+e∈E
+c∈P (C )
+c(cid:48)∈P (C (cid:48) )
+This decomposable function allows for exact inference when solving Eq. 5 [6].
+Importantly, both the input (objects from a frame pair) and output (associations between objects)
+in this learning problem are structured. We hence resort to max-margin structured learning [2] to
+exploit the structure and dependency within the association hypotheses.
+In comparison to other
+aforementioned learning methods, structured learning allows us to directly learn the global afﬁnity
+measure, avoid generating many artiﬁcial false association samples, and drop any assumptions on
+the signs of the features. Structured learning has been successfully applied to many complex real
+world problems such as word/sequence alignment [22, 24], graph matching [6], static analysis of
+binary executables [14] and segmentation [3].
+In particular, we attempt to ﬁnd the decision boundary that maximizes the margin between the
+correct association z ∗
+n and the closest runner-up solution. An equivalent formulation is the condition
+1For the example in Fig. 1, P (C ) = {c1 , c2 , c3 , {c1 , c2 }, {c1 , c3 }, {c2 , c3 }}.
+
+c,c(cid:48) (1 − ˆz e
+z ∗e
+c,c(cid:48) ).
+
+1
+|z ∗ |
+
+(4)
+
+3
+
+that the score of z ∗
+n be greater than that of any other solution. To allow for regularization, one can
+relax this constraint by introducing slack variables ξn , which ﬁnally yields the following objective
+(cid:80)N
+function for the max-margin structured learning problem from Eq. 3:
+1
+arg min
+n=1 ξn + λΩ(w)
+w,ξ≥0
+N
+n ; w) − L(xn , ˆzn ; w) ≥ ∆(z ∗
+∀n, ∀ ˆzn ∈ Zn : L(xn , z ∗
+n , ˆzn ) − ξn ,
+s. t.
+where Zn is the set of possible consistent associations and ∆(z ∗
+n , ˆzn ) − ξn is known as “margin-
+rescaling” [24]. Intuitively, it pushes the decision boundary further away from the “bad” solutions
+with high losses.
+
+(5)
+
+2.3
+
+Inference and Implementation
+
+Since Eq. 5 involves an exponential number of constraints, the learning problem cannot be rep-
+resented explicitly, let alone solved directly. We thus resort to the bundle method [23] which, in
+turn, is based on the cutting-planes approach [24]. The basic idea is as follows: Start with some
+parametrization w and no constraints. Iteratively ﬁnd, ﬁrst, the optimum associations for the current
+w by solving, for all n, ˆzn = arg maxz {L(xn , z ; w) + ∆(z ∗
+n , z )}. Use all these ˆzn to identify the
+most violated constraint, and add it to Eq. 5. Update w by solving Eq. 5 (with added constraints),
+then ﬁnd new best associations, etc. pp. For a given parametrization, the optimum associations can
+be found by integer linear programming (ILP) [16, 21, 13].
+Our framework has been implemented in Matlab and C++, including a labeling GUI for the gen-
+eration of training set associations, feature extraction, model inference and the bundle method. To
+reduce the search space and eliminate hypotheses with no prospect of being realized, we constrain
+the hypotheses to a k-nearest neighborhood with distance thresholding. We use IBM CPLEX2 as
+the underlying optimization platform for the ILP, quadratic programming and linear programming
+as needed for solving Eq. 5 [23].
+
+2.4 Features
+
+To differentiate similar events (e.g. division and split) and resolve ambiguity in model inference, we
+need rich features to characterize different events. In additional to basic features such as size/position
+[21] and intensity histogram [16], we also designed new features such as “shape compactness” for
+oversegmentation and “angle pattern” for division. Shape compactness relates the summed areas
+of two object candidates to the area of their union’s convex hull. Angle pattern describes the con-
+stellation of two daughter cells relative to their mother. Features can be deﬁned on a pair of object
+candidates or on an individual object candidate only. Our features are categorized in Table 1. Note
+that the same feature can be used for different events.
+
+Table 1: Categorization of features.
+Feature Description
+difference in position, distance to border, overlap with border;
+difference in intensity histogram/sum/mean/deviation, intensity of father cell;
+difference in shape, difference in size, shape compactness, shape evenness;
+division angle pattern, mass evenness, eccentricity of father cell.
+
+Position
+Intensity
+Shape
+Others
+
+3 Results
+
+We evaluated the proposed method on two publicly available image sequences provided in conjunc-
+tion with the DCellIQ project3 [16] and the Mitocheck project4 [12]. The two datasets show a certain
+degree of variations such as illumination, cell density and image compression artifacts (Fig. 2). The
+
+2 http://www-01.ibm.com/software/integration/optimization/cplex-optimizer/
+3 http://www.cbi-tmhs.org/Dcelliq/ﬁles/051606 HeLaMCF10A DMSO 1.rar
+4 http://www.mitocheck.org/cgi-bin/mtc?action=show movie;query=243867
+
+4
+
+GFP stained cell nuclei were segmented using the method in [19], yielding an F-measure over 99.3%
+by counting. Full ground truth associations for training and evaluation were generated with a Mat-
+lab GUI tool at a rate of approximately 20 frames/hour. Some statistics about these two datasets are
+shown in Table 2.
+
+Name
+DCellIQ
+Mitocheck
+
+Table 2: Some statistics about the datasets in our evaluation.
+Image Size
+Segm. F-Measure Compressed
+No. of Frames No. of Cells
+512 × 672
+No
+10664
+99.5%
+100
+1024 × 1344
+24096
+Yes
+94
+99.3%
+
+Figure 2: Selected raw images from the DCellIQ sequence (top) and the Mitocheck sequence (bot-
+tom). The Mitocheck sequence exhibits higher cell density, larger intensity variability and “block-
+ness” artifacts due to image compression.
+
+Task 1: Efﬁcient Tracking for a Given Sequence
+We ﬁrst evaluate our method on a task that is frequently encountered in practice: the user simply
+wishes to obtain a good tracking for a given sequence with the smallest possible effort. For a fair
+comparison, we extended Padﬁeld’s method [21] to account for the six events described in section
+2.1 and used the same features (viz., size and position) and weights as in [21]. Hand-tuning of the
+parameters results in a high accuracy of 98.4% (i.e. 1 - total loss) as shown in Table 3 (2nd row).
+A detailed analysis of the error counts for speciﬁc events shows that the method accounts well for
+moves, but has difﬁculty with disappearance and split events. This is mainly due to the limited
+descriptive power of the simple features used. To study the difference between manual tweaking
+and learning of the parameters, we used the learning framework presented here to optimize the
+model and obtained a reduction of the total loss from 1.64% to 0.65% (3rd row). This can be
+considered as the limit of this model. Note that the learned parametrization actually deteriorates the
+detection of divisions because the learning aims at minimizing the overall loss across all events. In
+obtaining these results, one third of the entire sequence was used for training, just as in all subsequent
+comparisons.
+With 37 features included and their weights optimized using structured learning, our model fully
+proﬁts from this richer description and achieves a total loss of only 0.30% (4th row) which is a
+signiﬁcant improvement over [21, 16] (2nd/7th row) and manual tweaking (6th row). Though a
+certain amount of efforts is needed for creating the training set, our method allows experimentalists
+to contribute their expertise in an intuitive fashion. Some example associations are shown in Fig. 3.
+The learned parameters are summarized in Fig. 4 (top). They afford the following observations:
+Firstly, features on cell size and shape are generally of high importance, which is in line with the
+assumption in [21]. Secondly, the correlations of the features with the ﬁnal association score are
+
+5
+
+T=25T=50T=75T=25T=50T=75Table 3: Performance comparison on the DCellIQ dataset. The header row shows the number of
+events occurring for moves, divisions, appearance, disappearance, splits and mergers. The remaining
+entries give the error counts for each event, summed over the entire sequence.
+mov
+div
+app
+dis
+spl
+54
+76
+78
+104
+10156
+30
+26
+16
+18
+71
+6
+5
+5
+25
+21
+2
+4
+6
+15
+1
+6
+22
+9
+3
+4
+2
+19
+16
+24
+56
+-
+-
+-
+-
+-
+0
+18
+14
+2
+12
+
+Padﬁeld et al. [21]
+Padﬁeld et al. w/ learning
+Ours w/ learning (L2 regula.)
+Ours w/ learning (L1 regula.)
+Ours w/ manual tweaking
+Li et al. [16]
+Local learning by Random Forest
+
+mer
+55
+12
+10
+6
+9
+5
+-
+13
+
+total loss
+-
+1.64%
+0.65%
+0.30%
+0.45%
+1.12%
+6.18%a
+0.55%
+
+aHere we use the best reported error matching rate in [16] (similar to our loss).
+
+Figure 3: Some diverging associations by [21] (top) and our method (bottom). Color code: yellow
+– move; red – division; green – split; cyan – merger.
+
+automatically learned. For example, shape compactness is positively correlated with split but neg-
+atively with division. This is in line with the intuition that an oversegmentation conserves compact
+shape, while a true division seemingly pushes the daughters far away from each other (in the present
+kind of data, where only DNA is labeled). Finally, in spite of the regularization, many features are
+associated with large parameter values, which is key to the improved expressive power.
+Task 2: Tracking for High-Throughput Experiments
+The experiment described in the foregoing draws both training and test samples from the same time
+lapse experiment. However, in high-throughput experiments such as in the Mitocheck project [12],
+it is more desirable to train on one or a few sequences, and make predictions on many others. To
+emulate this situation, we have used the parameters w trained in the foregoing on the DCellIQ
+sequence [16] and used these to estimate the tracking of the Mitocheck dataset. The main focus of
+the Mitocheck project is on accurate detection of mitosis (cell division). Despite the difference in
+illumination and cell density from the training data, and despite the segmentation artifacts caused
+by the compression of the image sequence, our method shows a high generalization capability and
+obtains a total loss of 0.78%.
+In particular, we extract 93.2% of 384 mitosis events which is a
+signiﬁcant improvement over the mitosis detection rate reported in [12] (81.5%, 294 events).
+Comparison to Local Afﬁnity Learning
+We also developed a local afﬁnity learning approach that is in spirit of [1, 15]. Rather than using
+AdaBoost [9], we chose Random Forest (RF) [4] which provides fairly comparable classiﬁcation
+power [7]. We sample positive associations from the ground truth and randomly generate false
+associations. RF classiﬁers are built for each event independently. The predicted probabilities by
+the RF classiﬁers are used to compute the overall association score as in Eq. 6 (with the same
+constraints in Eq. 2). Since we have multiple competing events (one cell can only have a single
+
+6
+
+Figure 4: Parameters w learned from the training data with L2 (top) or L1 (bottom) regularization.
+Parameters weighing the features for different events are colored differently. Both parameter vectors
+are normalized to unit 1-norm, i.e. (cid:107)w(cid:107)1 = 1.
+
+Table 4: Performance comparison on the Mitocheck dataset. The method was trained on the DCellIQ
+dataset. The header row shows the number of events occurring for moves, divisions, appearance, dis-
+appearance, splits and mergers. The remaining entries give the error counts for each event, summed
+over the entire sequence.
+
+Padﬁeld et al. w/ learning
+Ours w/ learning (L2 regula.)
+Ours w/ learning (L1 regula.)
+Local learning by Random Forest
+
+mov
+22520
+171
+98
+93
+214
+
+div
+384
+85
+26
+35
+281
+
+app
+310
+58
+31
+54
+162
+
+dis
+304
+47
+25
+25
+10
+
+spl
+127
+53
+43
+26
+82
+
+mer
+132
+13
+9
+48
+68
+
+total loss
+-
+1.39%
+0.78%
+0.98%
+2.33%
+
+fate), we also introduce weights {αe } to capture the dependencies between events. These weights
+are optimized via a grid search on the training data.
+(cid:88)
+(cid:88)
+(cid:88)
+e∈E
+c∈P (C )
+c(cid:48)∈P (C (cid:48) )
+
+c,c(cid:48) )z e
+αeProb(f e
+c,c(cid:48)
+
+L(x, z ; w) =
+
+(6)
+
+The results are shown in Table 3 (8th row) and Table 4 (5th row), which afford the following ob-
+servations. Firstly, a locally strong afﬁnity prediction does not necessarily guarantee a better global
+association. Secondly, local learning shows particularly weak generalization capability.
+Sensitivity to Training Set
+The success of supervised learning depends on the representativeness (and hence also size) of the
+training set. To test the sensitivity of the results to the training data used, we drew different numbers
+of training image pairs randomly from the entire sequence and used the remaining pairs for testing.
+For each training set size, this experiment is repeated 10 times. The mean and deviation of the losses
+on the respective test sets is shown in Fig. 5. According to the one-standard-error-rule, associations
+between at least 15 or 20 image pairs are desirable, which can be accomplished in well below an
+hour of annotation work.
+
+7
+
+−0.06−0.04−0.0200.020.04ImportanceFeature Importance (L2)  movdivappdissplmer−0.100.1diff. positiondiff. sizediff. shapediff. inten. hist.diff. inten. sumdiff. inten. meandiff. inten. devia.diff. inten. sumangle patternfather intensityfather eccentricitysize evennessshape compactnessmass evennessoverlap with borderdistance to borderdiff. sizediff. inten. sumdiff. inten. meandiff. inten. devia.overlap with borderdistance to borderdiff. sizediff. inten. sumdiff. inten. meandiff. inten. devia.diff. positiondiff. sizediff. shapediff. inten. meanshape compactnessmass evennessdiff. positiondiff. sizediff. shapediff. inten. meanshape compactnessmass evennessImportanceFeature Importance (L1)  L1 vs. L2 Regularization
+The results of L1 vs. L2 regularization are comparable (see Table 3 and Table 4). While L1 regular-
+ization yields sparser feature selection 4 (bottom), it has a much slower convergence rate (Fig. 6).
+The staircase structure shows that, due to sparse feature selection, the bundle method has to ﬁnd
+more constraints to escape from a local minimum.
+
+Figure 5: Learning curve of structured learning
+(with L2 regularization).
+
+Figure 6: Convergence rates of structured learn-
+ing (L1 vs. L2 regularization).
+
+4 Conclusion & Future Work
+
+We present a new cell tracking scheme that uses more expressive features and comes with a struc-
+tured learning framework to train the larger number of parameters involved. Comparison to related
+methods shows that this learning scheme brings signiﬁcant improvements in performance and, in
+our opinion, usability.
+We currently work on further improvement of the tracking by considering more than two frames at
+a time, and on an active learning scheme that should reduce the amount of required training inputs.
+
+Acknowledgement
+
+We are very grateful for partial ﬁnancial support by CellNetworks Cluster (EXC81), FORSYS-
+ViroQuant (0313923), SBCancer, DFG (GRK 1653) and “Enable fund” of University of Heidel-
+berg. We also thank Bjoern Andres, Jing Yuan and Christoph Straehle for their comments on the
+manuscript.
+
+References
+[1] S. Avidan. Ensemble Tracking. In CVPR, 2005.
+[2] G. Bakir, T. Hofmann, B. Schoelkopf, A. J. Smola, B. Taskar, and S. Vishwanathan. Predicting
+Structured Data. MIT Press, Cambridge, MA, 2006.
+[3] L. Bertelli, T. Yu, D. Vu, and B. Gokturk. Kernelized Structural SVM Learning for Supervised
+Object Segmentation. In CVPR, 2011.
+[4] L. Breiman. Random Forests. Mach Learn, 45(1):5–32, 2001.
+[5] M. D. Breitenstein, F. Reichlin, B. Leibe, E. Koller-Meier, and L. V. Gool. Robust Tracking-
+by-Detection using a Detector Conﬁdence Particle Filter. In ICCV, 2009.
+[6] T. S. Caetano, J. J. McAuley, L. Cheng, Q. V. Le, and A. J. Smola. Learning Graph Matching.
+IEEE T Pattern Anal, 31(6):1048–1058, 2009.
+[7] R. Caruana and A. Niculescu-Mizil. An Empirical Comparison of Supervised Learning Algo-
+rithms. In ICML, pages 161–168, 2006.
+
+8
+
+0102030400.20.40.60.811.21.41.6Number of frame pairs for trainingAverage test loss (× 10−2)Sensitivity to Training Data Size10203040506070051015202530Number of constraintsApproximation gap ε (× 10−3)Convergence Rate (L1 vs. L2)  L1 RegularizationL2 Regularization[8] O. Dzyubachyk, W. A. van Cappellen, J. Essers, et al. Advanced Level-Set-Based Cell Track-
+ing in Time-Lapse Fluorescence Microscopy. IEEE T Med Imag, 29(3):852, 2010.
+[9] Y. Freund. An adaptive version of the boost by majority algorithm. Mach Learn, 43(3):293–
+318, 2001.
+[10] Y. Freund, R. Iyer, R. E. Schapire, , and Y. Singer. An Efﬁcient Boosting Algorithm for
+Combining Preferences. J Mach Learn Res, 4:933–969, 2003.
+[11] H. Grabner and H. Bischof. On-line Boosting and Vision. In CVPR, 2006.
+[12] M. Held, M. H. A. Schmitz, et al. CellCognition: time-resolved phenotype annotation in high-
+throughput live cell imaging. Nature Methods, 7(9):747–754, 2010.
+[13] T. Kanade, Z. Yin, R. Bise, S. Huh, S. E. Eom, M. Sandbothe, and M. Chen. Cell Image
+Analysis: Algorithms, System and Applications. In WACV, 2011.
+[14] N. Karampatziakis. Static Analysis of Binary Executables Using Structural SVMs. In NIPS,
+2010.
+[15] C.-H. Kuo, C. Huang, , and R. Nevatia. Multi-Target Tracking by On-Line Learned Discrimi-
+native Appearance Models. In CVPR, 2010.
+[16] F. Li, X. Zhou, J. Ma, and S. Wong. Multiple Nuclei Tracking Using Integer Programming for
+Quantitative Cancer Cell Cycle Analysis. IEEE T Med Imag, 29(1):96, 2010.
+[17] K. Li, E. D. Miller, M. Chen, et al. Cell population tracking and lineage construction with
+spatiotemporal context. Med Image Anal, 12(5):546–566, 2008.
+[18] Y. Li, C. Huang, and R. Nevatia. Learning to Associate: HybridBoosted Multi-Target Tracker
+for Crowded Scene. CVPR, 2009.
+[19] X. Lou, F. O. Kaster, M. S. Lindner, et al. DELTR: Digital Embryo Lineage Tree Reconstructor.
+In ISBI, 2011.
+[20] E. Meijering, O. Dzyubachyk, I. Smal, and W. A. van Cappellen. Tracking in cell and devel-
+opmental biology. Semin Cell Dev Biol, 20(8):894 – 902, 2009.
+[21] D. Padﬁeld, J. Rittscher, and B. Roysam. Coupled Minimum-Cost Flow Cell Tracking for
+High-Throughput Quantitative Analysis. Med Image Anal, 2010.
+[22] B. Taskar, S. Lacoste-Julien, and M. I. Jordan. Structured Prediction, Dual Extragradient and
+Bregman Projections. J Mach Learn Res, 7:1627–1653, 2006.
+[23] C. H. Teo, S. V. N. Vishwanthan, A. J. Smola, and Q. V. Le. Bundle methods for regularized
+risk minimization. J Mach Learn Res, 11:311–365, 2010.
+[24] I. Tsochantaridis, T. Joachims, T. Hofmann, and Y. Altun. Large Margin Methods for Struc-
+tured and Interdependent Output Variables. J Mach Learn Res, 6(2):1453, 2006.
+[25] X. Wang, G. Hua, and T. X. Han. Discriminative Tracking by Metric Learning. In ECCV,
+2010.
+[26] B. Yang, C. Huang, and R. Nevatia. Learning Afﬁnities and Dependencies for Multi-Target
+Tracking using a CRF Model. In CVPR, 2011.
+[27] B. Zhong, H. Yao, S. Chen, et al. Visual Tracking via Weakly Supervised Learning from
+Multiple Imperfect Oracles. In CVPR, 2010.
+
+9
+
+

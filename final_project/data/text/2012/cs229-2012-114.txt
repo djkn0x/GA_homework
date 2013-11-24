@@ -1,0 +1,411 @@
+Learning to Play 2D Video Games
+
+Justin Johnson
+jcjohns@stanford.edu
+
+Mike Roberts
+mlrobert@stanford.edu
+
+Matt Fisher(cid:3)
+mdfisher@stanford.edu
+
+Abstract
+
+Our goal in this project is to implement a machine learn-
+ing system which learns to play simple 2D video games.
+More speciﬁcally, we focus on the problem of building a
+system that is capable of learning to play a variety of dif-
+ferent games well, rather than trying to build a system that
+can play a single game perfectly.
+We begin by encoding individual video frames using fea-
+tures that capture the absolute and relative positions be-
+tween visible objects. This feature transform: (1) general-
+izes across a wide class of 2D games; and (2) produces very
+sparse feature vectors, which we exploit to drastically re-
+duce computation times. To learn an appropriate gameplay
+policy, we experiment with model-based and model-free re-
+inforcement learning methods. We ﬁnd that the SARSA((cid:21))
+algorithm for model-free reinforcement learning success-
+fully learns to play PONG, FROGG ER , DANC E -DANCE -
+R EVO LU T ION , as well as several other games of compa-
+rable complexity.
+
+1. Introduction
+AI systems are capable of playing speciﬁc video games,
+such as Super Mario World [4] and Starcraft [7], with com-
+parable skill to expert human players. However, all such AI
+systems rely on a human to somehow perform the challeng-
+ing and tedious task of specifying the game rules, objectives
+and entities.
+For example, state-of-the-art AI systems for playing
+Mario and Starcraft can play these games effectively, even
+when faced with challenging and complex game states.
+However, these systems rely heavily on hand-crafted heuris-
+tics and search algorithms that are speciﬁc to the game they
+target, and are not readily generalizable to other games.
+In contrast, systems for General Game Playing (GGP)
+[3], such as CadiaPlayer [2], can play novel games for
+which they were not speciﬁcally designed. However, GGP
+systems rely on a human to provide a complete formal spec-
+(cid:3)Mike and Justin are enrolled in CS 229, but Matt is not. Matt is a
+senior PhD student in the Stanford Graphics Group, who will has advised
+and collaborated with Mike and Justin on this project. He wrote the game
+model learning algorithm mentioned in Section 4.
+
+Figure 1. Our system successfully learns to play the games
+shown above: EAT-THE -FRU I T (top-left), PONG (top-middle),
+DANC E -DANC E -R EVO LU T ION (top-right), FROGG ER (bottom-
+left), SNAK E (bottom-middle), DODGE -TH E -M I S S I LE (bottom-
+right).
+
+iﬁcation of the game rules, objectives, and entities in a log-
+ical programming language similar to Prolog. Arriving at
+such a formal speciﬁcation is very tedious even for the sim-
+plest games. This limitation signiﬁcantly constrains the ap-
+plicability of GGP systems.
+Very recently, Bellemare et al. [1] released the Arcade
+Learning Environment for evaluating the performance of AI
+agents on a large set of Atari 2600 games.
+In this work,
+Bellemare et al. evaluate a variety of feature transforms
+that generalize across 2D games, as well as evaluating the
+SARSA((cid:21)) algorithm for online model-free reinforcement
+learning in this setting. Bellemare et al. demonstrate that
+the SARSA((cid:21)) achieves reasonable performance on a large
+variety of games.
+In this project, we aim for comparable performance and
+generality to that recently demonstrated by Bellemare et
+al. [1]. Indeed, our technical approach is directly inspired
+by their work. To our knowledge, the Arcade Learning
+Environment is the only system to implement AI agents
+that learn to play such a wide variety of non-trivial games.
+Therefore, it is worth emphasizing that the games we con-
+sider in this project are at the approximate boundary of what
+general AI agents are capable of learning. This is true de-
+spite the apparent simplicity of our games, even compared
+to classic 2D games like Super Mario World.
+
+2. Games
+To evaluate our system we implemented a number of
+games of complexity comparable to early arcade games.
+Each game contains a number of distinct object types, and
+game state consists of a ﬁxed conﬁguration of objects. The
+state space S of a game is the set of all possible object
+conﬁgurations. Unless otherwise noted, the action space
+of each game is A = fL; R; U; D ; ∅g; and consists of one
+action corresponding to each of the four cardinal directions
+and the do-nothing action ∅.
+Each game is played over a series of episodes, where
+an episode consists of many frames. To prevent a per-
+fect player from playing indeﬁnitely, we cap episode length
+where appropriate. In all situations, early termination of an
+episode due to capping earns the player zero reward in the
+ﬁnal frame of the episode.
+GR ID -WORLD .
+In this game, the player controls a char-
+acter on a 5 (cid:2) 5 grid. During each frame of the game, the
+player may move in any direction or remain stationary. The
+player begins each episode in the lower left corner of the
+grid and must reach the upper right corner. When this goal
+is achieved, the player receives a positive reward and the
+episode ends. In addition, the player receives a negative re-
+ward for stepping on the central square. We evaluate the
+player’s performance by counting the number of frames per
+episode. Fewer frames per episode indicates better perfor-
+mance, since it means that the player navigated to the goal
+square more quickly.
+EAT-THE -FRU IT.
+Similar to GR IDWORLD , the player
+controls a character on a ﬁxed sized grid. At the start of each
+episode, an apple appears on a randomly chosen square.
+The player begins in the lower left corner of the grid and
+must move to the apple. After eating the apple, the player
+receives a reward and the episode ends. As in GR IDWOR LD,
+we measure a player’s performance on this game by count-
+ing the number of frames per episode.
+DODGE -THE -M I S S ILE .
+In this game the player controls
+a space ship which can move left or right across the bottom
+of the screen, so the action set is A = fL; R; ∅g. Missiles
+and powerups spawn at the top of the screen and fall toward
+the player. The player receives a positive reward for col-
+lecting powerups; being hit by a missile incurs a negative
+reward and causes the episode to end. We cap the episode
+length at 5000 frames. We evaluate the player’s perfor-
+mance by counting both the number of frames per episode
+and the number of powerups collected per episode. Larger
+numbers for each metric indicate better performance.
+FROGGER .
+In this game, the player controls a frog which
+can move in any direction or remain stationary. The player
+begins each episode at the bottom of the screen and must
+guide the frog to the top of the screen. This goal is made
+
+Figure 2. Our tile-coded feature representation. We encode the ab-
+solute positions of game objects (top) as well as relative positions
+of game objects (bottom) in spatial bins. Relative positions are
+computed separately for all pairs of object types. For any game
+state s 2 S , this results in a feature vector ϕ(s) of dimension d =
+O(k2 ) where k is the number of distinct object types in the game.
+To be used in the SARSA learning algorithm, the feature transform
+must also encode the action ai 2 A = fa0 ; : : : ; ajAj(cid:0)1 g that is
+to be taken from the current game state s. To this end, our ﬁnal
+feature vector ϕ(s; ai ) is simply the vector ϕ(s) with all indices
+shifted by ijAj and with zeros at all other positions.
+
+more challenging by cars that move horizontally across the
+screen. The episode ends when the frog either reaches the
+top of the screen or is hit by a car. The former earns a re-
+ward of r1 > 0 and the latter receives a reward of r2 < 0.
+We evaluate the player’s performance by computing her av-
+erage reward per episode.
+PONG .
+In this game, two paddles move up and down
+across the left and right sides of the screen while volley-
+ing a ball back and forth. The player controls the left pad-
+dle, whereas the game controls the right paddle. The action
+space is A = fU; D ; ∅g. Failing to bounce the ball yields a
+negative reward and ends the episode. We cap the episode
+length at 50 successful bounces. We evaluate the player’s
+performance by counting the number of successful bounces
+per episode.
+SNAKE .
+In this game, the player controls a snake of
+ﬁxed length that moves around a maze. With no player in-
+
+put, the snake moves forward at a constant rate; pressing
+a direction key changes the direction that the snake trav-
+els. The episode ends with a negative reward if the snake
+head intersects either a wall or the snake body. We cap the
+epsiode length at 180 frames. We evaluate the player’s per-
+formance by counting the number of frames that it survives
+per episode.
+DANCE -DANCE -REVOLUT ION .
+In this game, arrows
+appear at the bottom of the screen and scroll toward tar-
+gets at the top of the screen. Whenever an arrow overlaps
+its corresponding target, the player must press the direction
+key corresponding to the direction of the arrow. The trivial
+strategy of pressing every arrow at every frame is impos-
+sible, since the player can press at most one direction per
+frame. Each episode lasts for 1000 frames, and a player’s
+performance is measured by the fraction of arrows that it
+successfully hits.
+
+3. Feature Design
+Since we want our learning system to generalize across
+games, we must avoid including any game-speciﬁc state in
+our features. For example, explicitly encoding the position
+of Mario, along with the positions of game entities that we
+know can harm Mario, into our features would run counter
+to our goal of generality. However, we must encode the ob-
+servable game state with sufﬁcient ﬁdelity to make accurate
+predictions. On the other hand, we must carefully design
+features of sufﬁciently low dimensionality that our learning
+problems remain computationally tractable.
+With these competing concerns in mind, we follow the
+approach of Bellemare et al. [1] and encode the game state
+using tile-coded features. This encoding allows us to efﬁ-
+ciently encode the absolute and relative positions of objects
+within the game. See Figure 2 for details.
+Although the resulting feature vector is very high dimen-
+sional (over 100,000 for several games), it is very sparse
+(see Figure 3). Storing the feature vector sparsely allows
+our algorithm to remain computationally efﬁcient despite
+the high dimensionality of our feature transform.
+
+4. Model-Based Reinforcement Learning
+To learn an appropriate gameplay policy, we began with
+the following observation. Although the state spaces of
+the games we consider are very large, the action spaces of
+the games we consider are very small. For example, there
+are roughly 1032(cid:2)32 different possible states in SNAK E, but
+only 5 actions. This observation motivated us to learn game-
+play policies by performing ﬁtted value iteration.
+Since ﬁtted value iteration requires access to a game
+model, we learned one from recorded examples of game-
+play. More speciﬁcally, we formulated the program of
+
+Algorithm 1 Learn to play a game using the SARSA((cid:21)) al-
+gorithm with linear function approximation. See Section 5
+for deﬁnitions of the variables.
+function LEARN -GAME( )
+(cid:28)   0, w   0
+s   Initial state, a   Initial action
+ϵ   ϵ0 // Initial exploration rate
+repeat
+′ and reward r
+Take action a, observe next state s
+′   CHOOSE-ACTION(s; ϵ)
+s
+(cid:14)   r + (cid:13)wT ϕ(s
+) (cid:0) wT ϕ(s; a)
+′
+′
+; a
+(cid:28)   (cid:21)(cid:28)
+for ϕi (s; a) ̸= 0 do
+(cid:28)i = 1
+w   w + w(cid:11)(cid:14)(cid:28) // Update weight vector
+ϵ   ϵd ϵ // Decay exploration rate
+until termination
+
+learning a game model as a supervised learning problem,
+which we addressed by training a collection of decision
+trees. Very roughly speaking, our input features encoded
+the current observable game state at time t, as well as the
+input provided by the player at time t. Our target variables
+encoded the game state at time t + 1. We then learned a
+game model by training a collection of decision trees. See
+our midterm progress report for details.
+Using our learned game model, as well as the feature
+transform ϕ described in Section 3, we were equipped to
+apply ﬁtted value iteration to learn a gameplay policy. At
+its core, ﬁtted value iteration approximates the value func-
+tion as V (s) (cid:25) (cid:18)T ϕ(s). The weight vector (cid:18) is found
+by solving a linear regression problem with design matrix
+(cid:8)(⃗s) = (ϕ(s1 ); : : : ; ϕ(sm ))T where ⃗s = (s1 ; : : : ; sm ) is
+a vector of states. Unfortunately, we observed severe nu-
+meric instability using this approach for games as simple
+as GR ID -WOR LD . We speculate that this instability stems
+from a severe rank-deﬁciency of the feature matrix (cid:8)(⃗s).
+In the case of GR ID -WOR LD , the rank-deﬁciency of
+(cid:8)(⃗s) occurs because there are a total of 25 unique states, as-
+suming a 5(cid:2)5 game area. Therefore, (cid:8)(⃗s) can have at most
+25 unique rows no matter the dimension of ⃗s, so (cid:8)(⃗s) has
+rank (cid:20) 25. However, using the feature transform described
+in Section 3, (cid:8)(⃗s) will much greater than 25 columns. The
+linear regression problem is therefore underconstrained and
+has an inﬁnite number of solutions. We considered tak-
+ing the minimum-norm solution, but it is not clear that this
+approach would sensibly approximate our unknown value
+function.
+To make matters worse, this numeric instability becomes
+more pronounced for more complex games. The dimen-
+sion of the feature transform ϕ(s) (and hence the number
+of columns of (cid:8)(⃗s)) grows quadratically with a large con-
+
+putes a state-action value function Q : S (cid:2) A ! R
+based on the rewards received in the two most recently ob-
+served states. SARSA((cid:21)) [6] is a variant that updates the
+state-action value function based on the rewards received
+over a large window of recently observed states.
+In our
+case, the full state space S of an unknown game may be
+very large, so we approximate the state-value function as
+Q(s; a) = wT ϕ(s; a), where ϕ : S (cid:2) A ! Rn is the feature
+transform described in Section 3 and w 2 Rn is a weight
+vector.
+At each game state s, the algorithm chooses an action
+a using an ϵ-greedy policy: with probability ϵ the action is
+chosen randomly, and with probability 1 (cid:0) ϵ the action is
+chosen to satisfy a = arg maxa2A Q(s; a). The parameter
+ϵ 2 [0; 1] controls the relative importance of exploration
+and exploitation, and as such is known as the exploration
+rate. In our implementation we decay ϵ exponentially over
+time. This encourages exploration near the beginning of
+the learning process, and exploitation near the end of the
+learning process.
+The algorithm keeps track of recently seen states using
+a trace vector (cid:28) 2 Rn . More speciﬁcally, (cid:28) records the
+recency with which each feature has been observed to be
+nonzero. The sparsity of typical feature vectors causes (cid:28) to
+be sparse as well. This sparsity can be exploited for com-
+putational efﬁciency (see Figure 3).
+We update the trace vector using a parameter (cid:21) 2 [0; 1],
+which controls the extent to which recently seen features
+contribute to state-value function updates. Varying the
+value of (cid:21) can affect the rate at which the learning algo-
+rithm converges (see Figure 4). Admittedly, we found that
+different values of (cid:21) were required for each game in or-
+der to achieve the best possible performance. For example,
+we used (cid:21) = 0:3 for DANC E -DANCE -R EVO LUT ION and
+(cid:21) = 0:8 for DODGE -THE -M I S S I LE.
+The algorithm also depends on a learning rate (cid:11) 2 [0; 1],
+which has similar meaning to the learning rate in gradient
+descent. We found that (cid:11) required tuning for each game.
+For example, FROGGER performed best with (cid:11) = 0:01,
+whereas SNAK E performed best with (cid:11) = 0:00001.
+
+6. Results
+
+Our system successfully learns to play GR ID -WOR LD ,
+EAT-THE -FRU I T, DODGE -THE -M I S S I L E,
+FROGG ER ,
+PONG, and DANCE -DANCE -R EVO LUT ION . We evaluate
+the performance of our system on these games by com-
+paring with game agents that choose random actions at
+every frame to show that substantial learning takes place
+(see Figures 4 and 5). Our system learns to play SNAK E
+successfully only when we simplify the game by reducing
+the length of the snake body to 1 (see Figure 6).
+
+Figure 3. Top: Comparison of total computation time for learn-
+ing DODG E -THE -M I S S I L E using different combinations of sparse
+and dense feature and trace vectors. Bottom: The average number
+of nonzero features for DODG E -THE -M I S S I L E. We observe that
+the average number of nonzero features is very small, which we
+exploit to drastically reduce computation times.
+
+Figure 4. The effect of different values for (cid:21). on the convergence
+of our algorithm when playing GR ID -WOR LD . We show conver-
+gence rates for various values of (cid:21) relative to random movement.
+Lower is better. We observe that our algorithm outperforms ran-
+dom play across a wide range of values for (cid:21).
+
+stant as the number of unique object types increases. Even
+if this is smaller than the number of sensible game states,
+a numerically stable regression step would require a large
+number of training samples, which could quickly become
+computationally infeasible.
+The numerical stability problems associated with ﬁtted
+value iteration prompted us to markedly reconsider our
+technical approach. This lead us to the model-free rein-
+forcement learning algorithm we describe in the following
+section.
+
+5. Model-Free Reinforcement Learning
+Our system uses the SARSA((cid:21)) algorithm with linear
+function approximation (see Algorithm 1) to learn a game-
+lay policy. SARSA [5] is an online model-free algorithm
+for reinforcement learning. The algorithm iteratively com-
+
+012345678DenseTraces,DenseFeaturesDenseTraces,SparseFeaturesSparseTraces,DenseFeaturesSparseTraces,SparseFeaturesDODGE-THE-MISSILECumulativeComputationTime(Seconds)020406080100120140DenseSparseDODGE-THE-MISSILEAverageNumberofFeatures(Thousands)020406080100Episode0100200300400500GRID-WORLDFramestoFindGoalPerEpisode(3episodemovingaverage)λ=0.0λ=0.1λ=0.5λ=0.9RandomMovementFigure 5. Performance of our algorithm relative to random play for EAT-TH E -FRU I T (top-left, lower is better), DANC E -DANCE -
+R EVO LUT ION (top-middle), DODGE -THE -M I S S I L E (top-right and bottom-left), FROGG ER (bottom-middle), and PONG (bottom-right).
+For DODG E -THE -M I S S I L E, we capped the episode length at 5000 frames. For PONG , we capped the episode length at 50 bounces. For
+FROGGER , we set r1 = 0:2 and r2 = (cid:0)1. Note that after our algorithm has learned to play DODG E -THE -M I S S IL E effectively, it is
+capable of collecting powerups while simultaneously avoiding missiles. Note that since continuously trying to move upwards can be a
+viable strategy when playing FROGG ER , we also compare the performance of our algorithm to an AI player that continuously tries to move
+upwards.
+
+Figure 6. Performance of our algorithm on SNAKE relative to random play. We evaluate our algorithm’s performance on the following
+four different game variations: empty game board with a snake body length of 1 (left), empty game board with a snake body length of 10
+(left-middle), relatively cluttered game board with snake body length of 1 (right-middle), and relatively cluttered game board with a snake
+body body length of 10 (right). Our algorithm was able to learn effectively on the cluttered game board, but not with the longer body. This
+is because having a longer body requires longer-term decision making. On the other hand, a short body makes it possible to play according
+to a relatively greedy strategy, even on a relatively cluttered game board.
+
+References
+[1] M. G. Bellemare, Y. Naddaf, J. Veness, and M. Bowling. The ar-
+cade learning environment: An evaluation platform for general agents.
+ArXiv e-prints, July 2012.
+[2] Y. Bj ¨ornsson and H. Finnsson. CadiaPlayer: A Simulation-Based
+IEEE Transactions on Computational Intel-
+General Game Player.
+ligence and AI in Games, 1(1), 2009.
+[3] M. Genesereth, N. Love, and B. Pell. General Game Playing:
+Overview of the AAAI Competition. AI magazine, Spring, 2005.
+[4] S. Karakovskiy and J. Togelius. The Mario AI Benchmark and Com-
+petitions. IEEE Transactions on Computational Intelligence and AI in
+Games, 4(1), 2012.
+
+[5] M. Mohri, A. Rostamizadeh, and A. Talwalkar. Foundations of Ma-
+chine Learning. Adaptive Computation and Machine Learning Series.
+Mit Press, 2012.
+[6] M. Wiering and J. Schmidhuber. Fast online q ((cid:21)). Machine Learning,
+33(1):105–115, 1998.
+[7] J. Young, F. Smith, C. Atkinson, K. Poyner, and T. Chothia. SCAIL:
+An Integrated Starcraft AI System. In IEEE Conference on Computa-
+tional Intelligence and Games, 2012.
+
+02004006008001000Episode−100−50050100150200250300EAT-THE-FRUITFramestoFindGoalPerEpisode(20episodemovingaverage)OurMethodRandomMovement020406080100Episode−0.20.00.20.40.60.81.0DANCE-DANCE-REVOLUTIONFractionofHitsPerEpisodeOurMethodRandomGuesses0100200300400500Episode−1000010002000300040005000DODGE-THE-MISSILEFramesSurvivedPerEpisode(3episodemovingaverage)OurMethodRandomMovement0100200300400500Episode−5051015202530DODGE-THE-MISSILEPowerupsObtainedPerEpisode(3episodemovingaverage)OurMethodRandomMovement05001000150020002500Episode−1.2−1.0−0.8−0.6−0.4−0.20.00.2FROGGERRewardPerEpisode(50episodemovingaverage)OurMethodAlwaysMoveUpRandomMovement050100150200250300Episode−1001020304050PONGBouncesPerEpisode(3episodemovingaverage)OurMethodRandomMovement0200040006000800010000Episode050100150200SNAKEFramesSurvivedPerEpisode(easylevel,shorttail)OurMethodRandomMovement0200040006000800010000Episode050100150200SNAKEFramesSurvivedPerEpisode(easylevel,longtail)OurMethodRandomMovement0200040006000800010000Episode050100150200SNAKEFramesSurvivedPerEpisode(hardlevel,shorttail)OurMethodRandomMovement0200040006000800010000Episode050100150200SNAKEFramesSurvivedPerEpisode(hardlevel,longtail)OurMethodRandomMovement

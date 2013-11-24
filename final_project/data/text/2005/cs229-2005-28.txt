@@ -1,0 +1,201 @@
+Daniel A. Woods
+CS229 Final Pro ject Writeup
+December 16, 2005
+
+Original Pro ject Description
+
+Title:
+A Discriminative Learning Model for RNA Secondary Structure Prediction
+
+Non-CS229 Collaborators:
+Chuong (Tom) Do - Andrew Ng Lab
+
+Empirical discovery of RNA secondary structure is expensive and time consuming, but is a necessary part of
+exploring function. Software tools exist for performing these predictions, the best of which either heuristic
+physics modeling or generative learning models. Currently, the best of each are approximately equal in
+performance.
+
+While perfect predictions would require physics modeling well beyond our current computational capa-
+bilities, current levels of performance are much lower than perfect. I believe it may be possible to create a
+program better than the current machine learning methods by making two improvements:
+
+1 - Current methods model RNA sequence and secondary structure as stochastic context-free grammars,
+and then use a generative learning model to ﬁnd the most likely parse (and, therefore, the most likely struc-
+ture). As we learned in class, discriminative models generally enjoy higher performance than generative
+learning models. This implies that performance may increase if discriminative learning were implied on top
+of the same stochastic context free grammar model of RNA sequence and secondary structure.
+
+2 - Current software tools return the most likely structure of a given RNA molecule. However, it may
+be possible that a particular substructure is most likely among all possible structures, but it simply does
+not occur in the most likely overall structure. In order to increase overall predictive accuracy, I would prefer
+to return the most likely structure on a part-by-part basis rather than to return the most likely overall
+structure. I believe this would be more useful biologically because software predictions are never assumed
+accurate, but rather are the ﬁrst step leading to manual reﬁnement.
+
+Background
+
+The ﬁrst thing we did was to ﬁnd the most recent work done on the sub ject of using machine learning
+applied to RNA secondary structure prediction, which turns out to be a recent paper by Robin D Dowell
+and Sean R Eddy [1]. It models RNA secondary structure as a Stochastic Context-free Grammar (SCFG),
+and learns using a model very similar to an HMM, substituting the SCFG in place of the state machine.
+This is a generative model, as alluded to in the original proposal.
+
+An HMM can be converted to a discriminative model using using Conditional Random Fields (CRFs) [2].
+Our plan is to improve on Dowell and Eddy’s algorithm by doing what CRFs do improve on to HMMs. The
+problem is very analogous and CRFs translate over nicely without any signiﬁcant mathematical obstacles.
+
+SCFGs
+
+Here is a sample grammar from Eddy’s paper, which is referred to as “G1”:
+
+G1 : S → aS ˆa | aS | S a | SS | ε
+
+Here, the aS ˆa production refers to a pairing of two produced bases a and ˆa. This rule is actually shorthand
+for all the paired productions that are possible (A-A, A-C, A-G. . . , although some of these pairings are
+chemically impossible, we let the algorithm learn this fact rather than enforce it manually). This SCFG
+is a straightforward and simple representation of the structures possible with RNA. However, it performs
+extremely poorly as will be shown after introduction of another SCFG, “G6”:
+
+G6 : S → LS | L
+L → aF ˆa | a
+F → aF ˆa | LS
+
+The performance of these, compared to mfold, is as follows:
+
+Generative G1 : 17(12)
+Generative G6 : 47(45)
+mfold v3.1.2 : 56(48)
+
+Note: these scores are given in the form sensitivity ( speciﬁcity ), where sensitivity refers to the percentage
+of correct pairing that were predicted and speciﬁcity refers to the percentage of predicted pairings that are
+correct.
+
+Eddy does evaluate several other grammars, but G6 is relatively simple and performs nearly as well as
+the best, so it was selected as the ﬁrst candidate to create a discriminative model for.
+
+Predictions
+
+Given a set of weights, the probability of a parse y given a sequence x can be calculated as follows:
+(cid:88)
+P (Y = y |X = x) = ewT f (x,y)
+ewT f (x,y (cid:48) )
+y (cid:48)∈Y
+Here, f (x, y) refers to a vector of feature counts for x and y , and w is the set of weights which must be
+learned (see “Training” section). Y refers to the set of all possible parses, as used in the denominator to
+form the partition function.
+More generally, what we need is to ﬁnd the probability that y is part of some set of parses A. For ex-
+ample (as will be important for posterior decoding), we can use this generalization to ﬁnd the probability
+
+2
+
+that the bases at locations i and j are paired by calculating the probability that y is in the set of all parses
+(cid:88)
+in which i and j are paired. This more general form is as follows:
+(cid:88)
+y (cid:48)∈A
+y (cid:48)∈Y
+
+P (Y ∈ A|X = x) =
+
+ewT f (x,y (cid:48) )
+
+ewT f (x,y)
+
+Training
+
+Training refers to optimization of w according to a training set, and sub ject to the array of regulariza-
+tion parameters C (w has a Gaussian prior). Optimizing w requires taking a gradient of the likelihood of
+the correct parse (or parses, in the case of ambiguous grammars) with respect to w:
+(cid:88)
+(cid:88)
+(cid:88)
+(cid:88)
+ewT f (x,y)
+ewT f (x,y)
+ewT f (x,y (cid:48) )
+ewT f (x,y (cid:48) )
+y∈A
+y∈Y
+y (cid:48)∈Y
+y (cid:48)∈Y
+= Ey∼P (Y |X=x,Y ∈A) [f (x, y)] − Ey∼P (Y |X=x) [f (x, y)] − 2C · w
+
+(cid:53)w (cid:96)(w) =
+
+− 2C · w
+
+f (x, y)
+
+−
+
+f (x, y)
+
+Although a simple gradient decent could be used here, we opted for L-BFGS, which performs the same
+function but converges more quickly.
+
+Posterior Decoding
+
+As mentioned in the original statement of the problem, we would like to maximize the percent accuracy
+of our predictions rather than simply returning the single parse which is most likely. The latter could be
+calculated by ﬁnding the parse with the highest probability, but our approach requires an additional step.
+
+Using techniques alluded to in the “Predictions” section, we can ﬁnd for any i and j the probability pi,j that
+the bases at those locations will be paired. Similarly, we can ﬁnd for any location i the probability pi that
+its corresponding base is unpaired.
+It is a straightforward dynamic programming implementation to maximize the overall score given these
+
+probabilities according to the following recurrence:
+Here, m is a parameters that can be used to adjust the overall propensity to create pairings. As will be seen
+in the “Results” section, we adjusted m until our discriminative model had the same sensitivity as Eddy’s
+generative model, thus allowing a straightforward comparison on the basis of speciﬁcity.
+
+0
+pi+1 + score(i + 1, j )
+pj + score(i, j − 1)
+m(pi+1,j + pj,i+1 ) + score(i + 1, j − 1)
+score(i, k) + score(k , j )
+
+if i = j
+if i < j
+if i < j
+if i + 1 < j
+if i < k < j
+
+score(i, j ) = max
+
+3
+
+Results
+Our results showed a signiﬁcant improvement on Eddy’s generative model for the G6 grammar. We per-
+formed both of these tests ourselves, using separate data sets for training and testing.
+
+Generative G6 : 47.9(44.6)
+Discriminative G6 : 47.8(52.0)
+
+Again, we adjusted m until the sensitivity levels were very close, so that an even comparison could be
+made of speciﬁcity levels.
+
+Conclusions
+
+Part of what originally caught our attention about this pro ject was the observation that Eddy’s performance
+was comparable to the best physics-based algorithms using something extremely simple and lightweight.
+Now that we have demonstrated that the change to a discriminative model really does oﬀer signiﬁcant im-
+provement in this simple case, we will attempt to create a much richer model in hopes of achieving results
+similar to (or even better than) those provided by mfold (which has been the standard for over two decades).
+
+RNA secondary structure prediction is critical to medical research, and an improved algorithm would be
+extremely helpful in aiding advancement of biology and medicine.
+
+References
+
+1. Robin D Dowell, Sean R Eddy; Evaluation of several lightweight stochastic context-free gram-
+mars for RNA secondary structure prediction. BMC Bioinformatics 2004, 5 71
+2. John Laﬀerty, Andrew McCallum, Fernando Pereira: Conditional Random Fields: Probabilistic
+Models for Segmenting and Labeling Sequence Data. Proc. 18th International Conf. on Machine
+Learning 2001
+3. Michael Zucker: Mfold web server for nucleic acid folding and hybridization prediction. Nucleic
+Acids Research 2003, 31 34-6-3415
+
+4
+
+

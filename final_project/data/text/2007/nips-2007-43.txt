@@ -1,0 +1,894 @@
+TrueSkill Through Time:
+Revisiting the History of Chess
+
+Pierre Dangauthier
+INRIA Rhone Alpes
+Grenoble, France
+pierre.dangauthier@imag.fr
+
+Ralf Herbrich
+Microsoft Research Ltd.
+Cambridge, UK
+rherb@microsoft.com
+
+Tom Minka
+Microsoft Research Ltd.
+Cambridge, UK
+minka@microsoft.com
+
+Thore Graepel
+Microsoft Research Ltd.
+Cambridge, UK
+thoreg@microsoft.com
+
+Abstract
+
+We extend the Bayesian skill rating system TrueSkill to infer entire time
+series of skills of players by smoothing through time instead of (cid:12)ltering.
+The skill of each participating player, say, every year is represented by a
+latent skill variable which is a(cid:11)ected by the relevant game outcomes that
+year, and coupled with the skill variables of the previous and subsequent
+year. Inference in the resulting factor graph is carried out by approximate
+message passing (EP) along the time series of skills. As before the system
+tracks the uncertainty about player skills, explicitly models draws, can deal
+with any number of competing entities and can infer individual skills from
+team results. We extend the system to estimate player-speci(cid:12)c draw mar-
+gins. Based on these models we present an analysis of the skill curves of
+important players in the history of chess over the past 150 years. Results
+include plots of players’ lifetime skill development as well as the ability to
+compare the skills of di(cid:11)erent players across time. Our results indicate that
+a) the overall playing strength has increased over the past 150 years, and
+b) that modelling a player’s ability to force a draw provides signi(cid:12)cantly
+better predictive power.
+
+1
+
+Introduction
+
+Competitive games and sports can bene(cid:12)t from statistical skill ratings for use in match-
+making as well as for providing criteria for the admission to tournaments. From a historical
+perspective, skill ratings also provide information about the general development of skill
+within the discipline or for a particular group of interest. Also, they can give a fascinating
+narrative about the key players in a given discipline, allowing a glimpse at their rise and fall
+or their struggle against their contemporaries.
+
+In order to provide good estimates of the current skill level of players skill rating systems
+have traditionally been designed as (cid:12)lters that combine a new game outcome with knowledge
+about a player’s skill from the past to obtain a new estimate. In contrast, when taking a
+historical view we would like to infer the skill of a player at a given point in the past when
+both their past as well as their future achievements are known.
+
+The best known such skill (cid:12)lter based rating system is the Elo system [3] developed by Arpad
+Elo in 1959 and adopted by the World Chess Federation FIDE in 1970 [4]. Elo models the
+
+1
+
+probability of the game outcome as P (1 wins over 2js1 ; s2 ) := (cid:8) (cid:16) s1(cid:0)s2
+p2(cid:12) (cid:17) where s1 and s2
+are the skill ratings of each player, (cid:8) denotes the cumulative density of a zero-mean unit-
+variance Gaussian and (cid:12) is the assumed variability of performance around skill. Denote the
+game outcomes by y = +1 if player 1 wins, y = (cid:0)1 if player 2 wins and y = 0 if a draw
+occurs. Then the resulting (linearised) Elo update is given by s1   s1 + y(cid:1), s2   s2 (cid:0) y(cid:1)
+and
+2 (cid:0) P (1 wins over 2js1 ; s2 )(cid:19) ;
+K(cid:0)Factor (cid:18) y + 1
+(cid:1) = (cid:11)(cid:12)p(cid:25)
+| {z }
+where 0 < (cid:11) < 1 determines how much the (cid:12)lter weighs the new evidence versus the old
+estimate.
+The TrueSkill rating system [6] improves on the Elo system in a number of ways. TrueSkill’s
+current belief about a player’s skill is represented by a Gaussian distribution with mean (cid:22)
+and variance (cid:27) 2 . As a consequence, TrueSkill does not require a provisional rating period
+and converges to the true skills of players very quickly. Also, in contrast to Elo, TrueSkill
+explicitly models the probability of draws. Crucially for its application in the Xbox Live
+online gaming system (see [6] for details) it can also infer skills from games with more than
+two participating entities and infers individual players’ skills from the outcomes of team
+games.
+
+As a skill rating and matchmaking system TrueSkill operates as a (cid:12)lter as discussed above.
+However, due to its fully probabilistic formulation it is possible to extend Trueskill to perform
+smoothing on a time series of player skills. In this paper we extend TrueSkill to provide
+accurate estimates of the past skill levels of players at any point in time taking into account
+both their past and their future achievements. We carry out a large-scale analysis of about
+3.5 million games of chess played over the last 150 years.
+
+The paper is structured as follows.
+In Section 2 we review previous work on historical
+chess ratings. In Section 3 we present two models for historical ratings through time, one
+assuming a (cid:12)xed draw margin and one estimating the draw margin per player per year.
+We indicate how large scale approximate message passing (EP) can be used to e(cid:14)ciently
+perform inference in these huge models. In Section 4 we present experimental results on a
+huge data set from ChessBase with over 3.5 million games and gain some fascinating chess
+speci(cid:12)c insights from the data.
+
+2 Previous Work on Historical Chess Ratings
+
+Estimating players’ skills in retrospective allows one to take into account more information
+and hence can be expected to lead to more precise estimates. The pioneer in this (cid:12)eld
+was Arpad Elo himself, when he encountered the necessity of initializing the skill values of
+the Elo system when it was (cid:12)rst deployed. To that end he (cid:12)tted a smooth curve to skill
+estimates from (cid:12)ve-year periods; however little is known about the details of his method [3].
+
+Probably best known in the chess community is the Chessmetrics system [8], which aims
+at improving the Elo scores by attempting to obtain a better (cid:12)t with the observed data.
+Although constructed in a very thoughtful manner, Chessmetrics is not a statistically well-
+founded method and is a (cid:12)ltering algorithm that disregards information from future games.
+
+The (cid:12)rst approach to the historical rating problem with a solid statistical foundation was
+developed by Mark Glickman, chairman of the USCF Rating Committee. Glicko 1 & 2 [5]
+are Bayesian rating systems that address a number of drawbacks of the Elo system while
+still being based on the Bradley-Terry paired-comparison method [1] used by modern Elo.
+Glickman models skills as Gaussian variables whose variances indicate the reliability of the
+skill estimate, an idea later adopted in the TrueSkill model as well. Glicko 2 adds volatility
+measures, indicating the degree of expected (cid:13)uctuation in a player’s rating. After an initial
+estimate past estimations are smoothed by propagating information back in time.
+
+The second statistically well founded approach are Rod Edwards’s Edo Historical Chess
+Ratings [2], which are also based on the Brad ley-Terry model but have been applied only to
+historical games from the 19th century. In order to model skill dynamics Edwards considers
+
+2
+
+the same player at di(cid:11)erent times as several distinct players, whose skills are linked together
+by a set of virtual games which are assumed to end in draws. While Edo incorporates a
+dynamics model via virtual games and returns uncertainty measures in terms of the esti-
+mator’s variance it is not a full Bayesian model and provides neither posterior distributions
+over skills, nor does it explicitly model draws.
+
+In light of the above previous work on historical chess ratings the goal of this paper is to
+introduce a fully probabilistic model of chess ratings through time which explicitly accounts
+for draws and provides posterior distributions of skills that re(cid:13)ect the reliability of the
+estimate at every point in time.
+
+3 Models for Ranking through Time
+
+This paper strongly builds on the original TrueSkill paper [6]. Although TrueSkill is appli-
+cable to the case of multiple team games, we will only consider the two player case for this
+application to chess. It should be clear, however, that the methods presented can equally
+well be used for games with any number of teams competing.
+Consider a game such as chess in which a number of, say, N players f1; : : : ; N g are competing
+over a period of T time steps, say, years. Denote the series of game outcomes between two
+ij (cid:9) denotes the number
+ij (k) 2 f+1; (cid:0)1; 0g where k 2 (cid:8)1; : : : ; K t
+players i and j in year t by yt
+of game outcomes available for that pair of players in that year. Furthermore, let y = +1 if
+player i wins, y = (cid:0)1 if player j wins and y = 0 in case of a draw.
+3.1 Vanilla TrueSkill
+
+In the Vanilla TrueSkill system, each player i is assumed to have an unknown skill
+i 2 R at time t. We assume that a game outcome y t
+st
+ij (k) is generated as follows. For
+each of the two players i and j performances pt
+ij (k) and pt
+j i (k) are drawn according to
+p (cid:0)pt
+i (cid:1) = N (cid:0)pt
+i ; (cid:12) 2 (cid:1). The outcome y t
+ij (k) jst
+ij (k) ; st
+ij (k) of the game between players i and
+j is then determined as
+ij (k) := 8<
+pt
+ij (k) > pt
++1
+if
+j i (k) + "
+pt
+ij (k) > pt
+y t
+(cid:0)1
+if
+ij (k) + "
+(cid:12)(cid:12)pt
+j i (k)(cid:12)(cid:12) (cid:20) "
+ij (k) (cid:0) pt
+:
+0
+if
+where the parameter " > 0 is the draw margin. In order to infer the unknown skills s t
+i the
+0 (cid:1) over skills and a
+i (cid:1) = N (cid:0)s0
+TrueSkill model assumes a factorising Gaussian prior p (cid:0)s0
+i ; (cid:22)0 ; (cid:27)2
+Gaussian drift of skills between time steps given by p (cid:0)st
+(cid:1) = N (cid:0)st ; st(cid:0)1 ; (cid:28) 2 (cid:1). The model
+i jst(cid:0)1
+i
+can be well described as a factor graph (see Figure 1, left) which clari(cid:12)es the factorisation
+assumptions of the model and allows to develop e(cid:14)cient (approximate) inference algorithms
+based on message passing (for details see [6])
+
+;
+
+(cid:22)W   (cid:22)W +
+
+In the Vanilla TrueSkill algorithm denoting the winning player by W and the losing player by
+L and dropping the time index for now, approximate Bayesian inference (Gaussian density
+(cid:12)ltering [7]) leads to the following update equations for (cid:22)W , (cid:22)L , (cid:27)W and (cid:27)L .
+cij (cid:19) and (cid:27)W   (cid:27)W s1 (cid:0)
+cij (cid:1) v (cid:18) (cid:22)W (cid:0) (cid:22)L
+cij (cid:19)
+ij (cid:1) w (cid:18) (cid:22)W (cid:0) (cid:22)L
+(cid:27)2
+(cid:27)2
+"
+"
+W
+W
+;
+;
+c2
+cij
+cij
+cij (cid:19) and (cid:27)L   (cid:27)Ls1 (cid:0)
+cij (cid:1) v (cid:18) (cid:22)W (cid:0) (cid:22)L
+cij (cid:19) :
+ij (cid:1) w (cid:18) (cid:22)W (cid:0) (cid:22)L
+(cid:27)2
+(cid:27)2
+"
+"
+L
+L
+(cid:22)L   (cid:22)L (cid:0)
+;
+;
+c2
+cij
+cij
+The overall variance is c2
+ij = 2(cid:12) 2 + (cid:27)2
+W + (cid:27)2
+L and the two functions v and w are given by
+v (t; (cid:11)) := N (t (cid:0) (cid:11); 0; 1)
+and w (t; (cid:11)) := v (t; (cid:11)) (cid:1) (v (t; (cid:11)) + (t (cid:0) (cid:11))) :
+(cid:8) (t (cid:0) (cid:11))
+For the case of a draw we have the following update equations:
+cij (cid:19) and (cid:27)i   (cid:27)is1 (cid:0)
+cij (cid:19) ;
+cij (cid:1) ~v (cid:18) (cid:22)i (cid:0) (cid:22)i
+ij (cid:1) ~w (cid:18) (cid:22)i (cid:0) (cid:22)i
+(cid:27)2
+(cid:27)2
+"
+"
+i
+i
+c2
+cij
+cij
+
+;
+
+(cid:22)i   (cid:22)i +
+
+;
+
+3
+
+and similarly for player j . De(cid:12)ning d := (cid:11) (cid:0) t and s := (cid:11) + t then ~v and ~w are given by
+(d) N (d; 0; 1) (cid:0) (s) N (s; 0; 1)
+~v (t; (cid:11)) := N ((cid:0)s; 0; 1) (cid:0) N (d; 0; 1)
+~w (t; (cid:11)) := ~v 2 (t; (cid:11)) +
+and
+(cid:8) (d) (cid:0) (cid:8) ((cid:0)s)
+(cid:8) (d) (cid:0) (cid:8) ((cid:0)s)
+i and (cid:27) t
+In order to approximate the skill parameters (cid:22)t
+i for all players i 2 f1; : : : ; N g at all
+times t 2 f0; : : : ; T g the Vanilla TrueSkill algorithm initialises each skill belief with (cid:22)0
+i   (cid:22)0
+and (cid:27)0
+i   (cid:27)0 .
+It then proceeds through the years t 2 f1 : : : T g in order, goes through
+the game outcomes y t
+ij (k) in random order and updates the skill beliefs according to the
+equations above.
+
+:
+
+3.2 TrueSkill through Time (TTT)
+
+The Vanilla TrueSkill algorithm su(cid:11)ers from two ma jor disadvantages:
+
+1. Inference within a given year t depends on the random order chosen for the updates.
+Since no knowledge is assumed about game outcomes within a given year, the results
+of inference should be independent of the order of games within a year.
+2. Information across years is only propagated forward in time. More concretely, if
+player A beats player B and player B later turns out to be very strong (i.e., as
+evidenced by him beating very strong player C repeatedly), then Vanilla TrueSkill
+cannot propagate that information backwards in time to correct player A’s skill
+estimate upwards.
+
+Both problems can be addressed by extending the Gaussian density (cid:12)ltering to running full
+expectation propagation (EP) until convergence [7]. The basic idea is to update repeatedly
+on the same game outcomes but making sure that the e(cid:11)ect of the previous update on that
+game outcome is removed before the new e(cid:11)ect is added. This way, the model remains the
+same but the inferences are less approximate.
+
+More speci(cid:12)cally, we go through the game outcomes y t
+ij within a year t several times until
+convergence. The update for a game outcome y t
+ij (k) is performed in the same way as before
+(st
+but saving the upward messages mf (pt
+i ) which describe the e(cid:11)ect of the updated
+i )!st
+ij (k);st
+i
+i . When game outcome y t
+performance pt
+ij (k) on the underlying skill st
+ij (k) comes up for
+ij (k) (cid:0)pt
+ij (k)(cid:1) can be calculated by
+update again, the new downward message mf (pt
+i )!pt
+ij (k);st
+ij (k)(cid:1) = Z 1
+p (st
+i )
+i (cid:1)
+f (cid:0)pt
+ij (k) (cid:0)pt
+dst
+ij (k) ; st
+i ;
+mf (pt
+i )!pt
+ij (k);st
+(st
+mf (pt
+i )
+i )!st
+ij (k);st
+(cid:0)1
+i
+thus e(cid:11)ectively dividing out the earlier upward message to avoid double counting. The
+integral above is easily evaluated since the messages as well as the marginals p (s t
+i ) have
+been assumed Gaussian. The new downward message serves as the e(cid:11)ective prior belief on
+the performance pt
+i (k). At convergence, the dependency of the inferred skills on the order
+of game outcomes vanishes.
+
+The second problem is addressed by performing inference for TrueSkill through time (TTT),
+i.e. by repeatedly smoothing forward and backward in time. The (cid:12)rst forward pass of TTT
+is identical to the inference pass of Vanilla TrueSkill except that the forward messages
+i ) are stored. They represent the in(cid:13)uence of skill estimate st(cid:0)1
+(st
+mf (st(cid:0)1
+at time
+i )!st
+;st
+i
+i
+i
+t (cid:0) 1 on skill estimate st
+i at time t. In the backward pass, these messages are then used to
+(cid:1), which e(cid:11)ectively serve as the
+(cid:0)st(cid:0)1
+calculate the new backward messages mf (st(cid:0)1
+i )!st(cid:0)1
+;st
+i
+i
+i
+new prior for time step t (cid:0) 1,
+(cid:1) = Z 1
+p (st
+i )
+i (cid:1)
+f (cid:0)st(cid:0)1
+(cid:0)st(cid:0)1
+dst
+; st
+i :
+mf (st(cid:0)1
+i
+i
+(st
+mf (st(cid:0)1
+i )
+i
+i )!st
+;st
+(cid:0)1
+i
+i
+This procedure is repeated forward and backward along the time series of skills until con-
+vergence. The backward passes make it possible to propagate information from the future
+into the past.
+
+i )!st(cid:0)1
+;st
+i
+
+4
+
+st(cid:0)1
+W
+
+st(cid:0)1
+L
+
+st(cid:0)1
+W
+
+st(cid:0)1
+L
+
+"t(cid:0)1
+L
+
+"t(cid:0)1
+i
+
+st(cid:0)1
+i
+
+st(cid:0)1
+j
+
+"t(cid:0)1
+j
+
+(cid:28)
+(cid:25)
+st
+W
+
+(cid:12)
+(cid:25)
+pW
+
+(cid:0)
+
+d
+
+>0
+
+(cid:28)
+(cid:25)
+st
+L
+
+(cid:12)
+(cid:25)
+pL
+
+(cid:28)
+(cid:25)
+st
+W
+
+(cid:12)
+(cid:25)
+pW
+
+(cid:0)
+
+d
+
+>0
+
+(cid:28)
+(cid:25)
+st
+L
+
+(cid:12)
+(cid:25)
+pL
+
+>0
+
+&
+(cid:25)
+"t
+L
+
++
+
+>0
+
+&
+(cid:25)
+"t
+i
+
++
+
+uL
+
+ui
+
+(cid:28)
+(cid:25)
+st
+i
+
+(cid:12)
+(cid:25)
+pi
+
+(cid:0)
+
+di
+
+>0
+
+>0
+
+&
+(cid:25)
+"t
+j
+
++
+
+uj
+
+(cid:28)
+(cid:25)
+st
+j
+
+(cid:12)
+(cid:25)
+pj
+
+(cid:0)
+
+dj
+
+<0
+
+Figure 1: Factor graphs of single game outcomes for TTT (left) and TTT-D. In the left graph
+there are three types of variables: skills s, performances p, performance di(cid:11)erences d. In the
+TTT-D graphs there are two additional types: draw margins " and winning thresholds u:
+(cid:28)
+(cid:25) takes the form N (cid:0)(cid:1); (cid:1); (cid:28) 2 (cid:1),
+The graphs only require three di(cid:11)erent types of factors: factor
+factor > 0 takes the form I ((cid:1) > 0) and factor (cid:6) takes the form I ((cid:1) (cid:6) (cid:1) = (cid:1)).
+
+3.3 TTT with Individual Draw Margins (TTT-D)
+
+From exploring the data it is known that the probability of draw not only increases markedly
+through the history of chess, but is also positively correlated with playing skill and even
+varies considerably across individual players. We would thus like to extend the TrueSkill
+model to incorporate another player-speci(cid:12)c parameter which indicates a player’s ability to
+force a draw. Suppose each player i at every time-step t is characterised by an unknown skill
+i > 0. Again, performances pt
+i 2 R and a player-speci(cid:12)c draw margin "t
+st
+ij (k) and pt
+j i (k)
+are drawn according to p (cid:0)pt
+i (cid:1) = N (cid:0)pt
+i ; (cid:12) 2 (cid:1). In this model a game outcome
+ij (k) jst
+ij (k) ; st
+y t
+ij (k) between players i and j at time t is generated as follows:
+ij (k) = 8<
+ij (k) > pt
+pt
+j i (k) + "t
+if
++1
+j
+pt
+ij (k) + "t
+j i (k) > pt
+y t
+(cid:0)1
+if
+i
+if (cid:0)"t
+i (cid:20) pt
+j i (k) (cid:20) "t
+ij (k) (cid:0) pt
+:
+0
+j
+In addition to the Gaussian assumption about player skills as in the Vanilla TrueSkill model
+of Section 3.1 we assume a factorising Gaussian distribution for the player-speci(cid:12)c draw
+margins p (cid:0)"0
+i (cid:1) = N (cid:0)"0
+0 (cid:1) and a Gaussian drift of draw margins between time steps
+i ; (cid:23)0 ; & 2
+given by p (cid:0)"t
+(cid:1) = N (cid:0)"t ; "t(cid:0)1 ; & 2 (cid:1). The factor graph for the case of win/loss is shown
+i j"t(cid:0)1
+i
+in Figure 1 (centre) and for the case of a draw in Figure 1 (right). Note, that the positivity
+of the player-speci(cid:12)c draw margins at each time step t is enforced by a factor > 0 .
+Inference in the TTT-D model is again performed by expectation propagation, both within
+a given year t as well as across years in a forward backward manner. Note that in this
+model the current belief about the skill of a player is represented by four numbers: (cid:22) t
+i and
+i for the skill and (cid:23) t
+(cid:27) t
+i and & t
+i for the player-speci(cid:12)c draw margin. Players with a high value
+of (cid:23) t
+i can be thought of as having the ability to achieve a draw against strong players, while
+players with a high value of (cid:22)t
+i have the ability to achieve a win.
+
+:
+
+5
+
+x 105
+
+2.5
+
+y
+c
+n
+e
+u
+q
+e
+r
+F
+
+2
+
+1.5
+
+1
+
+0.5
+
+0
+1850
+
+1872
+
+1894
+
+1916
+
+1938
+Year
+
+1960
+
+1982
+
+2004
+
+Figure 2: (Left) Distribution over number of recorded match outcomes played per year
+in the ChessBase database. (Right) The log-evidence P (yj(cid:12) ; (cid:28) ) for the TTT model as a
+function of the variation of player performance, (cid:12) , and skill dynamics, (cid:28) . The maximizing
+parameter settings are indicated by a black dot.
+
+4 Experiments and Results
+
+Our experiments are based on a data-set of chess match outcomes collected by ChessBase1 .
+This database is the largest top-class annotated database in the world and covers more than
+3.5 million chess games from 1560 to 2006 played between (cid:25)200,000 unique players. From
+this database, we selected all the matches between 1850 (the birth of modern Chess) and
+2006. This results in 3,505,366 games between 206,059 unique players. Note that a large
+proportion of games was collected between 1987 and 2006 (see Figure 2 (left)).
+Our implementation of the TrueSkill through Time algorithms was done in F#2 and builds
+a factor graph with approximately 11,700,000 variables and 15,200,000 factors (TTT) or
+18,500,000 variables and 27,600,000 factors (TTT-D). The whole schedule allocates no more
+than 6 GB (TTT) or 11 GB (TTT-D) and converges in less than 10 minutes (TTT)/20
+minutes (TTT-D) of CPU time on a standard Pentium 4 machine. The code for this
+analysis will be made publicly available.
+
+In the (cid:12)rst experiment, we built the TTT model for the above mentioned collection of Chess
+games. The draw margin was chosen such that the a-priori probability of draw between two
+equally skilled players matches the overall draw probability of 30.3%. Moreover, the model
+has a translational invariance in the skills and a scale invariance in (cid:12) =(cid:27)0 and (cid:28) =(cid:27)0 . Thus,
+we (cid:12)xed (cid:22)0 = 1200, (cid:27)0 = 400 and computed the log-evidence L := P (yj(cid:12) ; (cid:28) ) for varying
+values of (cid:12) and (cid:28) (see Figure 2 (right)). The plots show that the model is very robust to
+setting these two parameters except if (cid:12) is chosen too small. Interestingly, the log-evidence is
+neither largest for (cid:28) (cid:29) 0 (complete de-coupling) nor for (cid:28) ! 0 (constant skill over life-time)
+indicating that it is important to model the dynamics of Chess players. Note that the log-
+evidence is LTTT = (cid:0)3; 953; 997, larger than that of the naive model (Lnaive = (cid:0)4; 228; 005)
+which always predicts 30:3% for a draw and correspondingly for win/loss3 .
+In a second
+experiment, we picked the optimal values ((cid:12) (cid:3) ; (cid:28) (cid:3) ) = (480; 60) for TTT and optimised the
+remaining prior and dynamics parameters of TTT-D to arrive at a model with a log-evidence
+of LTTT(cid:0)D = (cid:0)3; 661; 813.
+In Figure 3 we have plotted the skill evolution for some well{known players of the last 150
+years when (cid:12)tting the TTT model ((cid:22)t ; (cid:27) t are shown).
+In Figure 4 the skill evolution of
+the same players is plotted when (cid:12)tting the TTT-D model; the dashed lines show (cid:22) t + "t
+
+1For more information, see http://www.bcmchess.co.uk/softdatafrcb.html.
+2For more details, see http://research.microsoft.com/fsharp/fsharp.aspx.
+3Leakage due to approximate inference.
+
+6
+
+Figure 3: Skill evolution of top Chess players with TTT; see text for details.
+
+whereas the solid lines display (cid:22)t ; for comparisons we added the (cid:22)t of the TTT model as
+dotted lines.
+
+As a (cid:12)rst observation, the uncertainties always grow towards the beginning and end of a
+career since they are not constrained by past/future years. In fact, for Bobby Fischer the
+uncertainty grows very large in his 20 years of inactivity (1972{1992). Moreover, there seems
+to be a noticeable increase in overall skill since the 1980’s. Looking at Figure 4 we see that
+players have di(cid:11)erent abilities to force a draw; the strongest player to do so is Boris Spassky
+(1937{). This ability got stronger after 1975 which explains why the model with a (cid:12)xed
+draw margin estimates Spassky’s skill larger.
+
+Looking at individual players we see that Paul Morphy (1837{1884), \The Pride and Sorrow
+of Chess", is particularly strong when comparing his skill to those of his contemporaries in
+the next 80 years. He is considered to have been the greatest chess master of his time, and
+this is well supported by our analysis. \Bobby" Fischer (1943{) tied with Boris Spassky at
+the age of 17 and later defeated Spassky in the \Match of the Century" in 1972. Again,
+this is well supported by our model. Note how the uncertainty grows during the 20 years of
+inactivity (1972{1992) but starts to shrink again in light of the (future) re-match of Spassky
+and Fischer in 1992 (which Fischer won). Also, Fischer is the only one of these players
+whose "t decreased over time|when he was active, he was known for the large margin by
+which he won!
+
+Finally, Garry Kasparov (1963{) is considered the strongest Chess player of all time. This is
+well supported by our analysis. In fact, based on our analysis Kasparov is still considerably
+stronger than Vladimir Kramnik (1975{) but a contender for the crown of strongest player
+in the world is Viswanathan Anand (1969{), a former FIDE world champion.
+
+5 Conclusion
+
+We have extended the Bayesian rating system TrueSkill to provide player ratings through
+time on a uni(cid:12)ed scale. In addition, we introduced a new model that tracks player-speci(cid:12)c
+draw margins and thus models the game outcomes even more precisely. The resulting factor
+graph model for our large ChessBase database of game outcomes has 18.5 million nodes and
+27.6 million factors, thus constituting one of the largest non-trivial Bayesian models ever
+
+7
+
+ 
+
+Anand; Viswanathan
+
+Kasparov; Garry
+
+Kramnik; Vladimir
+
+Karpov; Anatoly
+
+Spassky; Boris V
+
+Fischer; Robert James
+
+Botvinnik; Mikhail
+
+Lasker; Emanuel
+
+Capablanca; Jose Raul
+
+Skill (Variable Draw Margin)
+Skill + Draw Margin
+Skill (Fixed Draw Margin)
+
+Eichborn; Louis
+
+Morphy; Paul
+
+Steinitz; William
+
+Anderssen; Adolf
+
+3500
+
+3000
+
+e
+t
+a
+m
+i
+t
+s
+e
+ 
+l
+l
+i
+k
+S
+
+2500
+
+2000
+
+1500
+
+ 
+
+1850
+
+1858
+
+1866
+
+1875
+
+1883
+
+1891
+
+1899
+
+1907
+
+1916
+
+1924
+1932
+Year
+
+1940
+
+1949
+
+1957
+
+1965
+
+1973
+
+1981
+
+1990
+
+1998
+
+2006
+
+Figure 4: Skill evolution of top Chess players with TTT-D; see text for details.
+
+tackled. Full approximate inference takes a mere 20 minutes in our F# implementation and
+thus demonstrates the e(cid:14)ciency of EP in appropriately structured factor graphs.
+
+One of the key questions provoked by this work concerns the comparability of skill estimates
+across di(cid:11)erent eras of chess history. Can we directly compare Fischer’s rating in 1972 with
+Kasparov’s in 1991? Edwards [2] points out that we would not be able to detect any skill
+improvement if two players of equal skill were to learn about a skill-improving breakthrough
+in chess theory at the same time but would only play against each other. However, this
+argument does not rule out the possibility that with more players and chess knowledge
+(cid:13)owing less perfectly the improvement may be detectable. After all, we do see a marked
+improvement in the average skill of the top players.
+
+In future work, we would like to address the issue of skill calibration across years further,
+e.g., by introducing a latent variable for each year that serves as the prior for new players
+joining the pool. Also, it would be interesting to model the e(cid:11)ect of playing white rather
+than black.
+
+References
+
+[1] H. A. David. The method of paired comparisons. Oxford University Press, New York, 1988.
+
+[2] R. Edwards. Edo historical chess ratings. http://members.shaw.ca/edo1/.
+
+[3] A. E. Elo. The rating of chess players: Past and present. Arco Publishing, New York, 1978.
+
+[4] M. E. Glickman. A comprehensive guide to chess ratings. Amer. Chess Journal, 3:59{102, 1995.
+
+[5] M. E. Glickman. Parameter estimation in large dynamic paired comparison experiments. Applied
+Statistics, 48:377{394, 1999.
+
+[6] R. Herbrich, T. Minka, and T. Graepel. TrueSkill(TM): A Bayesian skill rating system.
+Advances in Neural Information Processing Systems 20, 2007.
+
+In
+
+[7] T. Minka. A family of algorithms for approximate Bayesian inference. PhD thesis, MIT, 2001.
+
+[8] J. Sonas. Chessmetrics. http://db.chessmetrics.com/.
+
+8
+
+

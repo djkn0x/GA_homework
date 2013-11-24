@@ -1,0 +1,937 @@
+Sparse Inverse Covariance Matrix Estimation
+Using Quadratic Approximation
+
+Cho-Jui Hsieh, M ´aty ´as A. Sustik, Inderjit S. Dhillon, and Pradeep Ravikumar
+Department of Computer Science
+University of Texas at Austin
+Austin, TX 78712 USA
+{cjhsieh,sustik,inderjit,pradeepr}@cs.utexas.edu
+
+Abstract
+The !1 regularized Gaussian maximum likelihood estimator has been shown to
+have strong statistical guarantees in recovering a sparse inverse covariance ma-
+trix, or alternatively the underlying graph structure of a Gaussian Markov Random
+Field, from very limited samples. We propose a novel algorithm for solving the re-
+sulting optimization problem which is a regularized log-determinant program. In
+contrast to other state-of-the-art methods that largely use ﬁrst order gradient infor-
+mation, our algorithm is based on Newton’s method and employs a quadratic ap-
+proximation, but with some modiﬁcations that leverage the structure of the sparse
+Gaussian MLE problem. We show that our method is superlinearly convergent,
+and also present experimental results using synthetic and real application data that
+demonstrate the considerable improvements in performance of our method when
+compared to other state-of-the-art methods.
+
+1 Introduction
+Gaussian Markov Random Fields; Covariance Estimation. Increasingly, in modern settings statis-
+tical problems are high-dimensional, where the number of parameters is large when compared to
+the number of observations. An important class of such problems involves estimating the graph
+structure of a Gaussian Markov random ﬁeld (GMRF) in the high-dimensional setting, with appli-
+cations ranging from inferring gene networks and analyzing social interactions. Speciﬁcally, given
+n independently drawn samples {y1 , y2 , . . . , yn } from a p-variate Gaussian distribution, so that
+yi ∼N (µ, Σ), the task is to estimate its inverse covariance matrix Σ−1 , also referred to as the
+precision or concentration matrix. The non-zero pattern of this inverse covariance matrix Σ−1 can
+be shown to correspond to the underlying graph structure of the GMRF. An active line of work in
+high-dimensional settings where p < n is thus based on imposing some low-dimensional structure,
+such as sparsity or graphical model structure on the model space. Accordingly, a line of recent
+papers [2, 8, 20] has proposed an estimator that minimizes the Gaussian negative log-likelihood reg-
+ularized by the !1 norm of the entries (off-diagonal entries) of the inverse covariance matrix. The
+resulting optimization problem is a log-determinant program, which is convex, and can be solved in
+polynomial time.
+Existing Optimization Methods for the regularized Gaussian MLE. Due in part to its importance,
+there has been an active line of work on efﬁcient optimization methods for solving the !1 regularized
+Gaussian MLE problem. In [8, 2] a block coordinate descent method has been proposed which is
+called the graphical lasso or GLA S SO for short. Other recent algorithms proposed for this problem
+include P SM that uses projected subgradients [5], ALM using alternating linearization [14], I PM an
+inexact interior point method [11] and S INCO a greedy coordinate descent method [15].
+For typical high-dimensional statistical problems, optimization methods typically suffer sub-linear
+rates of convergence [1]. This would be too expensive for the Gaussian MLE problem, since the
+
+1
+
+number of matrix entries scales quadratically with the number of nodes. Luckily, the log-determinant
+problem has special structure; the log-determinant function is strongly convex and one can observe
+linear (i.e. geometric) rates of convergence for the state-of-the-art methods listed above. However,
+at most linear rates in turn become infeasible when the problem size is very large, with the number
+of nodes in the thousands and the number of matrix entries to be estimated in the millions. Here
+we ask the question: can we obtain superlinear rates of convergence for the optimization problem
+underlying the !1 regularized Gaussian MLE?
+One characteristic of these state-of-the-art methods is that they are ﬁrst-order iterative methods that
+mainly use gradient information at each step. Such ﬁrst-order methods have become increasingly
+popular in recent years for high-dimensional problems in part due to their ease of implementation,
+and because they require very little computation and memory at each step. The caveat is that they
+have at most linear rates of convergence [3]. For superlinear rates, one has to consider second-order
+methods which at least in part use the Hessian of the objective function. There are however some
+caveats to the use of such second-order methods in high-dimensional settings. First, a straight-
+forward implementation of each second-order step would be very expensive for high-dimensional
+problems. Secondly, the log-determinant function in the Gaussian MLE objective acts as a barrier
+function for the positive deﬁnite cone. This barrier property would be lost under quadratic approxi-
+mations so there is a danger that Newton-like updates will not yield positive-deﬁnite matrices, unless
+one explicitly enforces such a constraint in some manner.
+Our Contributions. In this paper, we present a new second-order algorithm to solve the !1 regular-
+ized Gaussian MLE. We perform Newton steps that use iterative quadratic approximations of the
+Gaussian negative log-likelihood, but with three innovations that enable ﬁnessing the caveats de-
+tailed above. First, we provide an efﬁcient method to compute the Newton direction. As in recent
+methods [12, 9], we build on the observation that the Newton direction computation is a Lasso prob-
+lem, and perform iterative coordinate descent to solve this Lasso problem. However, the naive ap-
+proach has an update cost of O(p2 ) for performing each coordinate descent update in the inner loop,
+which makes this resume infeasible for this problem. But we show how a careful arrangement and
+caching of the computations can reduce this cost to O(p). Secondly, we use an Armijo-rule based
+step size selection rule to obtain a step-size that ensures sufﬁcient descent and positive-deﬁniteness
+of the next iterate. Thirdly, we use the form of the stationary condition characterizing the optimal
+solution to then focus the Newton direction computation on a small subset of free variables, in a
+manner that preserves the strong convergence guarantees of second-order descent.
+Here is a brief outline of the paper. In Section 3, we present our algorithm that combines quadratic
+approximation, Newton’s method and coordinate descent. In Section 4, we show that our algorithm
+is not only convergent but superlinearly so. We summarize the experimental results in Section 5,
+using real application data from [11] to compare the algorithms, as well as synthetic examples which
+reproduce experiments from [11]. We observe that our algorithm performs overwhelmingly better
+(quadratic instead of linear convergence) than the other solutions described in the literature.
+2 Problem Setup
+Let y be a p-variate Gaussian random vector, with distribution N (µ, Σ). We are given n indepen-
+dently drawn samples {y1 , . . . , yn } of this random vector, so that the sample covariance matrix can
+be written as
+
+n
+n
+1
+1
+(1)
+(yk − ˆµ)(yk − ˆµ)T , where ˆµ =
+!
+!
+S =
+yi .
+n
+n
+i=1
+k=1
+Given some regularization penalty λ> 0, the !1 regularized Gaussian MLE for the inverse covari-
+ance matrix can be estimated by solving the following regularized log-determinant program:
+(2)
+X"0 " − log det X + tr(SX ) + λ#X #1# = arg min
+arg min
+f (X ),
+X"0
+i,j=1 |Xij | is the elementwise !1 norm of the p × p matrix X . Our results
+where #X #1 = $p
+can be also extended to allow a regularization term of the form #λ ◦ X #1 = $p
+i,j=1 λij |Xij |,
+i.e. different nonnegative weights can be assigned to different entries. This would include for
+instance the popular off-diagonal !1 regularization variant where we penalize $i#=j |Xij |, but not the
+diagonal entries. The addition of such !1 regularization promotes sparsity in the inverse covariance
+matrix, and thus encourages sparse graphical model structure. For further details on the background
+of !1 regularization in the context of GMRFs, we refer the reader to [20, 2, 8, 15].
+2
+
+3 Quadratic Approximation Method
+Our approach is based on computing iterative quadratic approximations to the regularized Gaussian
+MLE objective f (X ) in (2). This objective function f can be seen to comprise of two parts, f (X ) ≡
+g (X ) + h(X ), where
+
+(3)
+g (X ) = − log det X + tr(SX ) and h(X ) = λ#X #1 .
+The ﬁrst component g (X ) is twice differentiable, and strictly convex, while the second part
+h(X ) is convex but non-differentiable. Following the standard approach [17, 21] to building a
+quadratic approximation around any iterate Xt for such composite functions, we build the second-
+order Taylor expansion of the smooth component g (X ). The second-order expansion for the
+log-determinant function (see for instance [4, Chapter A.4.3]) is given by log det(Xt +∆) ≈
+t ∆). We introduce Wt = X −1
+and write the second-order
+log det Xt + tr(X −1
+2 tr(X −1
+t ∆X −1
+t ∆)− 1
+approximation ¯gXt (∆) to g (X ) = g (Xt +∆) as
+t
+(4)
+¯gXt (∆) = tr((S − Wt )∆) + (1/2) tr(Wt∆Wt∆) − log det Xt + tr(SXt ).
+We deﬁne the Newton direction Dt for the entire objective f (X ) can then be written as the solution
+of the regularized quadratic program:
+(5)
+¯gXt (∆) + h(Xt +∆) .
+Dt = arg min
+∆
+This Newton direction can be used to compute iterative estimates {Xt} for solving the optimization
+problem in (2). In the sequel, we will detail three innovations which makes this resume feasible.
+Firstly, we provide an efﬁcient method to compute the Newton direction. As in recent methods [12],
+we build on the observation that the Newton direction computation is a Lasso problem, and perform
+iterative coordinate descent to ﬁnd its solution. However, the naive approach has an update cost of
+O(p2 ) for performing each coordinate descent update in the inner loop, which makes this resume
+infeasible for this problem. We show how a careful arrangement and caching of the computations
+can reduce this cost to O(p). Secondly, we use an Armijo-rule based step size selection rule to obtain
+a step-size that ensures sufﬁcient descent and positive-deﬁniteness of the next iterate. Thirdly, we
+use the form of the stationary condition characterizing the optimal solution to then focus the Newton
+direction computation on a small subset of free variables, in a manner that preserves the strong
+convergence guarantees of second-order descent. We outline each of these three innovations in the
+following three subsections. We then detail the complete method in Section 3.4.
+3.1 Computing the Newton Direction
+The optimization problem in (5) is an !1 regularized least squares problem, also called Lasso [16]. It
+is straightforward to verify that for a symmetric matrix ∆ we have tr(Wt∆Wt∆) = vec(∆)T (Wt ⊗
+Wt ) vec(∆) , where ⊗ denotes the Kronecker product and vec(X ) is the vectorized listing of the
+elements of matrix X .
+In [7, 18] the authors show that coordinate descent methods are very efﬁcient for solving lasso type
+problems. However, an obvious way to update each element of ∆ to solve for the Newton direction
+in (5) needs O(p2 ) ﬂoating point operations since Q := Wt ⊗Wt is a p2 × p2 matrix, thus yielding an
+O(p4 ) procedure for approximating the Newton direction. As we show below, our implementation
+reduces the cost of one variable update to O(p) by exploiting the structure of Q or in other words
+the speciﬁc form of the second order term tr(Wt∆Wt∆). Next, we discuss the details.
+For notational simplicity we will omit the Newton iteration index t in the derivations that follow.
+(Hence, the notation for ¯gXt is also simpliﬁed to ¯g .) Furthermore, we omit the use of a separate
+index for the coordinate descent updates. Thus, we simply use D to denote the current iterate
+approximating the Newton direction and use D $ for the updated direction. Consider the coordinate
+descent update for the variable Xij , with i < j that preserves symmetry: D $ = D + µ(eie
+i ).
+T
+T
+j + ej e
+The solution of the one-variable problem corresponding to (5) yields µ:
+(6)
+T
+T
+i )) + 2λ|Xij + Dij + µ|.
+¯g (D + µ(ei e
+arg min
+j + ej e
+µ
+As a matter of notation: we use xi to denote the i-th column of the matrix X . We expand the terms
+i ) for ∆ in (4) and omit
+appearing in the deﬁnition of ¯g after substituting D $ = D + µ(eie
+T
+T
+j + ej e
+the terms not dependent on µ. The contribution of tr(SD $ ) − tr(W D $ ) yields 2µ(Sij − Wij ), while
+
+3
+
+the regularization term contributes 2λ|Xij + Dij + µ|, as seen from (6). The quadratic term can be
+rewritten using tr(AB ) = tr(BA) and the symmetry of D and W to yield:
+(7)
+tr(W D $W D $ ) = tr(W DW D) + 4µw
+i Dwj + 2µ2 (W 2
+T
+ij + WiiWjj ).
+In order to compute the single variable update we seek the minimum of the following function of µ:
+1
+(8)
+ij + WiiWjj )µ2 + (Sij − Wij + w
+(W 2
+T
+i Dwj )µ + λ|Xij + Dij + µ|.
+2
+Letting a = W 2
+i Dwj , and c = Xij + Dij the minimum is achieved
+ij + WiiWjj , b = Sij − Wij + w
+T
+for:
+(9)
+µ = −c + S (c − b/a, λ/a),
+where S (z , r) = sign(z ) max{|z |− r, 0} is the soft-thresholding function. The values of a and c
+are easy to compute. The main cost arises while computing the third term contributing to coefﬁcient
+b, namely w
+i Dwj . Direct computation requires O(p2 ) time. Instead, we maintain U = DW by
+T
+updating two rows of the matrix U for every variable update in D costing O(p) ﬂops, and then
+i uj using also O(p) ﬂops. Another way to view this arrangement is that we maintain a
+compute w
+T
+k throughout the process by storing the uk vectors, allowing
+decomposition W DW = $p
+T
+k=1 wk u
+O(p) computation of update (9). In order to maintain the matrix U we also need to update two
+coordinates of each uk when Dij is modiﬁed. We can compactly write the row updates of U as
+follows: ui· ← ui· + µwj · and uj · ← uj · + µwi· , where ui· refers to the i-th row vector of U .
+We note that the calculation of the Newton direction can be simpliﬁed if X is a diagonal ma-
+trix. For instance, if we are starting from a diagonal matrix X0 ,
+the terms w
+i Dwj equal
+T
+Dij /((X0 )ii (X0 )jj ), which are independent of each other implying that we only need to update
+each variable according to (9) only once, and the resulting D will be the optimum of (5). Hence, the
+time cost of ﬁnding the ﬁrst Newton direction is reduced from O(p3 ) to O(p2 ).
+3.2 Computing the Step Size
+Following the computation of the Newton direction Dt , we need to ﬁnd a step size α ∈ (0, 1] that
+ensures positive deﬁniteness of the next iterate Xt + αDt and sufﬁcient decrease in the objective
+function.
+We adopt Armijo’s rule [3, 17] and try step-sizes α ∈{ β 0 ,β 1 ,β 2 , . . . } with a constant decrease rate
+0 <β< 1 (typically β = 0.5) until we ﬁnd the smallest k ∈ N with α = β k such that Xt + αDt
+(a) is positive-deﬁnite, and (b) satisﬁes the following condition:
+(10)
+f (Xt + αDt ) ≤ f (Xt ) + ασ∆t , ∆t = tr(∇g (Xt )Dt ) + λ#Xt + Dt#1 − λ#Xt#1
+where 0 <σ< 0.5 is a constant. To verify positive deﬁniteness, we use a Cholesky factorization
+costing O(p3 ) ﬂops during the objective function evaluation to compute log det(Xt + αDt) and this
+step dominates the computational cost in the step-size computations. In the Appendix in Lemma 9
+we show that for any Xt and Dt , there exists a ¯αt > 0 such that (10) and the positive-deﬁniteness of
+Xt + αDt are satisﬁed for any α ∈ (0, ¯αt ], so we can always ﬁnd a step size satisfying (10) and the
+positive-deﬁniteness even if we do not have the exact Newton direction. Following the line search
+and the Newton step update Xt+1 = Xt + αDt we efﬁciently compute Wt+1 = X −1
+t+1 by reusing
+the Cholesky decomposition of Xt+1 .
+3.3 Identifying which variables to update
+In this section, we propose a way to select which variables to update that uses the stationary condition
+of the Gaussian MLE problem. At the start of any outer loop computing the Newton direction, we
+partition the variables into free and ﬁxed sets based on the value of the gradient. Speciﬁcally, we
+classify the (Xt )ij variable as ﬁxed if |∇ij g (Xt )| <λ −  and (Xt )ij = 0, where > 0 is small.
+(We used  = 0.01 in our experiments.) The remaining variables then constitute the free set. The
+following lemma shows the property of the ﬁxed set:
+Lemma 1. For any Xt and the corresponding ﬁxed and free sets Sf ixed , Sf ree , the optimized update
+on the ﬁxed set would not change any of the coordinates. In other words, the solution of the following
+optimization problem is ∆= 0 :
+f (Xt +∆) such that ∆ij = 0 ∀(i, j ) ∈ Sf ree .
+arg min
+∆
+
+4
+
+The proof is given in Appendix 7.2.3. Based on the above observation, we perform the inner loop
+coordinate descent updates restricted to the free set only (to ﬁnd the Newton direction). This reduces
+the number of variables over which we perform the coordinate descent from O(p2 ) to the number
+of non-zeros in Xt , which in general is much smaller than p2 when λ is large and the solution is
+sparse. We have observed huge computational gains from this modiﬁcation, and indeed in our main
+theorem we show the superlinear convergence rate for the algorithm that includes this heuristic.
+The attractive facet of this modiﬁcation is that it leverages the sparsity of the solution and intermedi-
+ate iterates in a manner that falls within a block coordinate descent framework. Speciﬁcally, suppose
+as detailed above at any outer loop Newton iteration, we partition the variables into the ﬁxed and
+free set, and then ﬁrst perform a Newton update restricted to the ﬁxed block, followed by a Newton
+update on the free block. According to Lemma 1 a Newton update restricted to the ﬁxed block does
+not result in any changes.
+In other words, performing the inner loop coordinate descent updates restricted to the free set is
+equivalent to two block Newton steps restricted to the ﬁxed and free sets consecutively. Note further,
+that the union of the free and ﬁxed sets is the set of all variables, which as we show in the convergence
+analysis in the appendix, is sufﬁcient to ensure the convergence of the block Newton descent.
+But would the size of free set be small? We initialize X0 to the identity matrix, which is indeed
+sparse. As the following lemma shows, if the limit of the iterates (the solution of the optimization
+problem) is sparse, then after a ﬁnite number of iterations, the iterates Xt would also have the same
+sparsity pattern.
+Lemma 2. Assume {Xt} converges to X ∗ . If for some index pair (i, j ), |∇ij g (X ∗ )| <λ (so that
+ij = 0), then there exists a constant ¯t > 0 such that for all t > ¯t, the iterates Xt satisfy
+X ∗
+(11)
+|∇ij g (Xt )| <λ and (Xt )ij = 0.
+The proof comes directly from Lemma 11 in the Appendix. Note that |∇ij g (X ∗)| <λ implying
+ij = 0 follows from the optimality condition of (2). A similar (so called shrinking) strategy is
+X ∗
+used in SVM or !1 -regularized logistic regression problems as mentioned in [19]. In Appendix 7.4
+we show in experiments this strategy can reduce the size of variables very quickly.
+3.4 The Quadratic Approximation based Method
+We now have the machinery for a description of our algorithm QU IC standing for QUadratic Inverse
+Covariance. A high level summary of the algorithm is shown in Algorithm 1, while the the full
+details are given in Algorithm 2 in the Appendix.
+Algorithm 1: Quadratic Approximation method for Sparse Inverse Covariance Learning (QU IC)
+Input
+: Empirical covariance matrix S , scalar λ, initial X0 , inner stopping tolerance 
+Output: Sequence of Xt converging to arg minX"0 f (X ), where
+f (X ) = − log det X + tr(SX ) + λ#X #1 .
+1 for t = 0, 1, . . . do
+Compute Wt = X −1
+.
+2
+t
+Form the second order approximation ¯fXt (∆) := ¯gXt (∆) + h(Xt +∆) to f (Xt +∆) .
+3
+Partition the variables into free and ﬁxed sets based on the gradient, see Section 3.3.
+4
+Use coordinate descent to ﬁnd the Newton direction Dt = arg min∆ ¯fXt (Xt +∆) over the
+5
+free variable set, see (6) and (9). (A Lasso problem.)
+Use an Armijo-rule based step-size selection to get α s.t. Xt+1 = Xt + αDt is positive deﬁnite
+6
+and the objective value sufﬁciently decreases, see (10).
+7 end
+4 Convergence Analysis
+In this section, we show that our algorithm has strong convergence guarantees. Our ﬁrst main result
+shows that our algorithm does converge to the optimum of (2). Our second result then shows that
+the asymptotic convergence rate is actually superlinear, speciﬁcally quadratic.
+4.1 Convergence Guarantee
+We build upon the convergence analysis in [17, 21] of the block coordinate gradient descent method
+applied to composite objectives. Speciﬁcally, [17, 21] consider iterative updates where at each
+
+5
+
+(12)
+
+iteration t they update just a block of variables Jt . They then consider a Gauss-Seidel rule:
+%
+Jt+j ⊇N ∀ t = 1, 2, . . . ,
+j=0,...,T −1
+where N is the set of all variables and T is a ﬁxed number. Note that the condition (12) ensures that
+each block of variables will be updated at least once every T iterations. Our Newton steps with the
+free set modiﬁcation is a special case of this framework: we set J2t , J2t+1 to be the ﬁxed and free sets
+respectively. As outlined in Section 3.3, our selection of the ﬁxed sets ensures that a block update
+restricted to the ﬁxed set would not change any values since these variables in ﬁxed sets already
+satisfy the coordinatewise optimality condition. Thus, while our algorithm only explicitly updates
+the free set block, this is equivalent to updating variables in ﬁxed and free blocks consecutively. We
+also have J2t ∪ J2t+1 = N , implying the Gauss-Seidel rule with T = 3.
+Further, the composite objectives in [17, 21] have the form F (x) = g (x) + h(x), where g (x)
+is smooth (continuously differentiable), and h(x) is non-differentiable but separable. Note that in
+our case, the smooth component is the log-determinant function g (X ) = − log det X + tr(SX ),
+while the non-differentiable separable component is h(x) = λ#x#1 . However, [17, 21] impose the
+additional assumption that g (x) is smooth over the domain Rn . In our case g (x) is smooth over
+the restricted domain of the positive deﬁnite cone S p
+++ . In the appendix, we extend the analysis
+so that convergence still holds under our setting. In particular, we prove the following theorem in
+Appendix 7.2:
+Theorem 1. In Algorithm 1, the sequence {Xt} converges to the unique global optimum of (2).
+4.2 Asymptotic Convergence Rate
+In addition to convergence, we further show that our algorithm has a quadratic asymptotic conver-
+gence rate.
+Theorem 2. Our algorithm QU IC converges quadratically, that is for some constant 0 <κ< 1:
+#Xt+1 − X ∗#F
+lim
+#Xt − X ∗#2
+t→∞
+F
+The proof, given in Appendix 7.3, ﬁrst shows that the step size as computed in Section 3.2 would
+eventually become equal to one, so that we would be eventually performing vanilla Newton updates.
+Further we use the fact that after a ﬁnite number of iterations, the sign pattern of the iterates con-
+verges to the sign pattern of the limit. From these two assertions, we build on the convergence rate
+result for constrained Newton methods in [6] to show that our method is quadratically convergent.
+5 Experiments
+In this section, we compare our method QU IC with other state-of-the-art methods on both synthetic
+and real datasets. We have implemented QU IC in C++, and all the experiments were executed on
+2.83 GHz Xeon X5440 machines with 32G RAM and Linux OS.
+We include the following algorithms in our comparisons:
+• ALM: the Alternating Linearization Method proposed by [14]. We use their MATLAB source
+code for the experiments.
+• G LA S SO: the block coordinate descent method proposed by [8]. We used their Fortran code
+available from cran.r-project.org, version 1.3 released on 1 /2 2 /0 9 .
+• PSM: the Projected Subgradient Method proposed by [5]. We use the MATLAB source code
+available at http://www.cs.ubc.ca/˜schmidtm/Software/PQN.html.
+• S INCO: the greedy coordinate descent method proposed by [15]. The code can be downloaded
+from https://projects.coin-or.org/OptiML/browser/trunk/sinco.
+• IPM: An inexact interior point method proposed by [11]. The source code can be downloaded
+from http://www.math.nus.edu.sg/˜mattohkc/Covsel-0.zip.
+Since some of the above implementations do not support the generalized regularization term #λ ◦
+X #1 , our comparisons use λ#X #1 as the regularization term.
+The GLA S SO algorithm description in [8] does not clearly specify the stopping criterion for the
+Lasso iterations. Inspection of the available Fortran implementation has revealed that a separate
+
+= κ.
+
+6
+
+1000
+
+2998
+
+0.4
+
+3028
+
+4000
+
+11998
+
+0.4
+
+11998
+
+Table 1: The comparisons on synthetic datasets. p stands for dimension, #Σ−1#0 indicates the
+number of nonzeros in ground truth inverse covariance matrix, #X ∗#0 is the number of nonzeros in
+the solution, and  is a speciﬁed relative error of objective value. ∗ indicates the run time exceeds
+our time limit 30,000 seconds (8.3 hours). The results show that QU IC is overwhelmingly faster
+than other methods, and is the only one which is able to scale up to solve problem where p = 10000.
+Parameter setting
+Dataset setting
+Time (in seconds)
+ QU IC ALM Glasso PSM IPM Sinco
+pattern
+p #Σ−1#0
+λ #X ∗#0
+0.30 18.89
+10−2
+chain
+23.28 15.59 86.32 120.0
+2.26 41.85
+10−6
+45.1 34.91 151.2 520.8
+11.28
+chain
+10−2
+3458 5246
+1068 567.9
+922
+53.51
+*
+10−6
+1258
+1734
+2119
+5754
+216.7 13820
+*
+*
+*
+10−2
+chain
+8450
+986.6 28190
+*
+*
+* 19251
+10−6
+0.52 42.34
+10−2
+10.31 20.16 71.62 60.75
+1.2 28250
+10−6
+20.43 59.89 116.7 683.3
+1.17 65.64
+10−2
+17.96 23.53 78.27 576.0
+6.87
+*
+10−6
+91.7 145.8 4449
+60.61
+23.25
+10−2
+4928 7375
+1429
+1479
+1052
+160.2
+*
+*
+10−6
+8097
+4232
+2561
+65.57
+*
+*
+10−2
+2963
+3328
+5621
+478.8
+*
+*
+10−6
+8356
+9541 13650
+337.7 26270 21298
+*
+*
+*
+10−2
+1125
+*
+*
+*
+*
+*
+10−6
+803.5
+*
+*
+*
+*
+*
+10−2
+2951
+*
+*
+*
+*
+*
+10−6
+
+random 10000
+
+random 1000
+
+random 4000
+
+0.075
+
+55830
+
+0.04 392786
+
+0.05 247444
+
+0.12
+
+10414
+
+0.08
+
+41910
+
+10000
+
+29998
+
+0.08
+
+89652
+
+0.4
+
+29998
+
+10758
+
+41112
+
+91410
+
+threshold is computed and is used for these inner iterations. We found that under certain conditions
+the threshold computed is smaller than the machine precision and as a result the overall algorithm
+occasionally displayed erratic convergence behavior and slow performance. We modiﬁed the Fortran
+implementation of GLA S SO to correct this error.
+5.1 Comparisons on synthetic datasets
+We ﬁrst compare the run times of the different methods on synthetic data. We generate the two
+following types of graph structures for the underlying Gaussian Markov Random Fields:
+• Chain Graphs: The ground truth inverse covariance matrix Σ−1 is set to be Σ−1
+i,i−1 = −0.5 and
+i,i = 1.25.
+Σ−1
+• Graphs with Random Sparsity Structures: We use the procedure mentioned in Example 1 in [11]
+to generate inverse covariance matrices with random non-zero patterns. Speciﬁcally, we ﬁrst
+generate a sparse matrix U with nonzero elements equal to ±1, set Σ−1 to be U T U and then add
+a diagonal term to ensure Σ−1 is positive deﬁnite. We control the number of nonzeros in U so
+that the resulting Σ−1 has approximately 10p nonzero elements.
+Given the inverse covariance matrix Σ−1 , we draw a limited number, n = p/2 i.i.d. samples, to sim-
+ulate the high-dimensional setting, from the corresponding GMRF distribution. We then compare
+the algorithms listed above when run on these samples.
+We can use the minimum-norm sub-gradient deﬁned in Lemma 5 in Appendix 7.2 as the stopping
+condition, and computing it is easy because X −1 is available in QU IC. Table 1 shows the results
+for timing comparisons in the synthetic datasets. We vary the dimensionality from 1000, 4000 to
+10000 for each dataset. For chain graphs, we select λ so that the solution had the (approximately)
+correct number of nonzero elements. To test the performance of algorithms on different parameters
+(λ), for random sparse pattern we test the speed under two values of λ, one discovers correct number
+of nonzero elements, and one discovers 5 times the number of nonzero elements. We report the time
+for each algorithm to achieve -accurate solution deﬁned by f (X k ) − f (X ∗) <f (X ∗). Table 1
+shows the results for  = 10−2 and 10−6 , where  = 10−2 tests the ability for an algorithm to get a
+
+7
+
+good initial guess (the nonzero structure), and  = 10−6 tests whether an algorithm can achieve an
+accurate solution. Table 1 shows that QU IC is consistently and overwhelmingly faster than other
+methods, both initially with  = 10−2 , and at  = 10−6 . Moreover, for p = 10000 random pattern,
+there are p2 = 100 million variables, the selection of ﬁxed/free sets helps QU IC to focus only on
+very small part of variables, and can achieve an accurate solution in about 15 minutes, while other
+methods fails to even have an initial guess within 8 hours. Notice that our λ setting is smaller
+than [14] because here we focus on the λ which discovers true structure, therefore the comparison
+between ALM and PSM are different from [14].
+5.2 Experiments on real datasets
+We use the real world biology datasets preprocessed by [11] to compare the performance of our
+method with other state-of-the-art methods. The regularization parameter λ is set to 0.5 according
+to the experimental setting in [11]. Results on the following datasets are shown in Figure 1: Estrogen
+(p = 692), Arabidopsis (p = 834), Leukemia (p = 1, 225), Hereditary (p = 1, 869). We plot the
+relative error (f (Xt ) − f (X ∗))/f (X ∗ ) (on a log scale) against time in seconds. On these real
+datasets, QU IC can be seen to achieve super-linear convergence, while other methods have at most
+a linear convergence rate. Overall QU IC can be ten times faster than other methods, and even more
+faster when higher accuracy is desired.
+6 Acknowledgements
+We would like to thank Professor Kim-Chuan Toh for providing the data set and the IPM code.
+We would also like to thank Professor Katya Scheinberg and Shiqian Ma for providing the ALM
+implementation. This research was supported by NSF grant IIS-1018426 and CCF-0728879. ISD
+acknowledges support from the Moncrief Grand Challenge Award.
+
+)
+e
+l
+a
+c
+s
+ 
+g
+o
+l
+(
+ 
+r
+o
+r
+r
+e
+ 
+e
+v
+i
+t
+a
+l
+e
+R
+
+100
+
+10−2
+
+10−4
+
+10−6
+
+10−8
+
+10−10
+
+ 
+0
+
+100
+
+10−2
+
+10−4
+
+10−6
+
+10−8
+
+)
+e
+l
+a
+c
+s
+ 
+g
+o
+l
+(
+ 
+r
+o
+r
+r
+e
+ 
+e
+v
+i
+t
+a
+l
+e
+R
+
+ALM
+Sinco
+PSM
+Glasso
+IPM
+QUIC
+
+10
+40
+30
+20
+Time (sec)
+(a) Time for Estrogen, p = 692
+
+50
+
+ALM
+Sinco
+PSM
+Glasso
+IPM
+QUIC
+
+ 
+
+60
+
+ 
+
+)
+e
+l
+a
+c
+s
+ 
+g
+o
+l
+(
+ 
+r
+o
+r
+r
+e
+ 
+e
+v
+i
+t
+a
+l
+e
+R
+
+100
+
+10−2
+
+10−4
+
+10−6
+
+10−8
+
+10−10
+
+ 
+0
+
+100
+
+10−2
+
+10−4
+
+10−6
+
+10−8
+
+)
+e
+l
+a
+c
+s
+ 
+g
+o
+l
+(
+ 
+r
+o
+r
+r
+e
+ 
+e
+v
+i
+t
+a
+l
+e
+R
+
+ALM
+Sinco
+PSM
+Glasso
+IPM
+QUIC
+
+10
+40
+70
+60
+50
+30
+20
+Time (sec)
+(b) Time for Arabidopsis, p = 834
+
+80
+
+ALM
+Sinco
+PSM
+Glasso
+IPM
+QUIC
+
+ 
+
+ 
+
+10−10
+
+ 
+0
+
+10−10
+
+ 
+0
+
+600
+1000
+800
+400
+200
+50
+400
+350
+300
+250
+200
+150
+100
+Time (sec)
+Time (sec)
+(c) Time for Leukemia, p = 1, 255
+(d) Time for hereditarybc, p = 1, 869
+Figure 1: Comparison of algorithms on real datasets. The results show QU IC converges faster than
+other methods.
+
+1200
+
+500
+
+450
+
+8
+
+References
+[1] A. Agarwal, S. Negahban, and M. Wainwright. Convergence rates of gradient methods for
+high-dimensional statistical recovery. In NIPS, 2010.
+[2] O. Banerjee, L. E. Ghaoui, and A. d’Aspremont. Model selection through sparse maximum
+likelihood estimation for multivariate Gaussian or binary data. The Journal of Machine Learn-
+ing Research, 9, 6 2008.
+[3] D. Bertsekas. Nonlinear programming. Athena Scientiﬁc, Belmont, MA, 1995.
+[4] S. Boyd and L. Vandenberghe. Convex optimization. Cambridge University Press, 7th printing
+edition, 2009.
+[5] J. Duchi, S. Gould, and D. Koller. Projected subgradient methods for learning sparse Gaus-
+sians. UAI, 2008.
+[6] J. Dunn. Newton’s method and the Goldstein step-length rule for constrained minimization
+problems. SIAM J. Control and Optimization, 18(6):659–674, 1980.
+[7] J. Friedman, T. Hastie, H. H ¨oﬂing, and R. Tibshirani. Pathwise coordinate optimization. Annals
+of Applied Statistics, 1(2):302–332, 2007.
+[8] J. Friedman, T. Hastie, and R. Tibshirani. Sparse inverse covariance estimation with the graph-
+ical lasso. Biostatistics, 9(3):432–441, July 2008.
+[9] J. Friedman, T. Hastie, and R. Tibshirani. Regularization paths for generalized linear models
+via coordinate descent. Journal of Statistical Software, 33(1):1–22, 2010.
+[10] E. S. Levitin and B. T. Polyak. Constrained minimization methods. U.S.S.R. Computational
+Math. and Math. Phys., 6:1–50, 1966.
+[11] L. Li and K.-C. Toh. An inexact interior point method for l1-reguarlized sparse covariance
+selection. Mathematical Programming Computation, 2:291–315, 2010.
+[12] L. Meier, S. Van de Geer, and P. B ¨uhlmann. The group lasso for logistic regression. Journal
+of the Royal Statistical Society, Series B, 70:53–71, 2008.
+[13] R. T. Rockafellar. Convex Analysis. Princeton University Press, Princeton, NJ, 1970.
+[14] K. Scheinberg, S. Ma, and D. Glodfarb. Sparse inverse covariance selection via alternating
+linearization methods. NIPS, 2010.
+[15] K. Scheinberg and I. Rish. Learning sparse Gaussian Markov networks using a greedy coor-
+dinate ascent approach. In J. Balczar, F. Bonchi, A. Gionis, and M. Sebag, editors, Machine
+Learning and Knowledge Discovery in Databases, volume 6323 of Lecture Notes in Computer
+Science, pages 196–212. Springer Berlin / Heidelberg, 2010.
+[16] R. Tibshirani. Regression shrinkage and selection via the lasso. Journal of the Royal Statistical
+Society, 58:267–288, 1996.
+[17] P. Tseng and S. Yun. A coordinate gradient descent method for nonsmooth separable mini-
+mization. Mathematical Programming, 117:387–423, 2007.
+[18] T. T. Wu and K. Lange. Coordinate descent algorithms for lasso penalized regression. The
+Annals of Applied Statistics, 2(1):224–244, 2008.
+[19] G.-X. Yuan, K.-W. Chang, C.-J. Hsieh, and C.-J. Lin. A comparison of optimization methods
+and software for large-scale l1-regularized linear classiﬁcation. Journal of Machine Learning
+Research, 11:3183–3234, 2010.
+[20] M. Yuan and Y. Lin. Model selection and estimation in the gaussian graphical model.
+Biometrika, 94:19–35, 2007.
+[21] S. Yun and K.-C. Toh. A coordinate gradient descent method for l1-regularized convex mini-
+mization. Computational Optimizations and Applications, 48(2):273–307, 2011.
+
+9
+
+

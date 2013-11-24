@@ -1,0 +1,785 @@
+Automated Hierarchy Discovery for Planning in
+Partially Observable Environments
+
+Laurent Charlin & Pascal Poupart
+David R. Cheriton School of Computer Science
+Faculty of Mathematics
+University of Waterloo
+Waterloo, Ontario
+{lcharlin,ppoupart}@cs.uwaterloo.ca
+
+Romy Shioda
+Dept of Combinatorics and Optimization
+Faculty of Mathematics
+University of Waterloo
+Waterloo, Ontario
+rshioda@math.uwaterloo.ca
+
+Abstract
+
+Planning in partially observable domains is a notoriously difﬁcult problem. How-
+ever, in many real-world scenarios, planning can be simpli ﬁ ed by decomposing the
+task into a hierarchy of smaller planning problems. Several approaches have been
+proposed to optimize a policy that decomposes according to a hierarchy speci ﬁed
+a priori. In this paper, we investigate the problem of automatically discovering
+the hierarchy. More precisely, we frame the optimization of a hierarchical policy
+as a non-convex optimization problem that can be solved with general non-linear
+solvers, a mixed-integer non-linear approximation or a form of bounded hierar-
+chical policy iteration. By encoding the hierarchical structure as variables of the
+optimization problem, we can automatically discover a hierarchy. Our method is
+ﬂexible enough to allow any parts of the hierarchy to be speci
+ﬁed based on prior
+knowledge while letting the optimization discover the unknown parts. It can also
+discover hierarchical policies, including recursive policies, that are more compact
+(potentially inﬁnitely fewer parameters) and often easier
+to understand given the
+decomposition induced by the hierarchy.
+
+1
+
+Introduction
+
+Planning in partially observable domains is a notoriously difﬁcult problem. However, in many real-
+world scenarios, planning can be simpli ﬁed by decomposing t he task into a hierarchy of smaller
+planning problems. Such decompositions can be exploited in planning to temporally abstract sub-
+policies into macro actions (a.k.a. options). Pineau et al. [17], Theocharous et al. [22], and Hansen
+and Zhou [10] proposed various algorithms that speed up planning in partially observable domains
+by exploiting the decompositions induced by a hierarchy. However these approaches assume that a
+policy hierarchy is speci ﬁed by the user, so an important que stion arises: how can we automate the
+discovery of a policy hierarchy? In fully observable domains, there exists a large body of work on
+hierarchical Markov decision processes and reinforcement learning [6, 21, 7, 15] and several hier-
+archy discovery techniques have been proposed [23, 13, 11, 20]. However those techniques rely on
+the assumption that states are fully observable to detect abstractions and subgoals, which prevents
+their use in partially observable domains.
+
+We propose to frame hierarchy and policy discovery as an optimization problem with variables
+corresponding to the hierarchy and policy parameters. We present an approach that searches in the
+space of hierarchical controllers [10] for a good hierarchical policy. The search leads to a difﬁcult
+non-convex optimization problem that we tackle using three approaches: generic non-linear solvers,
+a mixed-integer non-linear programming approximation or an alternating optimization technique
+that can be thought as a form of hierarchical bounded policy iteration. We also generalize Hansen
+and Zhou’s hierarchical controllers [10] to allow recursive controllers. These are controllers that
+
+may recursively call themselves, with the ability of representing policies with a ﬁnite number of
+parameters that would otherwise require inﬁnitely many par ameters. Recursive policies are likely
+to arise in language processing tasks such as dialogue management and text generation due to the
+recursive nature of language models.
+
+2 Finite State Controllers
+
+We ﬁrst review partially observable Markov decision proces ses (POMDPs) (Sect. 2.1), which is the
+framework used throughout the paper for planning in partially observable domains. Then we review
+how to represent POMDP policies as ﬁnite state controllers ( Sect. 2.2) as well as some algorithms
+to optimize controllers of a ﬁxed size (Sect. 2.3).
+
+2.1 POMDPs
+
+POMDPs have emerged as a popular framework for planning in partially observable domains [12].
+A POMDP is formally deﬁned by a tuple
+(S, O, A, T , Z, R, γ ) where S is the set of states, O is
+the set of observations, A is the set of actions, T (s0 , s, a) = Pr(s0 |s, a) is the transition function,
+Z (o, s0 , a) = Pr(o|s0 , a) is the observation function, R(s, a) = r is the reward function and γ ∈
+[0, 1) is the discount factor.
+It will be useful to view γ as a termination probability. This will
+allow us to absorb γ into the transition probabilities by deﬁning discounted tr ansition probabilities:
+Prγ (s0 |s, a) = Pr(s0 |s, a)γ . Given a POMDP, the goal is to ﬁnd a course of action that maxim izes
+expected total rewards. To select actions, the system can only use the information available in
+the past actions and observations. Thus we deﬁne a policy π as a mapping from histories of past
+actions and observations to actions. Since histories may become arbitrarily long, we can alternatively
+deﬁne policies as mappings from beliefs to actions (i.e., π(b) = a). A belief b(s) = Pr(s) is a
+probability distribution over states, taking into account the information provided by past actions
+and observations. Given a belief b, after executing a and receiving o, we can compute an updated
+belief ba,o using Bayes’ theorem: ba,o (s) = kb(s) Pr(s0 |s, a) Pr(o|s0a). Here k is a normalization
+constant. The value V π of policy π when starting with belief b is measured by the expected sum of
+the future rewards: V π (b) = Pt R(bt , π(bt )), where R(b, a) = Ps b(s)R(s, a). An optimal policy
+π∗ is a policy with the highest value V ∗ for all beliefs (i.e., V ∗ (b) ≥ V π (b)∀b, π ). The optimal
+value function also satis ﬁes Bellman’s equation: V ∗ (b) = maxa (R(b, a) + γ Pr(o|b, a)V ∗ (ba,o )),
+where Pr(o|b, a) = Ps,s0 b(s) Pr(s0 |s, a) Pr(o|s0 , a).
+2.2 Policy Representation
+
+A convenient representation for an important class of policies is that of ﬁnite state controllers [9].
+A ﬁnite state controller consists of a ﬁnite state automaton
+(N , E ) with a set N of nodes and a set
+E of directed edges Each node n has one outgoing edge per observation. A controller encodes a
+policy π = (α, β ) by mapping each node to an action (i.e., α(n) = a) and each edge (referred by its
+observation label o and its parent node n) to a successor node (i.e., β (n, o) = n0 ). At runtime, the
+policy encoded by a controller is executed by doing the action at = α(nt ) associated with the node
+nt traversed at time step t and following the edge labelled with observation ot to reach the next node
+nt+1 = β (nt , ot ).
+Stochastic controllers [18] can also be used to represent stochastic policies by redeﬁning α and β as
+distributions over actions and successor nodes. More precisely, let Prα (a|n) be the distribution from
+which an action a is sampled in node n and let Prβ (n0 |n, a, o) be the distribution from which the
+successor node n0 is sampled after executing a and receiving o in node n. The value of a controller
+is computed by solving the following system of linear equations:
+n (s) = X
+Prα (a|n)[R(s, a) + X
+V π
+a
+s0 ,o,n0
+
+Prγ (s0 |s, a) Pr(o|s0 , a) Prβ (n0 |n, a, o)V π
+n0 (s0 )] ∀n, s (1)
+
+While there always exists an optimal policy representable by a deterministic controller, this con-
+troller may have a very large (possibly inﬁnite) number of no des. Given time and memory con-
+straints, it is common practice to search for the best controller with a bounded number of nodes [18].
+However, when the number of nodes is ﬁxed, the best controlle r is not necessarily deterministic. This
+explains why searching in the space of stochastic controllers may be advantageous.
+
+Table 1: Quadratically constrained optimization program for bounded stochastic controllers [1].
+x,y X
+max
+s
+
+Prγ (s0 |s, a) Pr(o|s0 , a) Pr(n0 , a|n, o)
+{z
+}
+|
+x
+
+i ∀n, s
+
+Vn0 (s0 )
+| {z }y
+
+bo (s) Vno (s)
+| {z }y
+h Pr(a, n0 |n, ok )
+R(s, a) + X
+= X
+{z
+}
+|
+a,n0
+s0 ,o
+x
+≥ 0 ∀n0 , a, n, o X
+n0 ,a
+= X
+n0
+
+s.t. Vn (s)
+| {z }y
+Pr(n0 , a|n, o)
+|
+{z
+}
+x
+X
+Pr(n0 , a|n, o)
+{z
+}
+|
+n0
+x
+
+Pr(n0 , a|n, ok )
+{z
+}
+|
+x
+
+= 1 ∀n, o
+
+Pr(n0 , a|n, o)
+{z
+}
+|
+x
+∀a, n, o
+
+2.3 Optimization of Stochastic Controllers
+
+The optimization of a stochastic controller with a ﬁxed numb er of nodes can be formulated as a
+quadratically constrained optimization problem (QCOP) [1]. The idea is to maximize V π by varying
+the controller parameters Prα and Prβ . Table 1 describes the optimization problem with Vn (s)
+and the joint distribution Pr(n0 , a|n, o) = Prα (n|a) Prβ (n0 |n, a, o) as variables. The ﬁrst set of
+constraints corresponds to those of Eq. 1 while the remaining constraints ensure that Pr(n0 , a|n, o)
+is a proper distribution and that P0
+n Pr(n0 , a|n, o) = Prα (a|n)∀o. This optimization program is
+non-convex due to the ﬁrst set of constraints. Hence, existi ng techniques can at best guarantee
+convergence to a local optimum. Several techniques have been tried including gradient ascent [14],
+stochastic local search [3], bounded policy iteration (BPI) [18] and a general non-linear solver called
+SNOPT (based on sequential quadratic programming) [1, 8]. Empirically, biased-BPI (version of
+BPI that biases its search to the belief region reachable from a given initial belief state) and SNOPT
+have been shown to outperform the other approaches on some benchmark problems [19, 1]. We
+quickly review BPI since it will be extended in Section 3.2 to optimize hierarchical controllers. BPI
+alternates between policy evaluation and policy improvement. Given a policy with ﬁxed parameters
+Pr(a, n0 |n, o), policy evaluation solves the linear system in Eq 1 to ﬁnd Vn (s) for all n, s. Policy
+improvement can be viewed as a linear simpli ﬁcation of the pr ogram in Table 1 achieved by ﬁxing
+Vn0 (s0 ) in the right hand side of the ﬁrst set of constraints. Policy i mprovement is achieved by
+optimizing the controller parameters Pr(n0 , a|n, o) and the value Vn (s) on the left hand side.1
+
+3 Hierarchical controllers
+
+Hansen and Zhou [10] recently proposed hierarchical ﬁnite- state controllers as a simple and intu-
+itive way of encoding hierarchical policies. A hierarchical controller consists of a set of nodes and
+edges as in a ﬂat controller, however some nodes may be abstra ct, corresponding to sub-controllers
+themselves. As with ﬂat controllers, concrete nodes are par ameterized with an action mapping α
+and edges outgoing concrete nodes are parameterized by a successor node mapping β . In contrast,
+abstract nodes are parameterized by a child node mapping indicating in which child node the sub-
+controller should start. Hansen and Zhou consider two schemes for the edges outgoing abstract
+nodes: either there is a single outgoing edge labelled with a null observation or there is one edge
+per terminal node of the subcontroller labelled with an abstract observation identifying the node in
+which the subcontroller terminated.
+
+Subcontrollers encode full POMDP policies with the addition of a termination condition. In fully
+observable domains, it is customary to stop the subcontroller once a goal state (from a predeﬁned
+set of terminal states) is reached. This strategy cannot work in partially observable domains, so
+Hansen and Zhou propose to terminate a subcontroller when an end node (from a predeﬁned set of
+terminal nodes) is reached. Since the decision to reach a terminal node is made according to the
+successor node mapping β , the timing for returning control is implicitly optimized. Hansen and
+
+1Note however that this optimization may decrease the value of some nodes so [18] add an additional
+constraint to ensure monotonic improvement by forcing Vn (s) on the left hand side to be at least as high as
+Vn (s) on the right hand side.
+
+Zhou propose to use |A| terminal nodes, each mapped to a different action. Terminal nodes do not
+have any outgoing edges nor any action mapping since they already have an action assigned.
+
+The hierarchy of the controller is assumed to be ﬁnite and spe ci ﬁed by the programmer. Subcon-
+trollers are optimized in isolation in a bottom up fashion. Subcontrollers at the bottom level are
+made up only of concrete nodes and therefore can be optimized as usual using any controller op-
+timization technique. Controllers at other levels may contain abstract nodes for which we have to
+deﬁne the reward function and the transition probabilities . Recall that abstract nodes are not mapped
+to concrete actions, but rather to children nodes. Hence, the immediate reward of an abstract node
+¯n corresponds to the value Vα( ¯n) (s) of its child node α(¯n). Similarly, the probability of reach-
+ing state s0 after executing the subcontroller of an abstract node ¯n corresponds to the probability
+Pr(send |s, α(¯n)) of terminating the subcontroller in send when starting in s at child node α(¯n).
+This transition probability can be computed by solving the following linear system:
+1 when n is a terminal node and s = send
+Pr(send |s, n) = 
+0 when n is a terminal node and s 6= send
+Po,s0 Pr(s0 |s, α(n)) Pr(o|s0 , α(n)) Pr(send |s0 , β (n, o))
+
+Subcontrollers with abstract actions correspond to partially observable semi-Markov decision pro-
+cesses (POSMDPs) since the duration of each abstract action may vary. The duration of an action is
+important to determine the amount by which future rewards should be discounted. Hansen and Zhou
+propose to use the mean duration to determine the amount of discounting, however this approach
+does not work. In particular, abstract actions with non-zero probability of never terminating have an
+inﬁnite mean duration. Instead, we propose to absorb the dis count factor into the transition distribu-
+tion (i.e., Prγ (s0 |s, a) = γ Pr(s0 |s, a)). This avoids all issues related to discounting and allows us to
+solve POSMDPs with the same algorithms as POMDPs. Hence, given the abstract reward function
+R(s, α(¯n)) = Vα( ¯n) (s) and the abstract transition function Prγ (s0 |s, α(¯n)) obtained by solving the
+linear system in Eq. 2, we have a POSMDP which can be optimized using any POMDP optimization
+technique (as long as the discount factor is absorbed into the transition function).
+
+otherwise
+
+(2)
+
+Hansen’s hierarchical controllers have two limitations: the hierarchy must have a ﬁnite number of
+levels and it must be speci ﬁed by hand. In the next section we d escribe recursive controllers which
+may have inﬁnitely many levels. We also describe an algorith m to discover a suitable hierarchy by
+simultaneously optimizing the controller parameters and hierarchy.
+
+3.1 Recursive Controllers
+
+In some domains, policies are naturally recursive in the sense that they decompose into subpolicies
+that may call themselves. This is often the case in language processing tasks since language models
+such as probabilistic context-free grammars are composed of recursive rules. Recent work in dia-
+logue management uses POMDPs to make high level discourse decisions [24]. Assuming POMDP
+dialogue management eventually handles decisions at the sentence level, recursive policies will nat-
+urally arise. Similarly, language generation with POMDPs would naturally lead to recursive policies
+that reﬂect the recursive nature of language models.
+
+We now propose several modi ﬁcations to Hansen and Zhou’s hie rarchical controllers that simplify
+things while allowing recursive controllers. First, the subcontrollers of abstract nodes may be com-
+posed of any node (including the parent node itself) and transitions can be made to any node any-
+where (whether concrete or abstract). This allows recursive controllers and smaller controllers since
+nodes may be shared across levels. Second, we use a single terminal node that has no action nor any
+outer edge. It is a virtual node simply used to signal the termination of a subcontroller. Third, while
+abstract nodes lead to the execution of a subcontroller, they are also associated with an action. This
+action is executed upon termination of the subcontroller. Hence, the actions that were associated
+with the terminal nodes in Hansen and Zhou’s proposal are associated with the abstract nodes in
+our proposal. This allows a uniform parameterization of actions for all nodes while reducing the
+number of terminal nodes to 1. Fourth, the outer edges of abstract nodes are labelled with regular
+observations since an observation will be made following the execution of the action of an abstract
+node. Finally, to circumvent all issues related to discounting, we absorb the discount factor into the
+transition probabilities (i.e., Prγ (s0 |s, a)).
+
+Pr(n
+
+0
+
+, a|¯n, o)
+
+¯n
+s
+
+Pr(nbeg |¯n)
+
+oc(send , nend |s, nbeg )
+
+nbeg
+s
+
+0
+
+n
+0
+s
+
+nend
+send
+
+oc(send , nend |s, nbeg )
+
+n0
+s0
+
+Pr(n
+
+0
+
+, a|¯n, o)
+
+¯n
+s
+
+Pr(nbeg |¯n)
+
+nbeg
+
+s
+
+oc(send , nend |s, nbeg )
+
+0
+
+n
+0
+s
+
+nend
+send
+
+(a)
+(b)
+Figure 1: The ﬁgures represent controllers and transitions as written in Equations 5 and 6b. Along-
+side the directed edges we’ve indicated the equivalent part of the equations which they correspond
+to.
+3.2 Hierarchy and Policy Optimization
+
+We formulate the search for a good stochastic recursive controller, including the automated hierarchy
+discovery, as an optimization problem (see Table 2). The global maximum of this optimization
+problem corresponds to the optimal policy (and hierarchy) for a ﬁxed set N of concrete nodes n
+¯N of abstract nodes ¯n. The variables consist of the value function Vn (s), the policy
+and a ﬁxed set
+parameters Pr(n0 , a|n, o), the (stochastic) child node mapping Pr(n0 |¯n) for each abstract node ¯n and
+the occupancy frequency oc(n, s|n0 , s0 ) of each (n, s)-pair when starting in (n0 , s0 ). The objective
+(Eq. 3) is the expected value Ps b0 (s)Vn0 (s) of starting the controller in node n0 with initial belief
+b0 . The constraints in Equations 4 and 5 respectively indicate the expected value of concrete and
+abstract nodes. The expected value of an abstract node corresponds to the sum of three terms: the
+expected value Vnbeg (s) of its subcontroller given by its child node nbeg , the reward R(send , a ¯n )
+immediately after the termination of the subcontroller and the future rewards Vn (s0 ). Figure 1a
+illustrates graphically the relationship between the variables in Equation 5. Circles are state-node
+pairs labelled by their expected value. Edges indicate single transitions (solid line), sequences of
+transitions (dashed line) or the beginning/termination of a subcontroller (bold/dotted line). Edges
+are labelled with the corresponding transition probability variables.
+Note that the reward R(send , a ¯n ) depends on the state send in which the subcontroller terminates.
+Hence we need to compute the probability that the last state visited in the subcontroller is send .
+This probability is given by the occupancy frequency oc(send , nend |s, nbeg ), which is recursively
+deﬁned in Eq. 6 in terms of a preceding state-node pair which m ay be concrete (6a) or abstract (6b).
+Figure 1b illustrates graphically the relationship between the variables in Eq. 6b. Eq. 7 prevents
+inﬁnite loops (without any action execution) in the child no de mappings. The label function refers
+to the labelling of all abstract nodes, which induces an ordering on the abstract nodes. Only the
+nodes labelled with numbers larger than the label of an abstract node can be children of that abstract
+node. This constraint ensures that chains of child node mappings have a ﬁnite length, eventually
+reaching a concrete node where an action is executed. Constraints, like the ones in Table 1, are also
+needed to guarantee that the policy parameters and the child node mappings are proper distributions.
+
+3.3 Algorithms
+
+Since the problem in Table 2 has non-convex (quartic) constraints in Eq. 5 and 6, it is difﬁcult to
+solve. We consider three approaches inspired from the techniques for non-hierarchical controllers:
+Non-convex optimization: Use a general non-linear solver, such as SNOPT, to directly tackle the
+optimization problem in Table 2. This is the most convenient approach, however a globally optimal
+solution may not be found due to the non-convex nature of the problem.
+Mixed-Integer Non-Linear Programming (MINLP): We restrict Pr(n0 , a|n, o) and Pr(nbeg |¯n)
+to be binary (i.e., in {0, 1}). Since the optimal controller is often near deterministic in practice, this
+restriction tends to have a negligible effect on the value of the optimal controller. The problem is
+still non-convex but can be tackled with a mixed-integer non-linear solver such as MINLP BB 2 .
+Bounded Hierarchical Policy Iteration (BHPI): We alternate between (i) solving a simpli ﬁed ver-
+sion of the optimization where some variables are ﬁxed and (i
+i) updating the values of the ﬁxed vari-
+ables. More precisely, we ﬁx Vn0 (s0 ) in Eq. 5 and oc(s, ¯n|s0 , n0 ) in Eq. 6. As a result, Eq. 5 and 6
+are now cubic, involving products of variables that include a single continuous variable. This per-
+
+2http://www-unix.mcs.anl.gov/∼leyffer/solvers.html
+
+s.t. Vn (s)
+| {z }y
+
+Table 2: Non-convex quarticly constrained optimization problem for hierarchy and policy discovery
+in bounded stochastic recursive controllers.
+w,x,y,z X
+max
+s∈S
+= X
+a,n0
+
+R(s, a) + X
+s0 ,o
+
+(3)
+
+b0 (s) Vn0 (s)
+| {z }y
+h Pr(n0 , a|n, ok )
+{z
+}
+|
+x
+h Vnbeg (s)
+Pr(nbeg | ¯n)
+oc(send , nend |s, nbeg )
+|
+}
+{z
+{z
+}
+|
+|
+{z
+}
+z
+w
+y
+ii ∀s, ¯n
+Vn0 (s0 )
+Prγ (s0 |send , a) Pr(o|s0 , a) Pr(n0 , a| ¯n, o)
+{z
+}
+| {z }y
+|
+x
+= δ(s0 , n0 , s0 , n0 ) + X
+s,o,a
+
++ X
+send ,a,n0
+
+Vn0 (s0 )
+Prγ (s0 |s, a) Pr(o|s0 , a) Pr(n0 , a|n, o)
+| {z }y
+{z
+}
+|
+x
+h Pr(n0 , a| ¯n, ok )
+|
+{z
+}
+x
+
+h
+
+i ∀s, n
+(4)
+
+R(send , a)
+
+= X
+V ¯n (s)
+| {z }y
+nbeg
++ X
+s0 ,o
+
+oc(s0 , n0 |s0 , n0 )
+{z
+}
+|
+w
+X
+oc(s, n|s0 , n0 )
+|
+}
+{z
+n
+w
++ Psend ,nbeg , ¯n oc(s, ¯n|s0 , n0 )
+{z
+}
+|
+w
+Pr(n0 , a| ¯n, o)
+Pr(nbeg | ¯n)
+oc(send , nend |s, nbeg )
+{z
+}
+{z
+}
+{z
+}
+|
+|
+|
+w
+x
+z
+Pr( ¯n0 | ¯n) = 0 if label( ¯n0 ) ≤ label( ¯n), ∀ ¯n, ¯n0
+
+Prγ (s0 |s, a) Pr(o|s0 , a) Pr(n0 , a|n, o)
+{z
+}
+|
+x
+Prγ (s0 |send , a) Pr(o|s0 , a)
+i ∀s0 , s0 , n0 , n0
+
+i
+
+9=
+;
+9>>=
+>>;
+
+n concrete (6a)
+
+¯n abstract (6b)
+
+(5)
+
+(6)
+
+(7)
+
+mits the use of disjunctive programming [2] to linearize the constraints without any approximation.
+The idea is to replace any product BX (where B is binary and X is continuous) by a new continuous
+variable Y constrained by lbX B ≤ Y ≤ ubX B and X + (B − 1)ubX ≤ Y ≤ X + (B − 1)lbX
+where lbX and ubX are lower and upper bounds on X . One can verify that those additional linear
+constraints force Y to be equal to BX . After applying disjunctive programming, we solve the result-
+ing mixed-integer linear program (MILP) and update Vn0 (s0 ) and oc(s, ¯n|s0 , n0 ) based on the new
+values for Vn (s) and oc(s0 , n0 |s0 , n0 ). We repeat the process until convergence or until a pre-deﬁn ed
+time limit is reached. Although, convergence cannot be guaranteed, in practice we have found BHPI
+to be monotonically increasing. Note that ﬁxing Vn0 (s0 ) and oc(s, ¯n|s0 , n0 ) while varying the policy
+parameters is reminiscent of policy iteration, hence the name bounded hierarchical policy iteration.
+
+3.4 Discussion
+
+Discovering a hierarchy offers many advantages over previous methods that assume the hierarchy is
+already known. In situations where the user is unable to specify the hierarchy, our approach provides
+a principled way of discovering it. In situations where the user has a hierarchy in mind, it may be
+possible to ﬁnd a better one. Note however that discovering t he hierarchy while optimizing the
+policy is a much more difﬁcult problem than simply optimizin g the policy parameters. Additional
+variables (e.g., Pr(n0 , a|n, o) and oc(s, n|s0 , n0 )) must be optimized and the degree of non-linearity
+increases. Our approach can also be used when the hierarchy and the policy are partly known. It is
+fairly easy to set the variables that are known or to reduce their range by specifying upper and lower
+bounds. This also has the beneﬁt of simplifying the optimiza tion problem.
+
+It is also interesting to note that hierarchical policies may be encoded with exponentially fewer
+nodes in a hierarchical controller than a ﬂat controller. In tuitively, when a subcontroller is called by
+k abstract nodes, this subcontroller is shared by all its abstract parents. An equivalent ﬂat controller
+would have to use k separate copies of the subcontroller. If a hierarchical controller has l levels
+with subcontrollers shared by k parents in each level, then the equivalent ﬂat controller wi
+ll need
+O(k l ) copies. By allowing recursive controllers, policies may be represented even more compactly.
+Recursive controllers allow abstract nodes to call subcontrollers that may contain themselves. An
+
+Problem
+
+Paint
+Shuttle
+
+4x4 Maze
+
+S
+
+4
+8
+8
+8
+8
+16
+
+A O V*
+
+4
+3
+3
+3
+3
+4
+
+2
+5
+5
+5
+5
+2
+
+3.3
+32.7
+32.7
+32.7
+32.7
+3.7
+
+Table 3: Experiment results
+SNOPT
+Num.
+V
+Time
+of Nodes
+0.48
+2s
+4(3/1)
+31.87
+2s
+4(3/1)
+6(4/2)
+6s
+31.87
+31.87
+26s
+7(4/3)
+30.27
+1449s
+9(5/4)
+3(2/1)
+3s
+3.15
+
+BHPI
+MINLP BB
+V
+Time V
+3.29
+3.29
+<1s
+18.92
+18.92
+4s
+27.93
+221s
+27.68
+31.87 N/A
+N/A
+3.73
+3.21
+30s
+
+Time
+13s
+85s
+7459s
+10076s
+10518s
+397s
+
+3.73
+
+equivalent non-hierarchical controller would have to unroll the recursion by creating a separate copy
+of the subcontroller each time it is called. Since recursive controllers essentially call themselves in-
+ﬁnitely many times, they can represent inﬁnitely large non-
+recursive controllers with ﬁnitely many
+nodes. As a comparison, recursive controllers are to non-recursive hierarchical controllers what
+context-free grammars are to regular expressions. Since the leading approaches for controller opti-
+mization ﬁx the number of nodes [18, 1], one may be able to ﬁnd a much better policy by considering
+hierarchical recursive controllers. In addition, hierarchical controllers may be easier to understand
+and interpret than ﬂat controllers given their natural deco mposition into subcontrollers and their
+possibly smaller size.
+
+4 Experiments
+
+We report on some preliminary experiments with three toy problems (paint, shuttle and maze) from
+the POMDP repository3 . We used the SNOPT package to directly solve the non-convex optimization
+problem in Table 2 and bounded hierarchical policy iteration (BHPI) to solve it iteratively. Table 3
+reports the running time and the value of the hierarchical policies found.4 For comparison purposes,
+the optimal value of each problem (copied from [4]) is reported in the column labelled by V ∗ .
+We optimized hierarchical controllers of two levels with a ﬁ xed number of nodes reported in the
+column labelled “Num. of Nodes ”. The numbers in parentheses
+indicate the number of nodes at
+the top level (left) and at the bottom level (right).5 In general, SNOPT ﬁnds the optimal solution
+with minimal computational time. In contrast, BHPI is less robust and takes up to several orders of
+magnitude longer. MINLP BB returns good solutions for the smaller problems but is unable to ﬁnd
+feasible solutions to the larger ones. We also looked at the hierarchy discovered for each problem
+and veri ﬁed that it made sense. In particular, the hierarchy discovered for the paint problem matches
+the one hand coded by Pineau in her PhD thesis [16]. Given the relatively small size of the test
+problems, these experiments should be viewed as a proof of concept that demonstrate the feasibility
+of our approach. More extensive experiments with larger problems will be necessary to demonstrate
+the scalability of our approach.
+
+5 Conclusion & Future Work
+
+This paper proposes the ﬁrst approach for hierarchy discove ry in partially observable planning prob-
+lems. We model the search for a good hierarchical policy as a non-convex optimization problem
+with variables corresponding to the hierarchy and policy parameters. We propose to tackle the op-
+timization problem using non-linear solvers such as SNOPT or by reformulating the problem as
+an approximate MINLP or as a sequence of MILPs that can be thought of as a form of hierarchical
+bounded policy iteration. Preliminary experiments demonstrate the feasibility of our approach, how-
+ever further research is necessary to improve scalability. The approach can also be used in situations
+where a user would like to improve or learn part of the hierarchy. Many variables can then be set (or
+restricted to a smaller range) which simpli ﬁes the optimiza tion problem and improves scalability.
+
+We also generalize Hansen and Zhou’s hierarchical controllers to recursive controllers. Recursive
+controllers can encode policies with ﬁnitely many nodes tha t would otherwise require inﬁnitely large
+
+3http://pomdp.org/pomdp/examples/index.shtml
+4N/A refers to a trial when the solver was unable to return a feasible solution to the problem.
+5Since the problems are simple, the number of levels was restricted to two, though our approach permits any
+number of levels and does not require the number of levels nor the number of nodes per level to be speciﬁed.
+
+–
+–
+non-recursive controllers. Further details about recursive controllers and our other contributions can
+be found in [5]. We plan to further investigate the use of recursive controllers in dialogue manage-
+ment and text generation where recursive policies are expected to naturally capture the recursive
+nature of language models.
+Acknowledgements: this research was supported by the Natural Sciences and Engineering Re-
+search Council (NSERC) of Canada, the Canada Foundation for Innovation (CFI) and the Ontario
+Innovation Trust (OIT).
+
+In T. Fawcett and
+
+References
+[1] C. Amato, D. Bernstein, and S. Zilberstein. Solving POMDPs using quadratically constrained linear
+programs. In To appear In International Joint Conferences on Artiﬁcial Intelligence ( IJCAI), 2007.
+[2] E. Balas. Disjunctive programming. Annals of Discrete Mathematics, 5:3–51, 1979.
+[3] D. Braziunas and C. Boutilier. Stochastic local search for POMDP controllers. In AAAI, pages 690–696,
+2004.
+[4] A. Cassandra. Exact and approximate algorithms for partially observable Markov decision processes.
+PhD thesis, Brown University, Dept. of Computer Science, 1998.
+[5] L. Charlin. Automated hierarchy discovery for planning in partially observable domains. Master’s thesis,
+University of Waterloo, 2006.
+[6] T. Dietterich. Hierarchical reinforcement learning with the MAXQ value function decomposition. JAIR,
+13:227–303, 2000.
+[7] M. Ghavamzadeh and S. Mahadevan. Hierarchical policy gradient algorithms.
+N. Mishra, editors, ICML, pages 226–233. AAAI Press, 2003.
+[8] P. Gill, W. Murray, and M. Saunders. SNOPT: An SQP algorithm for large-scale constrained optimization.
+SIAM Review, 47(1):99–131, 2005.
+[9] E. Hansen. An improved policy iteration algorithm for partially observable MDPs. In NIPS, 1998.
+[10] E. Hansen and R. Zhou. Synthesis of hierarchical ﬁnite-state con trollers for POMDPs. In E. Giunchiglia,
+N. Muscettola, and D. Nau, editors, ICAPS, pages 113–122. AAAI, 2003.
+[11] B. Hengst. Discovering hierarchy in reinforcement learning with HEXQ. In ICML, pages 243–250, 2002.
+[12] L. Kaelbling, M. Littman, and A. Cassandra. Planning and acting in partially observable stochastic do-
+mains. Artiﬁcial Intelligence , 101(1-2):99–134, 1998.
+[13] A. McGovern and A. Barto. Automatic discovery of subgoals in reinforcement learning using diverse
+density. In ICML, pages 361–368, 2001.
+[14] N. Meuleau, L. Peshkin, K.-E. Kim, and L. Kaelbling. Learning ﬁn ite-state controllers for partially
+observable environments. In UAI, pages 427–436, 1999.
+[15] R. Parr. Hierarchical Control and learning for Markov decision processes. PhD thesis, University of
+California at Berkeley, 1998.
+[16] J. Pineau. Tractable Planning Under Uncertainty: Exploiting Structure. PhD thesis, Robotics Institute,
+Carnegie Mellon University, 2004.
+[17] J. Pineau, G. Gordon, and S. Thrun. Policy-contingent abstraction for robust robot control. In UAI, pages
+477–484, 2003.
+[18] P. Poupart and C. Boutilier. Bounded ﬁnite state controllers. In NIPS, 2003.
+[19] Pascal Poupart. Exploiting Structure to efﬁciently solve large scale partially observable Mark ov decision
+processes. PhD thesis, University of Toronto, 2005.
+[20] M. Ryan. Using abstract models of behaviours to automatically generate reinforcement learning hierar-
+chies. In ICML, pages 522–529, 2002.
+[21] R. Sutton, D. Precup, and S. Singh. Between MDPs and Semi-MDPs: A framework for temporal abstrac-
+tion in reinforcement learning. Artiﬁcial Intelligence , 112(1-2):181–211, 1999.
+[22] G. Theocharous, S. Mahadevan, and L. Kaelbling. Spatial and temporal abstractions in POMDPs ap-
+plied to robot navigation. Technical Report MIT-CSAIL-TR-2005-058, Computer Science and Artiﬁcial
+Intelligence Laboratory, MIT, 2005.
+[23] S. Thrun and A. Schwartz. Finding structure in reinforcement learning. In NIPS, pages 385–392, 1994.
+[24] J. Williams and S. Youngs. Scaling POMDPs for dialogue management with composite summary point-
+based value iteration (CSPBVI).
+In AAAI workshop on Statistical and Empirical Methods in Spoken
+Dialogue Systems, 2006.
+
+

@@ -1,0 +1,582 @@
+Bootstrapping from Game Tree Search
+
+Joel Veness
+University of NSW and NICTA
+Sydney, NSW, Australia 2052
+joelv@cse.unsw.edu.au
+
+David Silver
+University of Alberta
+Edmonton, AB Canada T6G2E8
+silver@cs.ualberta.ca
+
+William Uther
+NICTA and the University of NSW
+Sydney, NSW, Australia 2052
+William.Uther@nicta.com.au
+
+Alan Blair
+University of NSW and NICTA
+Sydney, NSW, Australia 2052
+blair@cse.unsw.edu.au
+
+Abstract
+
+In this paper we introduce a new algorithm for updating the parameters of a heuris-
+tic evaluation function, by updating the heuristic towards the values computed by
+an alpha-beta search. Our algorithm differs from previous approaches to learning
+from search, such as Samuel’s checkers player and the TD-Leaf algorithm, in two
+key ways. First, we update all nodes in the search tree, rather than a single node.
+Second, we use the outcome of a deep search, instead of the outcome of a subse-
+quent search, as the training signal for the evaluation function. We implemented
+our algorithm in a chess program Meep, using a linear heuristic function. After
+initialising its weight vector to small random values, Meep was able to learn high
+quality weights from self-play alone. When tested online against human oppo-
+nents, Meep played at a master level, the best performance of any chess program
+with a heuristic learned entirely from self-play.
+
+1 Introduction
+
+The idea of search bootstrapping is to adjust the parameters of a heuristic evaluation function to-
+wards the value of a deep search. The motivation for this approach comes from the recursive nature
+of tree search: if the heuristic can be adjusted to match the value of a deep search of depth D , then
+a search of depth k with the new heuristic would be equivalent to a search of depth k + D with the
+old heuristic.
+Deterministic, two-player games such as chess provide an ideal test-bed for search bootstrapping.
+The intricate tactics require a signiﬁcant level of search to provide an accurate position evaluation;
+learning without search has produced little success in these domains. Much of the prior work in
+learning from search has been performed in chess or similar two-player games, allowing for clear
+comparisons with existing methods.
+Samuel (1959) ﬁrst introduced the idea of search bootstrapping in his seminal checkers player. In
+Samuel’s work the heuristic function was updated towards the value of a minimax search in a sub-
+sequent position, after black and white had each played one move. His ideas were later extended
+by Baxter et al. (1998) in their chess program Knightcap. In their algorithm, TD-Leaf, the heuristic
+function is adjusted so that the leaf node of the principal variation produced by an alpha-beta search
+is moved towards the value of an alpha-beta search at a subsequent time step.
+Samuel’s approach and TD-Leaf suffer from three main drawbacks. First, they only update one
+node after each search, which discards most of the information contained in the search tree. Second,
+their updates are based purely on positions that have actually occurred in the game, or which lie
+on the computed line of best play. These positions may not be representative of the wide variety
+of positions that must be evaluated by a search based program; many of the positions occurring in
+
+1
+
+Figure 1: Left: TD, TD-Root and TD-Leaf backups. Right: RootStrap(minimax) and TreeStrap(minimax).
+
+large search trees come from sequences of unnatural moves that deviate signiﬁcantly from sensible
+play. Third, the target search is performed at a subsequent time-step, after a real move and response
+have been played. Thus, the learning target is only accurate when both the player and opponent
+are already strong. In practice, these methods can struggle to learn effectively from self-play alone.
+Work-arounds exist, such as initializing a subset of the weights to expert provided values, or by
+attempting to disable learning once an opponent has blundered, but these techniques are somewhat
+unsatisfactory if we have poor initial domain knowledge.
+We introduce a new framework for bootstrapping from game tree search that differs from prior
+work in two key respects. First, all nodes in the search tree are updated towards the recursive
+minimax values computed by a single depth limited search from the root position. This makes
+full use of the information contained in the search tree. Furthermore, the updated positions are
+more representative of the types of positions that need to be accurately evaluated by a search-based
+player. Second, as the learning target is based on hypothetical minimax play, rather than positions
+that occur at subsequent time steps, our methods are less sensitive to the opponent’s playing strength.
+We applied our algorithms to learn a heuristic function for the game of chess, starting from random
+initial weights and training entirely from self-play. When applied to an alpha-beta search, our chess
+program learnt to play at a master level against human opposition.
+
+2 Background
+
+The minimax search algorithm exhaustively computes the minimax value to some depth D , using a
+heuristic function Hθ (s) to evaluate non-terminal states at depth D , based on a parameter vector θ .
+s0 (s) to denote the value of state s in a depth D minimax search from root
+We use the notation V D
+state s0 . We deﬁne T D
+s0 to be the set of states in the depth D search tree from root state s0 . We deﬁne
+the principal leaf, lD (s), to be the leaf state of the depth D principal variation from state s. We use
+the notation θ← to indicate a backup that updates the heuristic function towards some target value.
+Temporal difference (TD) learning uses a sample backup Hθ (st ) θ← Hθ (st+1 ) to update the esti-
+mated value at one time-step towards the estimated value at the subsequent time-step (Sutton, 1988).
+Although highly successful in stochastic domains such as Backgammon (Tesauro, 1994), direct TD
+performs poorly in highly tactical domains. Without search or prior domain knowledge, the target
+value is noisy and improvements to the value function are hard to distinguish. In the game of chess,
+using a naive heuristic and no search, it is hard to ﬁnd checkmate sequences, meaning that most
+games are drawn.
+The quality of the target value can be signiﬁcantly improved by using a minimax backup to update
+the heuristic towards the value of a minimax search. Samuel’s checkers player (Samuel, 1959) in-
+troduced this idea, using an early form of bootstrapping from search that we call TD-Root. The
+parameters of the heuristic function, θ , were adjusted towards the minimax search value at the next
+complete time-step (see Figure 1), Hθ (st ) θ← V D
+st+1 (st+1 ). This approach enabled Samuel’s check-
+
+2
+
+time = t+1time = tTD-LeafTD-RootTDtime = ttime = t+1RootStrap(minimax) and TreeStrap(minimax)TreeStrap(minimax) onlyers program to achieve human amateur level play. Unfortunately, Samuel’s approach was handi-
+capped by tying his evaluation function to the material advantage, and not to the actual outcome
+from the position.
+The TD-Leaf algorithm (Baxter et al., 1998) updates the value of a minimax search at one time-
+step towards the value of a minimax search at the subsequent time-step (see Figure 1). The pa-
+rameters of the heuristic function are updated by gradient descent, using an update of the form
+θ← V D
+st (st )
+st+1 (st+1 ). The root value of minimax search is not differentiable in the parame-
+V D
+ters, as a small change in the heuristic value can result in the principal variation switching to a
+completely different path through the tree. The TD-Leaf algorithm ignores these non-differentiable
+boundaries by assuming that the principal variation remains unchanged, and follows the local gra-
+dient given that variation. This is equivalent to updating the heuristic function of the principal leaf,
+Hθ (lD (st )) θ← V D
+st+1 (st+1 ). The chess program Knightcap achieved master-level play when trained
+using TD-Leaf against a series of evenly matched human opposition, whose strength improved at
+a similar rate to Knightcap’s. A similar algorithm was introduced contemporaneously by Beal and
+Smith (1997), and was used to learn the material values of chess pieces. The world champion check-
+ers program Chinook used TD-Leaf to learn an evaluation function that compared favorably to its
+hand-tuned heuristic function (Schaeffer et al., 2001).
+Both TD-Root and TD-Leaf are hybrid algorithms that combine a sample backup with a minimax
+backup, updating the current value towards the search value at a subsequent time-step. Thus the
+accuracy of the learning target depends both on the quality of the players, and on the quality of the
+search. One consequence is that these learning algorithms are not robust to variations in the training
+regime. In their experiments with the chess program Knightcap (Baxter et al., 1998), the authors
+found that it was necessary to prune training examples in which the opponent blundered or made
+an unpredictable move. In addition, the program was unable to learn effectively from games of
+self-play, and required evenly matched opposition. Perhaps most signiﬁcantly, the piece values were
+initialised to human expert values; experiments starting from zero or random weights were unable
+to exceed weak amateur level. Similarly, the experiments with TD-Leaf in Chinook also ﬁxed the
+important checker and king values to human expert values.
+In addition, both Samuel’s approach and TD-Leaf only update one node of the search tree. This
+does not make efﬁcient use of the large tree of data, typically containing millions of values, that
+is constructed by memory enhanced minimax search variants. Furthermore, the distribution of root
+positions that are used to train the heuristic is very different from the distribution of positions that are
+evaluated during search. This can lead to inaccurate evaluation of positions that occur infrequently
+during real games but frequently within a large search tree; these anomalous values have a tendency
+to propagate up through the search tree, ultimately affecting the choice of best move at the root.
+In the following section, we develop an algorithm that attempts to address these shortcomings.
+
+3 Minimax Search Bootstrapping
+
+Our ﬁrst algorithm, RootStrap(minimax), performs a minimax search from the current position st ,
+at every time-step t. The parameters are updated so as to move the heuristic value of the root node
+towards the minimax search value, Hθ (st ) θ← V D
+st (st ). We update the parameters by stochastic
+gradient descent on the squared error between the heuristic value and the minimax search value. We
+treat the minimax search value as a constant, to ensure that we move the heuristic towards the search
+value, and not the other way around.
+
+st (st ) − Hθ (st )
+δt = V D
+∇θ δ2
+t = ηδt∇θHθ (st )
+∆θ = − η
+2
+where η is a step-size constant. RootStrap(αβ ) is equivalent to RootStrap(minimax), except it uses
+st (st ).
+the more efﬁcient αβ -search algorithm to compute V D
+For the remainder of this paper we consider heuristic functions that are computed by a linear com-
+bination Hθ (s) = φ(s)T θ , where φ(s) is a vector of features of position s, and θ is a parameter
+vector specifying the weight of each feature in the linear combination. Although simple, this form
+of heuristic has already proven sufﬁcient to achieve super-human performance in the games of Chess
+
+3
+
+Backup
+Algorithm
+Hθ (st ) θ← Hθ (st+1 )
+TD
+Hθ (st ) θ← V D
+TD-Root
+st+1 (st+1 )
+Hθ (lD (st )) θ← V D
+TD-Leaf
+st+1 (st+1 )
+RootStrap(minimax) Hθ (st ) θ← V D
+st (st )
+st (s), ∀s ∈ T D
+TreeStrap(minimax) Hθ (s) θ← V D
+st
+st (s)], ∀s ∈ T αβ
+Hθ (s) θ← [bD
+TreeStrap(αβ )
+st (s), aD
+t
+Table 1: Backups for various learning algorithms.
+
+Algorithm 1 TreeStrap(minimax)
+Randomly initialise θ
+Initialise t ← 1, s1 ← start state
+while st is not terminal do
+V ← minimax(st , Hθ , D)
+for s ∈ search tree do
+δ ← V (s) − Hθ (s)
+∆θ ← ∆θ + ηδφ(s)
+end for
+θ ← θ + ∆θ
+V (st ◦ a)
+Select at = argmax
+a∈A
+Execute move at , receive st+1
+t ← t + 1
+end while
+
+Algorithm 2 DeltaFromTransTbl(s, d)
+Initialise ∆θ ← (cid:126)0, t ← probe(s)
+if t is null or depth(t) < d then
+return ∆θ
+end if
+if lowerbound(t) > Hθ (s) then
+∆θ ← ∆θ + η(lowerbound(t) − Hθ (s))∇Hθ (s)
+end if
+if upperbound(t) < Hθ (s) then
+∆θ ← ∆θ + η(upperbound(t) − Hθ (s))∇Hθ (s)
+end if
+for s(cid:48) ∈ succ(s) do
+∆θ ← DeltaF romT ransT bl(s(cid:48) )
+end for
+return ∆θ
+
+(Campbell et al., 2002), Checkers (Schaeffer et al., 2001) and Othello (Buro, 1999). The gradient
+descent update for RootStrap(minimax) then takes the particularly simple form ∆θt = ηδtφ(st ).
+Our second algorithm, TreeStrap(minimax), also performs a minimax search from the current po-
+sition st . However, TreeStrap(minimax) updates all interior nodes within the search tree. The
+parameters are updated, for each position s in the tree, towards the minimax search value of s,
+Hθ (s) θ← V D
+st (s), ∀s ∈ T D
+st . This is again achieved by stochastic gradient descent,
+(cid:88)
+(cid:88)
+st (s) − Hθ (s)
+δt (s) = V D
+∆θ = − η
+∇θ
+δt (s)2 = η
+2
+s∈T D
+s∈T D
+st
+st
+The complete algorithm for TreeStrap(minimax) is described in Algorithm 1.
+
+δt (s)φ(s)
+
+4 Alpha-Beta Search Bootstrapping
+
+The concept of minimax search bootstrapping can be extended to αβ -search. Unlike minimax
+search, alpha-beta does not compute an exact value for the majority of nodes in the search tree.
+Instead, the search is cut off when the value of the node is sufﬁciently high or low that it can no
+longer contribute to the principal variation. We consider a depth D alpha-beta search from root
+s0 (s) and bD
+s0 (s) re-
+position s0 , and denote the upper and lower bounds computed for node s by aD
+s0 (s) ≤ V D
+s0 (s) ≤ aD
+s0 (s). Only one bound applies in cut off nodes: in the case
+spectively, so that bD
+s0 (s) to be −∞, and in the case of a beta-cut we deﬁne aD
+s0 (s) to be ∞.
+of an alpha-cut we deﬁne bD
+s0 (s) = bD
+s0 (s) = V D
+s0 (s).
+If no cut off occurs then the bounds are exact, i.e. aD
+The bounded values computed by alpha-beta can be exploited by search bootstrapping, by using a
+one-sided loss function. If the value from the heuristic evaluation is larger than the a-bound of the
+deep search value, then it is reduced towards the a-bound, Hθ (s) θ← aD
+st (s). Similarly, if the value
+from the heuristic evaluation is smaller than the b-bound of the deep search value, then it is increased
+
+4
+
+towards the b-bound, Hθ (s) θ← bD
+(cid:189)
+st (s). We implement this idea by gradient descent on the sum of
+one-sided squared errors:
+(cid:189)
+
+δa
+t (s) =
+
+st (s) − Hθ (s)
+aD
+0
+st (s) − Hθ (s)
+bD
+0
+
+giving
+
+δ b
+t (s) =
+(cid:88)
+s∈T αβ
+t
+
+∇θ
+
+η
+2
+
+∆θt =
+
+if Hθ (s) > aD
+st (s)
+otherwise
+if Hθ (s) < bD
+st (s)
+otherwise
+(cid:179)
+(cid:88)
+s∈T αβ
+t
+
+(cid:180)
+t (s) + δ b
+δa
+t (s)
+
+t (s)2 + δ b
+δa
+t (s)2 = η
+
+φ(s)
+
+where T αβ
+is the set of nodes in the alpha-beta search tree at time t. We call this algorithm
+t
+TreeStrap(αβ ), and note that the update for each node s is equivalent to the TreeStrap(minimax)
+update when no cut-off occurs.
+
+4.1 Updating Parameters in TreeStrap(αβ )
+
+High performance αβ -search routines rely on transposition tables for move ordering, reducing the
+size of the search space, and for caching previous search results (Schaeffer, 1989). A natural way
+to compute ∆θ for TreeStrap(αβ ) from a completed αβ -search is to recursively step through the
+transposition table, summing any relevant bound information. We call this procedure DeltaFrom-
+TransTbl, and give the pseudo-code for it in Algorithm 2.
+DeltaFromTransTbl requires a standard transposition table implementation providing the following
+routines:
+• probe(s), which returns the transposition table entry associated with state s.
+• depth(t), which returns the amount of search depth used to determine the bound estimates
+stored in transposition table entry t.
+• lowerbound(t), which returns the lower bound stored in transposition entry t.
+• upperbound(t), which returns the upper bound stored in transposition entry t.
+In addition, DeltaFromTransTbl requires a parameter d ≥ 1, that limits updates to ∆θ from transpo-
+sition table entries based on a minimum of search depth of d. This can be used to control the number
+of positions that contribute to ∆θ during a single update, or limit the computational overhead of the
+procedure.
+
+4.2 The TreeStrap(αβ ) algorithm
+
+The TreeStrap(αβ ) algorithm can be obtained by two straightforward modiﬁcations to Algorithm 1.
+First, the call to minimax(st , Hθ , D) must be replaced with a call to αβ -search(st , Hθ , D). Sec-
+ondly, the inner loop computing ∆θ is replaced by invoking DeltaF romT ransT bl(st ).
+
+5 Learning Chess Program
+
+We implemented our learning algorithms in Meep, a modiﬁed version of the tournament chess engine
+Bodo. For our experiments, the hand-crafted evaluation function of Bodo was removed and replaced
+by a weighted linear combination of 1812 features. Given a position s, a feature vector φ(s) can be
+constructed from the 1812 numeric values of each feature. The majority of these features are binary.
+φ(s) is typically sparse, with approximately 100 features active in any given position. Five well-
+known, chess speciﬁc feature construction concepts: material, piece square tables, pawn structure,
+mobility and king safety were used to generate the 1812 distinct features. These features were a
+strict subset of the features used in Bodo, which are themselves simplistic compared to a typical
+tournament engine (Campbell et al., 2002).
+The evaluation function Hθ (s) was a weighted linear combination of the features i.e. Hθ (s) =
+φ(s)T θ . All components of θ were initialised to small random numbers. Terminal positions were
+
+5
+
+evaluated as −9999.0, 0 and 9999.0 for a loss, draw and win respectively. In the search tree, mate
+scores were adjusted inward slightly so that shorter paths to mate were preferred when giving mate,
+and vice-versa. When applying the heuristic evaluation function in the search, the heuristic estimates
+were truncated to the interval [−9900.0, 9900.0].
+Meep contains two different modes: a tournament mode and a training mode. When in tournament
+mode, Meep uses an enhanced alpha-beta based search algorithm. Tournament mode is used for
+evaluating the strength of a weight conﬁguration. In training mode however, one of two different
+types of game tree search algorithms are used. The ﬁrst is a minimax search that stores the entire
+game tree in memory. This is used by the TreeStrap(minimax) algorithm. The second is a generic
+alpha-beta search implementation, that uses only three well known alpha-beta search enhancements:
+transposition tables, killer move tables and the history heuristic (Schaeffer, 1989). This simpliﬁed
+search routine was used by the TreeStrap(αβ ) and RootStrap(αβ ) algorithms. In addition, to reduce
+the horizon effect, checking moves were extended by one ply. During training, the transposition
+table was cleared before the search routine was invoked.
+Simpliﬁed search algorithms were used during training to avoid complicated interactions with the
+more advanced heuristic search techniques (such as null move pruning) useful in tournament play.
+It must be stressed that during training, no heuristic or move ordering techniques dependent on
+knowing properties of the evaluation weights were used by the search algorithms.
+Furthermore, a quiescence search (Beal, 1990) that examined all captures and check evasions was
+applied to leaf nodes. This was to improve the stability of the leaf node evaluations. Again, no
+knowledge based pruning was performed inside the quiescence search tree, which meant that the
+quiescence routine was considerably slower than in Bodo.
+
+6 Experimental Results
+
+We describe the details of our training procedures, and then proceed to explore the performance
+characteristics of our algorithms, RootStrap(αβ ), TreeStrap(minimax) and TreeStrap(αβ ) through
+both a large local tournament and online play. We present our results in terms of Elo ratings. This is
+the standard way of quantifying the strength of a chess player within a pool of players. A 300 to 500
+Elo rating point difference implies a winning rate of about 85% to 95% for the higher rated player.
+
+6.0.1 Training Methodology
+
+At the start of each experiment, all weights were initialised to small random values. Games of self-
+play were then used to train each player. To maintain diversity during training, a small opening book
+was used. Once outside of the opening book, moves were selected greedily from the results of the
+search. Each training game was played within 1m 1s Fischer time controls. That is, both players
+start with a minute on the clock, and gain an additional second every time they make a move. Each
+training game would last roughly ﬁve minutes.
+We selected the best step-size for each learning algorithm, from a series of preliminary experiments:
+α = 1.0 × 10−5 for TD-Leaf and RootStrap(αβ ), α = 1.0 × 10−6 for TreeStrap(minimax) and
+5.0 × 10−7 for TreeStrap(αβ ). The TreeStrap variants used a minimum search depth parameter of
+d = 1. This meant that the target values were determined by at least one ply of full-width search,
+plus a varying amount of quiescence search.
+
+6.1 Relative Performance Evaluation
+
+We ran a competition between many different versions of Meep in tournament mode, each using
+a heuristic function learned by one of our algorithms.
+In addition, a player based on randomly
+initialised weights was included as a reference, and arbitrarily assigned an Elo rating of 250. The
+best ratings achieved by each training method are displayed in Table 2.
+We also measured the performance of each algorithm at intermediate stages throughout training.
+Figure 2 shows the performance of each learning algorithm with increasing numbers of games on
+a single training run. As each training game is played using the same time controls, this shows the
+
+6
+
+Figure 2: Performance when trained via self-play starting from random initial weights. 95% conﬁ-
+dence intervals are marked at each data point. The x-axis uses a logarithmic scale.
+
+Algorithm
+TreeStrap(αβ )
+TreeStrap(minimax)
+RootStrap(αβ )
+TD-Leaf
+Untrained
+
+Elo
+2157 ± 31
+1807 ± 32
+1362 ± 59
+1068 ± 36
+250 ± 63
+
+Table 2: Best performance when trained by self play. 95% conﬁdence intervals given.
+
+performance of each learning algorithm given a ﬁxed amount of computation. Importantly, the time
+used for each learning update also took away from the total thinking time.
+The data shown in Table 2 and Figure 2 was generated by BayesElo, a freely available program that
+computes maximum likelihood Elo ratings. In each table, the estimated Elo rating is given along
+with a 95% conﬁdence interval. All Elo values are calculated relative to the reference player, and
+should not be compared with Elo ratings of human chess players (including the results of online
+play, described in the next section). Approximately 16000 games were played in the tournament.
+The results demonstrate that learning from many nodes in the search tree is signiﬁcantly more efﬁ-
+cient than learning from a single root node. TreeStrap(minimax) and TreeStrap(αβ ) learn effective
+weights in just a thousand training games and attain much better maximum performance within the
+duration of training. In addition, learning from alpha-beta search is more effective than learning
+from minimax search. Alpha-beta search signiﬁcantly boosts the search depth, by safely pruning
+away subtrees that cannot affect the minimax value at the root. Although the majority of nodes now
+contain one-sided bounds rather than exact values, it appears that the improvements to the search
+depth outweigh the loss of bound information.
+Our results demonstrate that the TreeStrap based algorithms can learn a good set of weights, starting
+from random weights, from self-play in the game of chess. Our experiences using TD-Leaf in this
+setting were similar to those described in (Baxter et al., 1998); within the limits of our training
+scheme, learning occurred, but only to the level of weak amateur play. Our results suggest that
+TreeStrap based methods are potentially less sensitive to initial starting conditions, and allow for
+speedier convergence in self play; it will be interesting to see whether similar results carry across to
+domains other than chess.
+
+7
+
+10110210310405001000150020002500Number of training gamesRating (Elo)Learning from self−play: Rating versus Number of training games  TreeStrap(alpha−beta)RootStrap(alpha−beta)TreeStrap(minimax)TD−LeafUntrainedAlgorithm
+TreeStrap(αβ )
+TreeStrap(αβ )
+
+Training Partner
+Self Play
+Shredder
+
+Rating
+1950-2197
+2154-2338
+
+Table 3: Blitz performance at the Internet Chess Club
+
+6.2 Evaluation by Internet Play
+
+We also evaluated the performance of the heuristic function learned by TreeStrap(αβ ), by using it in
+Meep to play against predominantly human opposition at the Internet Chess Club. We evaluated two
+heuristic functions, the ﬁrst using weights trained by self-play, and the second using weights trained
+against Shredder, a grandmaster strength commercial chess program.
+The hardware used online was a 1.8Ghz Opteron, with 256Mb of RAM being used for the transpo-
+sition table. Approximately 350K nodes per second were seen when using the learned evaluation
+function. A small opening book was used to make the engine play a variety of different opening
+lines. Compared to Bodo, the learned evaluation routine was approximately 3 times slower, even
+though the evaluation function contained less features. This was due to a less optimised implemen-
+tation, and the heavy use of ﬂoating point arithmetic.
+Approximately 1000 games were played online, using 3m 3s Fischer time controls, for each heuristic
+function. Although the heuristic function was ﬁxed, the online rating ﬂuctuates signiﬁcantly over
+time. This is due to the high K factor used by the Internet Chess Club to update Elo ratings, which
+is tailored to human players rather than computer engines.
+The online rating of the heuristic learned by self-play corresponds to weak master level play. The
+heuristic learned from games against Shredder were roughly 150 Elo stronger, corresponding to
+master level performance. Like TD-Leaf, TreeStrap also beneﬁts from a carefully chosen opponent,
+though the difference between self-play and ideal conditions is much less drastic. Furthermore,
+a total of 13.5/15 points were scored against registered members who had achieved the title of
+International Master.
+We expect that these results could be further improved by using more powerful hardware, a more
+sophisticated evaluation function, or a better opening book. Furthermore, we used a generic alpha-
+beta search algorithm for learning. An interesting follow-up would be to explore the interaction
+between our learning algorithms and the more exotic alpha-beta search enhancements.
+
+7 Conclusion
+
+Our main result is demonstrating, for the ﬁrst time, an algorithm that learns to play master level
+Chess entirely through self play, starting from random weights. To provide insight into the nature
+of our algorithms, we focused on a single non-trivial domain. However, the ideas that we have
+introduced are rather general, and may have applications beyond deterministic two-player game tree
+search.
+Bootstrapping from search could,
+in principle, be applied to many other search algorithms.
+Simulation-based search algorithms, such as UCT, have outperformed traditional search algorithms
+in a number of domains. The TreeStrap algorithm could be applied, for example, to the heuristic
+function that is used to initialise nodes in a UCT search tree with prior knowledge (Gelly & Silver,
+2007). Alternatively, in stochastic domains the evaluation function could be updated towards the
+value of an expectimax search, or towards the one-sided bounds computed by a *-minimax search
+(Hauk et al., 2004; Veness & Blair, 2007). This approach could be viewed as a generalisation of ap-
+proximate dynamic programming, in which the value function is updated from a multi-ply Bellman
+backup.
+
+Acknowledgments
+
+NICTA is funded by the Australian Government as represented by the Department of Broadband,
+Communications and the Digital Economy and the Australian Research Council through the ICT
+Centre of Excellence program.
+
+8
+
+References
+Baxter, J., Tridgell, A., & Weaver, L. (1998). Knightcap: a chess program that learns by combining
+td(lambda) with game-tree search. Proc. 15th International Conf. on Machine Learning (pp.
+28–36). Morgan Kaufmann, San Francisco, CA.
+Beal, D. F. (1990). A generalised quiescence search algorithm. Artiﬁcial Intelligence, 43, 85–98.
+Beal, D. F., & Smith, M. C. (1997). Learning piece values using temporal differences. Journal of
+the International Computer Chess Association.
+Buro, M. (1999). From simple features to sophisticated evaluation functions. First International
+Conference on Computers and Games (pp. 126–145).
+Campbell, M., Hoane, A., & Hsu, F. (2002). Deep Blue. Artiﬁcial Intelligence, 134, 57–83.
+Gelly, S., & Silver, D. (2007). Combining online and ofﬂine learning in UCT. 17th International
+Conference on Machine Learning (pp. 273–280).
+Hauk, T., Buro, M., & Schaeffer, J. (2004). Rediscovering *-minimax search. Computers and
+Games (pp. 35–50).
+Samuel, A. L. (1959). Some studies in machine learning using the game of checkers. IBM Journal
+of Research and Development, 3.
+Schaeffer, J. (1989). The history heuristic and alpha-beta search enhancements in practice. IEEE
+Transactions on Pattern Analysis and Machine Intelligence, PAMI-11, 1203–1212.
+Schaeffer, J., Hlynka, M., & Jussila, V. (2001). Temporal difference learning applied to a high
+performance game playing program. IJCAI, 529–534.
+Sutton, R. (1988). Learning to predict by the method of temporal differences. Machine Learning, 3,
+9–44.
+Tesauro, G. (1994). TD-gammon, a self-teaching backgammon program, achieves master-level play.
+Neural Computation, 6, 215–219.
+Veness, J., & Blair, A. (2007). Effective use of transposition tables in stochastic game tree search.
+IEEE Symposium on Computational Intelligence and Games (pp. 112–116).
+
+9
+
+

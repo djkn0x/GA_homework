@@ -1,0 +1,1073 @@
+Fast High-dimensional Kernel Summations Using the
+Monte Carlo Multipole Method
+
+Dongryeol Lee
+Computational Science and Engineering
+Georgia Institute of Technology
+Atlanta, GA 30332
+dongryel@cc.gatech.edu
+
+Alexander Gray
+Computational Science and Engineering
+Georgia Institute of Technology
+Atlanta, GA 30332
+agray@cc.gatech.edu
+
+Abstract
+
+We propose a new fast Gaussian summation algorithm for high-dimensional
+datasets with high accuracy. First, we extend the original fast multipole-type meth-
+ods to use approximation schemes with both hard and probabilistic error. Second,
+we utilize a new data structure called subspace tree which maps each data point in
+the node to its lower dimensional mapping as determined by any linear dimension
+reduction method such as PCA. This new data structure is suitable for reducing
+the cost of each pairwise distance computation, the most dominant cost in many
+kernel methods. Our algorithm guarantees probabilistic relative error on each ker-
+nel sum, and can be applied to high-dimensional Gaussian summations which are
+ubiquitous inside many kernel methods as the key computational bottleneck. We
+provide empirical speedup results on low to high-dimensional datasets up to 89
+dimensions.
+
+1 Fast Gaussian Kernel Summation
+
+(1)
+
+e(cid:0)jjqi(cid:0)rj jj2 =(2h2 )
+
+In this paper, we propose new computational techniques for ef(cid:2)ciently approximating the following
+sum for each query point qi 2 Q:
+(cid:8)(qi ; R) = Xrj 2R
+where R is the reference set; each reference point is associated with a Gaussian function with a
+smoothing parameter h (the ’bandwidth’). This form of summation is ubiquitous in many statis-
+tical learning methods, including kernel density estimation, kernel regression, Gaussian process
+regression, radial basis function networks, spectral clustering, support vector machines, and kernel
+PCA [1, 4]. Cross-validation in all of these methods require evaluating Equation 1 for multiple val-
+ues of h. Kernel density estimation, for example, requires jRj density estimate based on jRj (cid:0) 1
+points, yielding a brute-force computational cost scaling quadratically (that is O(jRj2 )).
+Error bounds. Due to its expensive computational cost, many algorithms approximate the Gaus-
+sian kernel sums at the expense of reduced precision. Therefore, it is natural to discuss error bound
+criteria which measure the quality of the approximations with respect to their corresponding true
+values. The following error bound criteria are common in literature:
+De ﬁnition 1.1. An algorithm guarantees (cid:15) absolute error bound, if for each exact value (cid:8)(q i ; R)
+for qi 2 Q, it computes e(cid:8)(qi ; R) such that (cid:12)(cid:12)(cid:12) e(cid:8)(qi ; R) (cid:0) (cid:8)(qi ; R)(cid:12)(cid:12)(cid:12) (cid:20) (cid:15).
+De ﬁnition 1.2. An algorithm guarantees (cid:15) relative error bound, if for each exact value (cid:8)(q i ; R)
+for qi 2 Q, it computes e(cid:8)(qi ; R) 2 R such that (cid:12)(cid:12)(cid:12) e(cid:8)(qi ; R) (cid:0) (cid:8)(qi ; R)(cid:12)(cid:12)(cid:12) (cid:20) (cid:15) j(cid:8)(qi ; R)j.
+1
+
+Bounding the relative error (e.g., the percentage deviation) is much harder because the error bound
+criterion is in terms of the initially unknown exact quantity. As a result, many previous methods [7]
+have focused on bounding the absolute error. The relative error bound criterion is preferred to the
+absolute error bound criterion in statistical applications in which high accuracy is desired. Our new
+algorithm will enforce the following (cid:147)relaxed(cid:148) form of the relative error bound criterion, whose
+motivation will be discussed shortly.
+De ﬁnition 1.3. An algorithm guarantees (1 (cid:0) (cid:11)) probabilistic (cid:15) relative error bound, if for each
+exact value (cid:8)(qi ; R) for qi 2 Q, it computes e(cid:8)(qi ; R) 2 R, such that with at least probability
+0 < 1 (cid:0) (cid:11) < 1, (cid:12)(cid:12)(cid:12) e(cid:8)(qi ; R) (cid:0) (cid:8)(qi ; R)(cid:12)(cid:12)(cid:12) (cid:20) (cid:15) j(cid:8)(qi ; R)j.
+Previous work. The most successful class of acceleration methods employ (cid:147)higher-order divide
+and conquer(cid:148) or generalized N -body algorithms (GNA) [4]. This approach can use any spatial
+partioning tree such as kd-trees or ball-trees for both the query set Q and reference data R and
+performs a simulataneous recursive descent on both trees.
+GNA with relative error bounds (De(cid:2)nition 1.2) [5, 6, 11, 10] utilized bounding boxes and addi-
+tional cached-sufﬁcient statistics such as higher-order moments needed for series-expansion. [5, 6]
+utilized bounding-box based error bounds which tend to be very loose, which resulted in slow empir-
+ical performance around suboptimally small and large bandwidths.
+[11, 10] extended GNA-based
+Gaussian summations with series-expansion which provided tighter bounds; it showed enormous
+performance improvements, but only up to low dimensional settings (up to D = 5) since the num-
+ber of required terms in series expansion increases exponentially with respect to D .
+[9] introduces an iterative sampling based GNA for accelerating the computation of nested sums
+(a related easier problem). Its speedup is achieved by replacing pessimistic error bounds provided
+by bounding boxes with normal-based con(cid:2)dence interval from Monte Carlo sampling. [9] demon-
+strates the speedup many orders of magnitude faster than the previous state of the art in the context
+of computing aggregates over the queries (such as the LSCV score for selecting the optimal band-
+width). However, the authors did not discuss the sampling-based approach for computations that
+require per-query estimates, such as those required for kernel density estimation.
+None of the previous approaches for kernel summations addresses the issue of reducing the compu-
+tational cost of each distance computation which incurs O(D) cost. However, the intrinsic dimen-
+sionality d of most high-dimensional datasets is much smaller than the explicit dimension D (that is,
+d << D). [12] proposed tree structures using a global dimension reduction method, such as random
+projection, as a preprocessing step for ef(cid:2)cient (1 + (cid:15)) approximate nearest neighbor search. Simi-
+larly, we develop a new data structure for kernel summations; our new data structure is constructed
+in a top-down fashion to perform the initial spatial partitioning in the original input space RD and
+performs a local dimension reduction to a localized subset of the data in a bottom-up fashion.
+This paper. We propose a new fast Gaussian summation algorithm that enables speedup in higher
+dimensions. Our approach utilizes: 1) probabilistic relative error bounds (De(cid:2)nition 1.3) on kernel
+sums provided by Monte Carlo estimates 2) a new tree structure called subspace tree for reducing
+the computational cost of each distance computation. The former can be seen as relaxing the strict
+requirement of guaranteeing hard relative bound on very small quantities, as done in [5, 6, 11, 10].
+The latter was mentioned as a possible way of ameliorating the effects of the curse of dimensionality
+in [14], a pioneering paper in this area.
+Notations. Each query point and reference point (a D-dimensional vector) is indexed by natural
+numbers i; j 2 N, and denoted qi and rj respectively. For any set S , jS j denotes the number of
+elements in S . The entities related to the left and the right child are denoted with superscripts L and
+R; an internal node N has the child nodes N L and N R .
+
+2 Gaussian Summation by Monte Carlo Sampling
+
+Here we describe the extension needed for probabilistic computation of kernel summation satisfying
+De(cid:2)nition 1.3. The main routine for the probabilistic kernel summation is shown in Algorithm 1.
+The function MCMM takes the query node Q and the reference node R (each initially called with
+the roots of the query tree and the reference tree, Qroot and Rroot ) and (cid:12) (initially called with (cid:11)
+value which controls the probability guarantee that each kernel sum is within (cid:15) relative error).
+
+2
+
+5:
+
+10:
+
+15:
+
+Algorithm 1 The core dual-tree routine for probabilistic Gaussian kernel summation.
+MCMM(Q; R; (cid:12) )
+if CANSUMMAR I Z EEXACT(Q; R; (cid:15)) then
+SUMMAR I Z EEXACT(Q; R)
+else if CANSUMMAR I Z EMC(Q; R; (cid:15); (cid:12) ) then
+SUMMAR I Z EMC(Q; R; (cid:15); (cid:12) )
+else
+if Q is a leaf node then
+if R is a leaf node then
+MCMMBA S E(Q; R)
+else
+MCMM (cid:16)Q; RL ; (cid:12)
+2 (cid:17), MCMM (cid:16)Q; RR ; (cid:12)
+2 (cid:17)
+else
+if R is a leaf node then
+MCMM(QL ; R; (cid:12) ), MCMM(QR ; R; (cid:12) )
+else
+MCMM (cid:16)QL ; RL ; (cid:12)
+2 (cid:17), MCMM (cid:16)QL ; RR ; (cid:12)
+2 (cid:17)
+MCMM (cid:16)QR ; RL ; (cid:12)
+2 (cid:17), MCMM (cid:16)QR ; RR ; (cid:12)
+2 (cid:17)
+The idea of Monte Carlo sampling used in the new algorithm is similar to the one in [9], except
+the sampling is done per query and we use approximations that provide hard error bounds as well
+(i.e. (cid:2)nite difference, exhaustive base case: MCMMBA S E). This means that the approximation has
+less variance than a pure Monte Carlo approach used in [9]. Algorithm 1 (cid:2)rst attempts approxima-
+tions with hard error bounds, which are computationally cheaper than sampling-based approxima-
+tions. For example, (cid:2)nite-difference scheme [5, 6] can be used for the CANSUMMAR I Z EEXACT and
+SUMMAR I Z EEXACT functions in any general dimension.
+The CANSUMMAR I Z EMC function takes two parameters that specify the accuracy: the relative error
+and its probability guarantee and decides whether to use Monte Carlo sampling for the given pair of
+nodes. If the reference node R contains too few points, it may be more ef(cid:2)cient to process it using
+exact methods that use error bounds based on bounding primitives on the node pair or exhaustive
+pair-wise evaluations, which is determined by the condition: (cid:28) (cid:1) minitial (cid:20) jRj where (cid:28) > 1
+controls the minimum number of reference points needed for Monte Carlo sampling to proceed.
+If the reference node does contain enough points, then for each query point q 2 Q, the SAM P L E
+routine samples minitial terms over the terms in the summation (cid:8)(q ; R) = Prjn 2R
+Kh (jjq (cid:0) rjn jj)
+where (cid:8)(q ; R) denotes the exact contribution of R to q ’s kernel sum. Basically, we are interested
+in estimating (cid:8)(q ; R) by e(cid:8)(q ; R) = jRj(cid:22)S , where (cid:22)S is the sample mean of S . From the Central
+S =m) where (cid:8)(q ; R) = jRj(cid:22) (i.e. (cid:22)
+Limit Theorem, given enough m samples, (cid:22)S   N ((cid:22); (cid:27)2
+is the average of the kernel value between q and any reference point r 2 R); this implies that
+j(cid:22)S (cid:0) (cid:22)j (cid:20) z(cid:12)=2(cid:27)S =pm with probability 1 (cid:0) (cid:12) . The pruning rule we have to enforce for each query
+point for the contribution of R is:
+(cid:15)(cid:8)(q ; R)
+(cid:27)Spm (cid:20)
+z(cid:12)=2
+jRj
+where (cid:27)S the sample standard deviation of S . Since (cid:8)(q ; R) is one of the unknown quanities we
+want to compute, we instead enforce the following:
+(cid:15) (cid:16)(cid:8)l (q ; R) + jRj (cid:16)(cid:22)S (cid:0) z(cid:12)=2 (cid:27)Spm (cid:17)(cid:17)
+(cid:27)Spm (cid:20)
+jRj
+where (cid:8)l (q ; R) is the currently running lower bound on the sum computed using exact methods
+and jRj (cid:16)(cid:22)S (cid:0) z(cid:12)=2 (cid:27)Spm (cid:17) is the probabilistic component contributed by R. Denoting (cid:8)l;new (q ; R) =
+(cid:8)l (q ; R) + jRj (cid:18)(cid:22)S (cid:0) z(cid:12)=2 (cid:27)SpjS j (cid:19), the minimum number of samples for q needed to achieve the
+3
+
+z(cid:12)=2
+
+(2)
+
+target error the right side of the inequality in Equation 2 with at least probability of 1 (cid:0) (cid:12) is:
+(jRj + (cid:15)jRj)2
+(cid:12)=2(cid:27)2
+m (cid:21) z 2
+S
+(cid:15)2 ((cid:8)l (q ; R) + jRj(cid:22)S )2
+the given query node and reference node pair cannot be pruned using either non-
+If
+probabilistic/probabilistic approximations, then we recurse on a smaller subsets of two sets.
+In
+particular, when dividing over the reference node R, we recurse with half of the (cid:12) value1 . We now
+state the probablistic error guarantee of our algorithm as a theorem.
+Theorem 2.1. After calling MCMM with Q = Qroot , R = Rroot , and (cid:12) = (cid:11), Algorithm 1
+approximates each (cid:8)(q ; R) with e(cid:8)(q ; R) such that Deﬁnition 1.3 holds.
+Proof. For a query/reference (Q; R) pair and 0 < (cid:12) < 1, MCMMBA S E and SUMMAR I Z EEXACT
+compute estimates for q 2 Q such that (cid:12)(cid:12)(cid:12) e(cid:8)(q ; R) (cid:0) (cid:8)(q ; R)(cid:12)(cid:12)(cid:12) < (cid:15) (cid:8)(q ;R)jRj
+with probability at
+jRj
+least 1 > 1 (cid:0) (cid:12) . By Equation 2, SUMMAR I Z EMC computes estimates for q 2 Q such that
+(cid:12)(cid:12)(cid:12) e(cid:8)(q ; R) (cid:0) (cid:8)(q ; R)(cid:12)(cid:12)(cid:12) < (cid:15) (cid:8)(q ;R)jRj
+with probability 1 (cid:0) (cid:12) .
+jRj
+We now induct on jQ [ Rj. Line 11 of Algorithm 1 divides over the reference whose subcalls com-
+pute estimates that satisfy (cid:12)(cid:12)(cid:12) e(cid:8)(q ; RL ) (cid:0) (cid:8)(q ; RL )(cid:12)(cid:12)(cid:12) (cid:20) (cid:15) (cid:8)(q ;R)jRL j
+and (cid:12)(cid:12)(cid:12) e(cid:8)(q ; RR ) (cid:0) (cid:8)(q ; RR )(cid:12)(cid:12)(cid:12) (cid:20)
+jRj
+(cid:15) (cid:8)(q ;R)jRR j
+2 probability by induction hypothesis. For q 2 Q, e(cid:8)(q ; R) =
+each with at least 1 (cid:0) (cid:12)
+jRj
+with probability at least 1 (cid:0) (cid:12) .
+e(cid:8)(q ; RL ) + e(cid:8)(q ; RR ) which means j e(cid:8)(q ; R) (cid:0) (cid:8)(q ; R)j (cid:20) (cid:15) (cid:8)(q ;R)jRj
+jRj
+Line 14 divides over the query and each subcall computes estimates that hold with at least probabil-
+ity 1 (cid:0) (cid:12) for q 2 QL and q 2 QR . Line 16 and 17 divides both over the query and the reference, and
+the correctness can be proven similarly. Therefore, M CM M (Qroot ; Rroot ; (cid:11)) computes estimates
+satisfying De(cid:2)nition 1.3.
+
+probability. We note that the assigned probability (cid:12) for the query/reference pair
+“Reclaiming”
+computed with exact bounds (SUMMAR I Z EEXACT and MCMMBA S E) is not used. This portion
+of the probability can be (cid:147)reclaimed(cid:148) in a similar fashion as done in [10] and re-used to prune
+more aggressively in the later stages of the algorithm. All experiments presented in this paper were
+bene(cid:2)ted by this simple modi(cid:2)cation.
+
+3 Subspace Tree
+
+A subspace tree is basically a space-partitioning tree with a set of orthogonal bases associated with
+each node N : N :(cid:10) = ((cid:22); U; (cid:3); d) where (cid:22) is the mean, U is a D(cid:2)d matrix whose columns consist of
+d eigenvectors, and (cid:3) the corresponding eigenvalues. The orthogonal basis set is constructed using
+a linear dimension reduction method such as PCA. It is constructed in the top-down manner using
+the PART I T IONS E T function dividing the given set of points into two (where the PART I T IONS E T
+function divides along the dimension with the highest variance in case of a kd-tree for example),
+with the subspace in each node formed in the bottom-up manner. Algorithm 3 shows a PCA tree (a
+subspace tree using PCA as a dimension reduction) for a 3-D dataset. The subspace of each leaf node
+is computed using PCABA S E which can use the exact PCA [3] or a stochastic one [2]. For an internal
+node, the subspaces of the child nodes, N L :(cid:10) = ((cid:22)L ; U L ; (cid:3)L ; dL ) and N R :(cid:10) = ((cid:22)R ; U R ; (cid:3)R ; dR ),
+are approximately merged using the M ERG ESUB S PACE S function which involves solving an (dL +
+dR + 1) (cid:2) (dL + dR + 1) eigenvalue problem [8], which runs in O((dL + dR + 1)3 ) << O(D3 )
+given that the dataset is sparse. In addition, each data point x in each node N is mapped to its new
+lower-dimensional coordinate using the orthogonal basis set of N : xproj = U T (x (cid:0) (cid:22)). The L2
+norm reconstruction error is given by: jjxrecon (cid:0) xjj2
+2 .
+2 = jj(U xproj + (cid:22)) (cid:0) xjj2
+Monte Carlo sampling using a subspace tree. Consider CANSUMMAR I Z EMC function in Algo-
+rithm 2. The (cid:147)outer-loop(cid:148) over this algorithm is over the query set Q, and it would make sense to
+project each query point q 2 Q to the subspace owned by the reference node R. Let U and (cid:22) be the
+orthogonal basis system for R consisting of d basis. For each q 2 Q, consider the squared distance
+1We could also divide (cid:12) such that the node that may be harder to approximate gets a lower value.
+
+4
+
+Algorithm 2 Monte Carlo sampling based approximation routines.
+CANSUMMAR I Z EMC(Q; R; (cid:15); (cid:11))
+SAM P L E(q ; R; (cid:15); (cid:11); S; m)
+for k = 1 to m do
+return (cid:28) (cid:1) minitial (cid:20) jRj
+r   random point in R
+SUMMAR I Z EMC(Q; R; (cid:15); (cid:11))
+S   S [ fKh (jjq (cid:0) r jj)g
+(cid:22)S   M EAN(S ), (cid:27) 2
+S   VAR IANCE(S )
+for qi 2 Q do
+(cid:8)l;new (q ; R)   (cid:8)l (q ; R) + jRj (cid:18)(cid:22)S (cid:0) z(cid:11)=2 (cid:27)SpjS j (cid:19)
+S   ;, m   minitial
+repeat
+SAM P L E(qi ; R; (cid:15); (cid:11); S; m)
+(jRj+(cid:15)jRj)2
+mthresh   z 2
+(cid:11)=2(cid:27)2
+until m (cid:20) 0
+S
+(cid:15)2 ((cid:8)l (q ;R)+jRj(cid:22)S )2
+(cid:8)(qi ; R)   (cid:8)(qi ; R) + jRj (cid:1) M EAN(S )
+m   mthresh (cid:0) jS j
+
+jj(q (cid:0) (cid:22)) (cid:0) rproj jj2 (where (q (cid:0) (cid:22)) is q ’s coordinates expressed in terms of the coordinate system of
+R) as shown in Figure 1. For the Gaussian kernel, each pairwise kernel value is approximated as:
+(3)
+e(cid:0)jjq(cid:0)rjj2 =(2h2 ) (cid:25) e(cid:0)jjq(cid:0)qrecon jj2 =(2h2 ) e(cid:0)jjqproj (cid:0)rproj jj2 =(2h2 )
+where qrecon = U qproj +(cid:22) and qproj = U T (q(cid:0)(cid:22)). For a (cid:2)xed query point q , e(cid:0)jjq(cid:0)qrecon jj2 =(2h2 ) can
+be precomputed (which takes d dot products between two D-dimensional vectors) and re-used for
+every distance computation between q and any reference point r 2 R whose cost is now O(d) <<
+O(D). Therefore, we can take more samples ef(cid:2)ciently. For a total of suf(cid:2)ciently large m samples,
+the computational cost is O(d(D + m)) << O(D (cid:1) m) for each query point.
+Increased variance comes at the cost of inexact distance computations, however. Each dis-
+tance computation incurs at most squared L2 norm of
+2 error.
+That
+is,
+jjrrecon (cid:0) r jj2
+(cid:12)(cid:12)jjq (cid:0) rrecon jj2
+2 (cid:12)(cid:12) (cid:20) jjrrecon (cid:0) r jj2
+2 . Neverhteless, the sample variance for each query
+2 (cid:0) jjq (cid:0) r jj2
+point plus the inexactness due to dimension reduction (cid:28)S can be shown to be bounded for the Gaus-
+sian kernel as: (where each s = e(cid:0)jjq(cid:0)rrecon jj2 =(2h2 ) ):
+S ! + (cid:28)S
+m (cid:0) 1  Xs2S
+1
+s2 (cid:0) m (cid:1) (cid:22)2
+m (cid:0) 1   Xs2S
+s2! min (cid:26)1; max
+2 =(2h2 )(cid:19)2!
+2 =h2 (cid:27) (cid:0) m (cid:18)(cid:22)S min
+1
+e(cid:0)jjrrecon (cid:0)rjj2
+ejjrrecon (cid:0)rjj2
+r2R
+r2R
+Exhaustive computations using a subspace tree. Now suppose we have built subspace trees for the
+query and the reference sets. We can project either each query point onto the reference subspace, or
+each reference point onto the query subspace, depending on which subspace has a smaller dimension
+and the number of points in each node. The subspaces formed in the leaf nodes usually are highly
+numerically accurate since it contains very few points compared to the extrinsic dimensionality D .
+
+(cid:20)
+
+4 Experimental Results
+
+We empirically evaluated the runtime performance of our algorithm on seven real-world datasets,
+scaled to (cid:2)t in [0; 1]D hypercube, for approximating the Gaussian sum at every query point with a
+range of bandwidths. This experiment is motivated by many kernel methods that require comput-
+ing the Gaussian sum at different bandwidth values (according to the standard least-sqares cross-
+validation scores [15]). Nevertheless, we emphasize that the acceleration results are applicable to
+other kernel methods that require ef(cid:2)cient Gaussian summation.
+In this paper, the reference set equals the query set. All datasets have 50K points so that the exact
+exhaustive method can be tractably computed. All times are in seconds and include the time needed
+to build the trees. Codes are in C/C++ and run on a dual Intel Xeon 3GHz with 8 Gb of main
+memory. The measurements in second to eigth columns are obtained by running the algorithms at
+the bandwidth kh(cid:3) where 10(cid:0)3 (cid:20) k (cid:20) 103 is the constant in the corresponding column header. The
+last columns denote the total time needed to run on all seven bandwidth values.
+Each table has results for (cid:2)ve algorithms: the naive algorithm and four algorithms. The algorithms
+with p = 1 denote the previous state-of-the-art ((cid:2)nite-difference with error redistribution) [10],
+
+5
+
+Algorithm 3 PCA tree building routine.
+BU I LDPCATRE E(P )
+if CANPART I T ION(P ) then
+fP L ; P R g   PART I T IONS E T(P )
+N   empty node
+N L   BU I LDPCATRE E(P L )
+N R   BU I LDPCATRE E(P R )
+N :S   M ERG ESUB S PACE S(N L :S; N R :S )
+else
+N   BU I LDPCATRE EBA S E(P )
+N :S   PCABA S E(P )
+N :Pproj   PRO J ECT(P ; N :S )
+return N
+
+while those with p < 1 denote our probabilistic version. Each entry has the running time and the
+percentage of the query points that did not satisfy the relative error (cid:15).
+Analysis. Readers should focus on the last columns containing the total time needed for evaluat-
+ing Gaussian sum at all points for seven different bandwidth values. This is indicated by boldfaced
+numbers for our probabilistic algorithm. As expected, On low-dimensional datasets (below 6 dimen-
+sions), the algorithm using series-expansion based bounds gives two to three times speedup com-
+pared to our approach that uses Monte Carlo sampling. Multipole moments are an effective form
+of compression in low dimensions with analytical error bounds that can be evaluated; our Monte
+Carlo-based method has an asymptotic error bound which must be (cid:147)learned(cid:148) through sampling.
+As we go from 7 dimensions and beyond, series-expansion cannot be done ef(cid:2)ciently because of its
+slow convergence. Our probabilistic algorithm (p = 0:9) using Monte Carlo consistently performs
+better than the algorithm using exact bounds (p = 1) by at least a factor of two. Compared to
+naive, it achieves the maximum speedup of about nine times on an 16-dimensional dataset; on an
+89-dimensional dataset, it is at least three times as fast as the naive. Note that all the datasets contain
+only 50K points, and the speedup will be more dramatic as we increase the number of points.
+
+5 Conclusion
+
+We presented an extension to fast multipole methods to use approximation methods with both hard
+and probabilistic bounds. Our experimental results show speedup over the previous state-of-the-art
+on high-dimensional datasets. Our future work will include possible improvements inspired by a
+recent work done in the FMM community using a matrix-factorization formulation [13].
+
+Figure 1: Left: A PCA-tree for a 3-D dataset. Right: The squared Euclidean distance between
+a given query point and a reference point projected onto a subspace can be decomposed into two
+components: the orthogonal component and the component in the subspace.
+
+6
+
+36
+
+127
+
+200
+
+454
+
+307
+
+Naive
+MCMM
+((cid:15) = 0:1; p = 0:9)
+DFGT
+((cid:15) = 0:1; p = 1)
+MCMM
+((cid:15) = 0:01; p = 0:9)
+DFGT
+((cid:15) = 0:01; p = 1)
+Algorithm n scale
+
+Algorithm n scale
+0.001
+0.01
+0.1
+1
+10
+100
+1000
+(cid:6)
+mockgalaxy-D-1M-rnd (cosmology: positions), D = 3; N = 50000; h(cid:3) = 0:000768201
+1274
+182
+182
+182
+182
+182
+182
+182
+Naive
+2
+48
+26
+10
+5
+3
+3
+97
+MCMM
+1 %
+1 %
+1 %
+1 %
+1 %
+1 %
+5 %
+((cid:15) = 0:1; p = 0:9)
+3
+19
+6
+2
+2
+2
+2
+DFGT
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+((cid:15) = 0:1; p = 1)
+21
+58
+27
+11
+4
+3
+3
+MCMM
+7 %
+1 %
+1 %
+1 %
+1 %
+0 %
+0 %
+((cid:15) = 0:01; p = 0:9)
+2
+2
+2
+2
+7
+30
+5
+DFGT
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+((cid:15) = 0:01; p = 1)
+Algorithm n scale
+0.001
+0.01
+0.1
+1
+10
+100
+1000
+bio5-rnd (biology: drug activity), D = 5; N = 50000; h(cid:3) = 0:000567161
+214
+214
+214
+214
+214
+214
+214
+4
+4
+6
+144
+149
+65
+1
+1 %
+0 %
+1 %
+0 %
+0 %
+0 %
+0 %
+2
+65
+96
+24
+5
+4
+4
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+1
+126
+165
+148
+6
+4
+4
+0 %
+0 %
+0 %
+0 %
+1 %
+0 %
+1 %
+4
+126
+139
+25
+5
+4
+4
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0.001
+0.01
+0.1
+1
+10
+100
+1000
+pal l7 (cid:0) rnd ; D = 7; N = 50000; h(cid:3) = 0:00131865
+327
+327
+327
+327
+327
+327
+327
+224
+63
+3
+3
+3
+3
+< 1
+12 % 0 %
+1 %
+1 %
+0 %
+0 %
+0 %
+223
+263
+84
+14
+11
+10
+10
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+3
+3
+3
+3
+70
+265
+5
+8 %
+1 %
+2 %
+1 %
+0 %
+0 %
+0 %
+374
+299
+85
+14
+11
+10
+10
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0.001
+0.01
+0.1
+1
+10
+100
+1000
+covtype (cid:0) rnd ; D = 10; N = 50000; h(cid:3) = 0:0154758
+380
+380
+380
+380
+380
+380
+380
+Naive
+318
+39
+13
+11
+11
+MCMM
+< 1
+< 1
+0 %
+0 %
+0 %
+1 %
+0 %
+0 %
+0 %
+((cid:15) = 0:1; p = 0:9)
+26
+27
+38
+177
+390
+244
+DFGT
+< 1
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+((cid:15) = 0:1; p = 1)
+2
+362
+77
+13
+11
+11
+MCMM
+< 1
+10 % 0 %
+1 %
+1 %
+0 %
+0 %
+0 %
+((cid:15) = 0:01; p = 0:9)
+416
+427
+180
+38
+27
+26
+DFGT
+< 1
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+((cid:15) = 0:01; p = 1)
+Algorithm n scale
+1000
+100
+10
+1
+0.1
+0.01
+0.001
+CoocTexture (cid:0) rnd ; D = 16; N = 50000; h(cid:3) = 0:0263958
+472
+472
+472
+472
+472
+472
+109
+189
+22
+11
+10
+< 1
+0 %
+0 %
+0 %
+1 %
+8 %
+0 %
+66
+452
+240
+82
+26
+22
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+285
+204
+22
+11
+10
+< 1
+10 % 4 %
+1 %
+1 %
+0 %
+0 %
+22
+26
+83
+254
+543
+230
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+
+Naive
+MCMM
+((cid:15) = 0:1; p = 0:9)
+DFGT
+((cid:15) = 0:1; p = 1)
+MCMM
+((cid:15) = 0:01; p = 0:9)
+DFGT
+((cid:15) = 0:01; p = 1)
+Algorithm n scale
+
+Naive
+MCMM
+((cid:15) = 0:1; p = 0:9)
+DFGT
+((cid:15) = 0:1; p = 1)
+MCMM
+((cid:15) = 0:01; p = 0:9)
+DFGT
+((cid:15) = 0:01; p = 1)
+
+472
+< 1
+0 %
+< 1
+0 %
+< 1
+0 %
+< 1
+0 %
+
+889
+
+534
+
+903
+
+477
+
+615
+
+352
+
+803
+
+3304
+343
+
+(cid:6)
+
+2289
+300
+
+(cid:6)
+
+2660
+381
+
+1115
+
+(cid:6)
+
+50
+
+(cid:6)
+
+1498
+373
+
+1159
+
+7
+
+Algorithm n scale
+0.001
+0.01
+0.1
+1
+10
+100
+1000
+LayoutHistogram (cid:0) rnd ; D = 32; N = 50000; h(cid:3) = 0:0609892
+757
+757
+757
+757
+757
+757
+757
+Naive
+8
+8
+583
+168
+54
+32
+32
+MCMM
+0 %
+0 %
+1 %
+1 %
+1 %
+0 %
+0 %
+((cid:15) = 0:1; p = 0:9)
+212
+849
+492
+221
+159
+153
+DFGT
+< 1
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+((cid:15) = 0:1; p = 1)
+858
+183
+60
+45
+32
+MCMM
+8
+8
+0 %
+0 %
+1 %
+6 %
+1 %
+0 %
+0 %
+((cid:15) = 0:01; p = 0:9)
+153
+159
+222
+503
+888
+659
+DFGT
+< 1
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+((cid:15) = 0:01; p = 1)
+Algorithm n scale
+0.001
+0.01
+0.1
+1
+10
+100
+1000
+CorelCombined (cid:0) rnd ; D = 89; N = 50000; h(cid:3) = 0:0512583
+1716
+1716
+1716
+1716
+1716
+1716
+1716
+384
+418
+575
+428
+1679
+17
+17
+0 %
+10 % 0 %
+1 %
+0 %
+0 %
+0 %
+17
+836
+1772
+1397
+864
+677
+659
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+17
+17
+1905
+437
+575
+419
+401
+0 %
+0 %
+0 %
+1 %
+2 %
+0 %
+0 %
+17
+1649
+1794
+1425
+865
+677
+659
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+0 %
+
+Naive
+MCMM
+((cid:15) = 0:1; p = 0:9)
+DFGT
+((cid:15) = 0:1; p = 1)
+MCMM
+((cid:15) = 0:01; p = 0:9)
+DFGT
+((cid:15) = 0:01; p = 1)
+
+(cid:6)
+
+5299
+885
+
+2087
+
+1246
+
+2585
+
+(cid:6)
+
+12012
+3518
+
+6205
+
+3771
+
+7086
+
+References
+[1] Nando de Freitas, Yang Wang, Maryam Mahdaviani, and Dustin Lang. Fast krylov methods for n-body
+learning. In Y. Weiss, B. Sch ¤olkopf, and J. Platt, editors, Advances in Neural Information Processing
+Systems 18, pages 251(cid:150)258. MIT Press, Cambridge, MA, 2006.
+[2] P. Drineas, R. Kannan, and M. Mahoney. Fast monte carlo algorithms for matrices iii: Computing a
+compressed approximate matrix decomposition, 2004.
+[3] G. Golub. Matrix Computations, Third Edition. The Johns Hopkins University Press, 1996.
+[4] A. Gray and A. W. Moore. N-Body Problems in Statistical Learning.
+In Todd K. Leen, Thomas G.
+Dietterich, and Volker Tresp, editors, Advances in Neural Information Processing Systems 13 (December
+2000). MIT Press, 2001.
+[5] Alexander G. Gray and Andrew W. Moore. Nonparametric Density Estimation: Toward Computational
+Tractability. In SIAM International Conference on Data Mining 2003, 2003.
+[6] Alexander G. Gray and Andrew W. Moore. Very Fast Multivariate Kernel Density Estimation via Com-
+putational Geometry. In Joint Statistical Meeting 2003, 2003. to be submitted to JASA.
+[7] L. Greengard and J. Strain. The Fast Gauss Transform. SIAM Journal of Scientiﬁc and Statistical Com-
+puting, 12(1):79(cid:150)94, 1991.
+[8] Peter Hall, David Marshall, and Ralph Martin. Merging and splitting eigenspace models. IEEE Transac-
+tions on Pattern Analysis and Machine Intelligence, 22(9):1042(cid:150)1049, 2000.
+[9] Michael Holmes, Alexander Gray, and Charles Isbell. Ultrafast monte carlo for statistical summations.
+In J.C. Platt, D. Koller, Y. Singer, and S. Roweis, editors, Advances in Neural Information Processing
+Systems 20, pages 673(cid:150)680. MIT Press, Cambridge, MA, 2008.
+[10] Dongryeol Lee and Alexander Gray. Faster gaussian summation: Theory and experiment. In Proceedings
+of the Twenty-second Conference on Uncertainty in Artiﬁcial Intelligence. 2006.
+[11] Dongryeol Lee, Alexander Gray, and Andrew Moore. Dual-tree fast gauss transforms.
+In Y. Weiss,
+B. Sch ¤olkopf, and J. Platt, editors, Advances in Neural Information Processing Systems 18, pages 747(cid:150)
+754. MIT Press, Cambridge, MA, 2006.
+[12] Ting Liu, Andrew W. Moore, and Alexander Gray. Ef(cid:2)cient exact k-nn and nonparametric classi(cid:2)cation
+in high dimensions. In Sebastian Thrun, Lawrence Saul, and Bernhard Sch ¤olkopf, editors, Advances in
+Neural Information Processing Systems 16. MIT Press, Cambridge, MA, 2004.
+[13] P. G. Martinsson and Vladimir Rokhlin. An accelerated kernel-independent fast multipole method in one
+dimension. SIAM J. Scientiﬁc Computing, 29(3):1160(cid:150)1178, 2007.
+[14] A. W. Moore, J. Schneider, and K. Deng. Ef(cid:2)cient locally weighted polynomial regression predictions.
+In D. Fisher, editor, Proceedings of the Fourteenth International Conference on Machine Learning, pages
+196(cid:150)204, San Francisco, 1997. Morgan Kaufmann.
+[15] B. W. Silverman. Density Estimation for Statistics and Data Analysis. Chapman and Hall/CRC, 1986.
+
+8
+
+

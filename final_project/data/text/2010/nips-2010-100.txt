@@ -1,0 +1,663 @@
+Exact inference and learning for cumulative
+distribution functions on loopy graphs
+
+Jim C. Huang, Nebojsa Jojic and Christopher Meek
+Microsoft Research
+One Microsoft Way, Redmond, WA 98052
+
+Abstract
+Many problem domains including climatology and epidemiology require models
+that can capture both heavy-tailed statistics and local dependencies. Specifying
+such distributions using graphical models for probability density functions (PDFs)
+generally lead to intractable inference and learning. Cumulative distribution net-
+works (CDNs) provide a means to tractably specify multivariate heavy-tailed mod-
+els as a product of cumulative distribution functions (CDFs). Existing algorithms
+for inference and learning in CDNs are limited to those with tree-structured (non-
+loopy) graphs. In this paper, we develop inference and learning algorithms for
+CDNs with arbitrary topology. Our approach to inference and learning relies on
+recursively decomposing the computation of mixed derivatives based on a junction
+trees over the cumulative distribution functions. We demonstrate that our system-
+atic approach to utilizing the sparsity represented by the junction tree yields sig-
+niﬁcant performance improvements over the general symboli c differentiation pro-
+grams Mathematica and D*. Using two real-world datasets, we demonstrate that
+non-tree structured (loopy) CDNs are able to provide signiﬁ cantly better ﬁts to the
+data as compared to tree-structured and unstructured CDNs and other heavy-tailed
+multivariate distributions such as the multivariate copula and logistic models.
+
+1 Introduction
+The last two decades have been marked by signiﬁcant advances in modeling multivariate probability
+density functions (PDFs) on graphs. Various inference and learning algorithms have been success-
+fully developed that take advantage of known variable dependence which can be used to simplify
+computations and avoid overtraining. A major source of difﬁ culty for such algorithms is the need to
+compute a normalization term, as graphical models generally assume a factorized form for the joint
+PDF. To make these models tractable, the factors themselves can be chosen to have tractable forms
+such as Gaussians. Such choices may then make the model unsuitable for many types of data, such
+as data with heavy-tailed statistics that are a quintessential feature in many application areas such as
+climatology and epidemiology. Recently, a number of techniques have been proposed to allow for
+both heavy-tailed/non-Gaussian distributions with a speciﬁable variable dependence structure. Most
+of these methods are based on transforming the data to make it more easily modeled by Gaussian
+PDF- ﬁtting techniques, an example of which is the Gaussian c opula [11] parameterized as a CDF
+de ﬁned on nonlinearly transformed variables. In addition t o copula models, many non-Gaussian
+distributions are conveniently parameterized as CDFs [2]. Most existing CDF models, however,
+do not allow the speciﬁcation of local dependence structure s and thus can only be applied to very
+low-dimensional problems.
+
+Recently, a class of multiplicative CDF models has been proposed as a way of modeling structured
+CDFs. The cumulative distribution networks (CDNs) model a multivariate CDF as a product over
+functions, each dependent on a small subset of variables and each having a CDF form [6, 7]. One
+of the key advantages of this approach is that it eliminates the need to enforce normalization con-
+straints that complicate inference and learning in graphical models of PDFs. An example of a CDN
+is shown in Figure 1(a), where diamonds correspond to CDN functions and circles represent vari-
+ables. In a CDN, inference and learning involves computation of derivatives of the joint CDF with
+respect to model variables and parameters. The graphical model then allows us to efﬁciently perform
+inference and learning for non-loopy CDNs using message-passing [6, 8]. Models of this form have
+
+1
+
+been applied to multivariate heavy-tailed data in climatology and epidemiology where they have
+demonstrated improved predictive performance as compared to several graphical models for PDFs
+despite the restriction to tree-structured CDNs. Non-loopy CDNs may however be limited models
+and adding functions to the CDN may provide signiﬁcantly mor e expressive models, with the caveat
+that the resulting CDN may become loopy and previous algorithms for inference and learning in
+.
+CDNs then cease to be exact.
+Our aim in this paper is to provide an effective algorithm for learning and inference in loopy CDNs,
+thus improving on previous approaches which were limited to CDNs with non-loopy dependencies.
+In principle, symbolic differentiation algorithms such as Mathematica [16] and D* [4] could be used
+for inference and learning for loopy CDNs. However, as we demonstrate, such generic algorithms
+quickly become intractable for larger models. In this paper, we develop the JDiff algorithm which
+uses the graphical structure to simplify the computation of the derivative and enables both inference
+and learning for CDNs of arbitrary topology. In addition, we provide an analysis of the time and
+space complexity of the algorithm and provide experiments comparing JDiff to Mathematica and
+D*, in which we show that JDiff runs in less time and can handle signiﬁcantly larger graphs. We
+also provide an empirical comparison of several methods for modeling multivariate distributions as
+applied to rainfall data and H1N1 data. We show that loopy CDNs provide signiﬁcantly better model
+ﬁts for multivariate heavy-tailed data than non-loopy CDNs . Furthermore, these models outperform
+models based on Gaussian copulas [11], as well as multivariate heavy tailed models that do not allow
+for structure speciﬁcation.
+2 Cumulative distribution networks
+In this section we establish preliminaries about learning and inference for CDNs [6, 7, 8]. Let x be
+a vector of observed values for random variables in the set  and let  , x denote the observed
+values for variable node  ∈  and variable set  ⊆  . Let  () be the set of neighboring variable
+nodes for function node . De ﬁne the operator ∂x [⋅] as the mixed derivative operator with respect to
+∂ 3
+variables in set . For example, ∂1,2,3 [ (1 , 2 , 3 )] ≡
+. Throughout the paper we will
+∂1 ∂2 ∂3
+be dealing primarily with continuous random variables and so we will generally deal with PDFs,
+with probability mass functions (PMFs) as a special case. We also assume in the sequel that all
+derivatives of a CDF with respect to any and all arguments exist and are continuous and as a result
+any mixed derivative of the CDF is invariant to the order of differentiation (Schwarz’ theorem).
+De ﬁnition 2.1. The cumulative distribution network (CDN) consists of (1) an undirected bipartite
+graphical model consisting of a bipartite graph  = ( , ,  ), where  denotes variable nodes and
+ denotes function nodes, with edges in  connecting function nodes to variable nodes and (2) a
+speciﬁcation of functions  (x ) for each function node  ∈  , where x ≡ x () , ∪∈  () = 
+and each function  : ℝ∣ ()∣ 7→ [0, 1] satisﬁes the properties of a CDF. The joint CDF over the
+variables in the CDN is then given by the product of CDFs  , or  (x) = Ü∈  (x ), where
+each CDF  is de ﬁned over neighboring variable nodes  ().
+□
+For example, in the CDN of Figure 1(a), each diamond corresponds to a function  de ﬁned over
+neighboring pairs of variable nodes, such that the product of functions satisﬁes the properties of
+a CDF. In the sequel we will assume that both  and CDN functions  are parametric functions
+of parameter vector  and so  ≡  (x) ≡  (x∣) and  ≡  (x ) ≡  (x ; ). In a CDN,
+the marginal CDF for any subset  ⊆  is obtained simply by taking limits such that  (x ) =
+ (x), which can be done in constant time for each variable.
+lim
+x ∖→∞
+
+2.1 Inference and learning in CDNs as differentiation
+For a joint CDF, the problems of inference and likelihood evaluation, or computing conditional CDFs
+and marginal PDFs, both correspond to mixed differentiation of the joint CDF [6]. In particular, the
+conditional CDF  (x ∣x ) is related to the mixed derivative ∂x [ (x , x )] by  (x ∣x ) =
+∂x [ (x ,x )]
+. In the case of evaluating the likelihood corresponding to the model, we note that
+∂x [ (x )]
+for CDF  (x∣ ), the PDF is de ﬁned as  (x∣ ) = ∂x [ (x∣ )]. In order to perform maximum-
+1
+likelihood estimation, we require the gradient vector ∇ log  (x∣) =
+ (x∣) ∇  (x∣ ), which
+requires us to compute a vector of single derivatives ∂ [ (x∣ )] of the joint CDF with respect to
+parameters in the model.
+
+2
+
+2.2 Message-passing algorithms for differentiation in non-loopy graphs
+As described above, inference and learning in a CDN corresponds to computing derivatives of the
+CDF with respect to subsets of variables and/or model parameters. For inference in non-loopy
+CDNs, computing mixed derivatives of the form ∂x [ (x)] for some subset of nodes  ⊆  can
+be solved efﬁciently by the derivative-sum-product (DSP) a lgorithm of [6]. In analogy to the way
+in which marginalization in graphical models for PDFs can be decomposed into a series of local
+computations, the DSP algorithm decomposes the global computation of the total mixed deriva-
+tive ∂x [ (x)] into a series of local computations by the passing of messages that correspond to
+mixed derivatives of  (x) with respect to subsets of variables in the model. To evaluate the model
+likelihood, messages are passed from leaf nodes to the root variable node and the product of in-
+coming root messages is differentiated. This procedure provably produces the correct likelihood
+ (x∣ ) = ∂x [ (x∣ )] for non-loopy CDNs [6].
+To estimate model parameters  for which the likelihood over i.i.d. data samples x1 , ⋅ ⋅ ⋅ , x is
+optimized, we can further make use of the gradient of the log-likelihood ∇ log  (x∣ ) within
+a gradient-based optimization algorithm. As in the DSP inference algorithm, the computation of
+the gradient can also be broken down into a series of local gradient computations. The gradient-
+derivative-product (GDP) algorithm [8] updates the gradients of the messages from the DSP algo-
+rithm and passes these from leaf nodes to the root variable node in the CDN, provably obtaining the
+correct gradient of the log-likelihood of a particular set of observations x for a non-loopy CDN.
+
+∂x [ (x)]∂x{1,⋅⋅⋅ ,}∖ [ (x)],
+
+(1)
+
+3 Differentiation in loopy graphs
+For loopy graphs, the DSP and GDP algorithms are not guaranteed to yield the correct derivative
+computations. For the general case of differentiating a product of CDFs, computing the total mixed
+derivative requires time and space exponential in the number of variables. To see this, consider the
+simple example of the derivative of a product of two functions  ,  , both of which are functions of
+x = [1 , ⋅ ⋅ ⋅ ,  ]. The mixed derivative of the product is then given by [5]
+∂x [ (x) (x)] = ࢣ ⊆{1,⋅⋅⋅ , }
+a summation that contains 2 terms. As computing the mixed derivative of a product of more
+functions will entail even greater complexity, the na¨ıve a pproach will in general be intractable.
+However, as we show in this paper, a CDN’s sparse graphical structure may often point to ways
+to computing these derivatives efﬁciently, with non-loopy graphs being special, previously-studied
+cases. To motivate our approach, consider the following lemma that follows in straightforward
+fashion from the product rule of differentiation:
+Lemma 3.1. Let  = ( , ,  ) be a CDN and let  (x) = Ü∈
+ (x ) be de ﬁned over variables
+ (x ) and
+in  . Let 1 , 2 be a partition of the function nodes  and let 1 (x1 ) = Ü∈1
+ (x ), where 1 = Þ∈1  () and 2 = Þ∈2  () are the variables
+2 (x2 ) = Ü∈2
+that are arguments to 1 , 2 . Let 1,2 = 1 ࢵ 2 . Then
+∂x1 ∖1,2 ∂x [1 (x1 )]∂x2 ∖1,2 ∂x1,2 ∖ [2 (x2 )].
+∂x [1 (x1 )2 (x2 )] = ࢣ⊆1,2
+(2)
+Proof. De ﬁne  = 1 ∖ 1,2 and  = 2 ∖ 1,2 . Then
+∂x [ (x)] = ∂x [1 (x1 )2 (x2 )] = ࢣ ⊆
+= ࢣ⊆1,2 ࢣ⊆ ࢣ⊆
+∂x, , [1 (x1 )]∂x1,2 ∖,∖ ,∖ [2 (x2 )]
+= ࢣ⊆1,2
+∂x, [1 (x1 )]∂x1,2 ∖, [2 (x2 )].
+The last step follows from identifying all derivatives that are zero, as we note that in the above,
+∂x [1 (x1 )] = 0 for  ∕= ∅ and similarly, ∂x∖ [2 (x2 )] = 0 for  ∖  ∕= ∅.
+The number of individual steps needed to complete the differentiation in (2) depends on the size of
+the variable intersection set 1,2 = 1 ࢵ 2 . When the two factors 1 , 2 depend on two variable
+3
+
+∂x [1 (x1 )]∂x ∖ [2 (x2 )]
+
+(3)
+
+sets that do not intersect, then the differentiation can be simpliﬁed by independently computing
+derivatives for each factor and multiplying. For example, for the CDN in Figure 1(a), partitioning
+the problem such that 1 = {2, 3, 4, 6}, 2 = {1, 2, 5, 7} yields a more efﬁcient computation than
+the brute force approach. Signiﬁcant computational advant ages exist even when  ∕= ∅, provided
+∣1,2 ∣ is small. This suggests that we can recursively decompose the total mixed derivative and
+gradient computations into a series of simpler computations so that ∂x [ (x)] reduces to a sum that
+contains far fewer terms than that required by brute force. In such a recursion, the total product of
+factors is always broken into parts that share as few variables as possible. This is efﬁcient for most
+CDNs of interest that consist of a large number of factors that each depend on a small subset of
+variables. Such a recursive decomposition is naturally represented using a junction tree [12] for the
+CDN in which we will pass messages corresponding to local derivative computations.
+
+3.1 Differentiation in junction trees
+In a CDN  = ( , ,  ), let {1 , ⋅ ⋅ ⋅ , } be a set of  subsets of variable nodes in  , where
+Þ
+=1  =  . Let  = {1, ⋅ ⋅ ⋅ , } and  = (ℰ ,  ) be a tree where ℰ is the set of undirected edges
+so that for any pair ,  ∈  there is a unique path from  to  . Then  is a junction tree for  if any
+intersection  ࢵ  is contained in the subset  corresponding to a node  on the path from  to  .
+For each directed edge (,  ) we de ﬁne the separator set as , =  ࢵ  . An example of a CDN
+and a corresponding junction tree are shown in Figures 1(a), 1(b).
+
+(d)
+(c)
+(b)
+(a)
+Figure 1: a) An example of a CDN with 7 variable nodes (circles) and 15 function nodes (diamonds); b) A
+junction tree obtained from the CDN of a). Separating sets are shown for each edge connecting nodes in the
+junction tree, each corresponding to a connected subset of variables in the CDN; c), d) CDNs used to model
+the rainfall and H1N1 datasets. Nodes and edges in the non-loopy CDNs of [8] are shown in blue and function
+nodes/edges that were added to the trees are shown in red.
+Since  is a tree, we can root the tree at some node in  , say . Given , denote by  
+ the subset
+of elements of  that are in the subtree of  rooted at  and containing . Also, let ℰ be the set
+of neighbors of  in  , such that ℰ = { ∣(,  ) ∈ ℰ }. Finally, let  = Þ∈  . Suppose
+1 , ⋅ ⋅ ⋅ ,  is a partition of  such that for any  = 1, ⋅ ⋅ ⋅ , ,  consists of all  ∈  whose
+neighbors in  are contained in  and there is no  >  such that all neighbors of  ∈  are
+included in  . De ﬁne the potential function  (x ) = Ü∈
+ (x ) for subset  . We can then
+write the joint CDF as
+ (x) =  (x ) Ü∈ℰ
+ 
+ (x),
+where  
+ (x ), with  de ﬁned as above. Computing the probability  (x) then
+ x = Ü∈ 
+
+corresponds to computing
+∂x (x ) Ü∈ℰ
+
+ x = ∂x  (x ) Ü∈ℰ
+ 
+∂x 
+∖,
+
+→ (∅),
+= ∂x  (x ) Ü∈ℰ
+where we have de ﬁned messages → () ≡ ∂x ∂x 
+ x], with → (∅) =
+[ 
+∖,
+
+ x]. It remains to determine how we can efﬁciently compute messa ges in the above
+[ 
+∂x 
+∖,
+
+expression. We notice that for any given  ∈  with  ⊆  and  ⊆ ℰ , we can de ﬁne the
+4
+
+ x]
+[ 
+
+(4)
+
+(5)
+
+quantity  (,  ) ≡ ∂x  (x ) Ü∈
+→ (∅). Now select  ∈  for the given : we can
+recursively re-write the above as
+ (,  ) = ∂x  (x ) Ü∈ ∖
+→ (∅)→ (∅) = ∂x  (∅,  ∖ )→ (∅)
+= ࢣ⊆
+→ ( ) ( ∖  ,  ∖ ) = ࢣ⊆ ࢵ ,
+→ ( ) ( ∖  ,  ∖ ),
+where in the last step we note that whenever  ࢵ , = ∅, → ( ) = 0, since by de ﬁnition
+message → () does not depend on variables in  ∖ , . From the de ﬁnition of message
+→ (), for any  ⊆ , we also have
+→ () = ∂x ∂x
+ x] = ∂x, ∖,  (x ) Ü∈ℰ ∖
+ x]
+[ 
+[ 
+∂x
+∖,
+ 
+
+
+
+
+=   Þ  ∖ , , ℰ ∖ ,
+where  
+ is the subtree of  rooted at  and containing  . Thus, we can recursively compute functions
+ , → by applying the above updates for each node in  , starting from from leaf nodes of 
+and up to the root node . At the root node, the correct mixed derivative is then given by  (x) =
+∂x [ (x)] =  ( , ℰ ). Note that the messages can be kept in a symbolic form as functions over
+appropriate variables, or, as is the case in the experiments section, they can simply be evaluated for
+the given data x. In the latter case, each message reduces to a scalar, as we can evaluate derivatives
+of the functions in the model for ﬁxed x,  and so we do not need to store increasingly complex
+symbolic terms.
+
+(7)
+
+(6)
+
+∖,
+
+3.2 Maximum-likelihood learning in junction trees
+While computing  (x∣ ) = ∂x [ (x∣ )], we can in parallel obtain the gradient of the likelihood
+function. The likelihood is equal to the message  ( , ℰ ) at the root node  ∈  . The computa-
+tion of its gradient ∇ ( , ℰ ) can be decomposed in a similar fashion to the decomposition of
+the mixed derivative computation. The gradient of each message  , → in the junction tree de-
+composition is updated in parallel with the likelihood messages through the use of gradient messages
+g ≡ ∇ and g→ ≡ ∇→ .
+The algorithm for computing both the likelihood and its gradient, which we call JDiff for junction
+tree differentiation, is shown in Algorithm 1. Thus by recursively computing the messages and their
+gradients starting from leaf nodes of  to the root node , we can obtain the exact likelihood and
+gradient vector for the CDF modelled by  .
+3.3 Running time analysis
+The space and time complexity of JDiff is dominated by Steps 1-3 in Algorithm 1: we quantify this
+in the next Theorem.
+Theorem 3.2. The time and space complexity of the JDiff algorithm is
+ max
+(∣ℰ ∣ − 1) ∗ 2∣ ∖, ∣ 3∣, ∣.
+(∣ ∣ + 1)∣ ∣ + max
+(8)
+
+(,)∈ℰ
+ ∣ ∣ = ( + 1)∣ ∣,
+Proof. The complexity of Step 1 in Algorithm 1 is given by ࢣ
+=1 ∣ ∣
+which is the total number of terms in the expanded sum of products form for computing mixed
+derivatives ∂x [ ] for all  ⊆  . Step 2 has complexity bounded by
+,
+ࢣ=0 ∣, ∣
+ 2∣ ∖, ∣2 = (∣ℰ ∣ − 1) ∗ (max
+(∣ℰ ∣ − 1) ∗ max
+2∣ ∖, ∣ 3∣, ∣ )
+(9)
+∈ℰ
+∈ℰ
+since the cost of computing derivatives for each  ⊆  is a function of the size of the intersection
+with , . Thus we have the number of ways that an intersection can be of size  times the number of
+ways that we can choose the variables not in the separator , times the cost for that size of overlap.
+Finally, Step 3 has complexity bounded by (2∣, ∣ ). The total time and space complexity is then
+(∣ℰ ∣ − 1) ∗ 2∣ ∖, ∣ 3∣, ∣.
+of order given by  max
+(∣ ∣ + 1)∣ ∣ + max
+
+(,)∈ℰ
+
+5
+
+Algorithm 1: JDiff: A junction tree algorithm for computing the likelihood ∂x [ (x∣)] and its gradient
+∇ ∂x [ (x∣)] for a CDN  . Lines marked 1,2,3 dominate the space and time complexity.
+Input: A CDN  = ( , ,  ), a junction tree  ≡  ( ) = (ℰ ,  ) with node set  = {1, ⋅ ⋅ ⋅ , }
+and edge set ℰ , where each  ∈  indexes a subset  ⊆  . Let  ∈  be the root of  and
+denote the subtree of  rooted at  containing  by  
+ . Let 1 , ⋅ ⋅ ⋅ ,  be a partition of 
+such that  = { ∈  ∣ () ⊆  ,  () ࢵ  = ∅ ∀ <  }.
+Data: Observations and parameters (x,  )
+Output: Likelihood and gradient ∂x [ (x;  )], ∇ ∂x [ (x;  )]
+foreach Node  ∈  do
+ ;
+ ← ∅;  ← Ü∈
+foreach Subset  ⊆  do
+ (, ∅) ← ∂x [ ];
+g (, ∅) ← ∇ ∂x [ ];
+end
+foreach Neighbor  ∈ ℰ ࢵ  
+ do
+, ←  ࢵ  ;
+foreach Subset  ⊆  do
+→ ( ) ( ∖  ,  );
+ (,  Þ ) ← ࢣ⊆ ࢵ ,
+→ ( )g ( ∖  ,  ) + g→ ( ) ( ∖  ,  );
+g (,  Þ ) ← ࢣ⊆ ࢵ ,
+end
+ ←  Þ  ;
+end
+if  ∕=  then
+ ∕= ∅}; , ←  ࢵ  ;
+ ← {∣ℰ ࢵ  
+foreach Subset  ⊆ , do
+→ () ←   Þ  ∖ , , ℰ ∖ ;
+g→ () ← g  Þ  ∖ , , ℰ ∖ ;
+end
+else
+return  ( , ℰ ), g ( , ℰ )
+end
+end
+
+1
+
+2
+
+3
+
+Note that JDiff reduces to the algorithms of [6, 8] for non-loopy CDNs and its complexity then
+becomes linear in the number of variables. For other types of graphs, the complexity grows expo-
+nentially with the tree-width.
+4 Experiments
+The experiments are divided into two parts. The ﬁrst part eva luates the computational efﬁciency of
+the JDiff algorithm for various graph topologies. The second set of experiments uses rainfall and
+H1N1 epidemiology data to demonstrate the practical value of loopy CDNs, which JDiff for the ﬁrst
+time makes practical to learn from data.
+
+4.1 Symbolic differentiation
+As a ﬁrst test, we compared the runtime of JDiff to that of comm only-used symbolic differentiation
+tools such as Mathematica [16] and D* [4]. The task here was to symbolically compute ∂x [ (x)]
+for a variety of CDNs. All three algorithms were run on a machine with a 2.66 GHz CPU and 16
+GB of RAM. The JDiff algorithm was implemented in MATLAB. A junction tree was constructed
+by greedily eliminating the variables with the minimal ﬁll- in algorithm and then constructing elim-
+ination subsets for nodes in the junction tree [10] using the MATLAB implementation of [14]. For
+square grid-structured CDNs with CDN functions de ﬁned over pairs of adjacent variables, Mathe-
+matica and D* ran out of memory for grids larger than 3 × 3. For the 3 × 3 grid, JDiff took less
+than 1 second to compute the symbolic derivative, whereas Mathematica and D* took 6.2 s. and 9.2
+
+6
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+−
+g
+o
+L
+
+d
+o
+o
+h
+i
+l
+e
+k
+i
+l
+−
+g
+o
+L
+
+15
+
+10
+
+5
+
+0
+
+−5
+
+−10
+
+−15
+
+−20
+
+−25
+
+−30
+
+ 
+
+0
+
+−10
+
+−20
+
+−30
+
+−40
+
+−50
+
+−60
+
+−70
+
+−80
+
+ 
+
+ 
+
+ 
+
+NPN−BDG
+NPN−MRF
+GBDG−log
+GMRF−log
+MVlogistic
+CDN−disc
+CDN−tree
+CDN−loopy
+
+NPN−BDG
+NPN−MRF
+GBDG−log
+GMRF−log
+MVlogistic
+CDN−disc
+CDN−tree
+CDN−loopy
+
+(a)
+
+(b)
+
+(c)
+
+CDN
+
+NPN-BDG
+(d)
+
+GBDG-log
+
+Figure 2: Both a), b) report average test log-likelihoods achieved for the CDNs, the nonparanormal bidirected
+and Markov models (NPN-BDG,NPN-MRF), Gaussian bidirected and Markov models for log-transformed
+data (GBDG-log,GMRF-log) and the multivariate logistic distribution (MVlogistic) on leave-one-out cross-
+validation of the a) rainfall and b) H1N1 datasets; c) Contour plots of log-bivariate densities under the CDN
+model of Figure 1(c) for rainfall with observed measurements shown. Each panel shows the marginal PDF
+ ( ,  ) = ∂, [ ( ,  )] under the CDN model for each CDN function  and its neighbors ,  .
+Each marginal PDF can be computed analytically by taking limits followed by differentiation; d) Graphs for
+the H1N1 datasets with edges weighted according to mutual information under the CDN, nonparanormal and
+Gaussian BDGs for log-transformed data. Dashed edges correspond to information of less than 1 bit.
+s. each. We also found that JDiff could tractably (i.e.: in less than 20 min. of CPU time) compute
+derivatives for graphs as large as 9 × 9. We also compared the time to compute mixed derivatives
+in loops of length  = 10, 11, ⋅ ⋅ ⋅ , 20. The time required by JDiff varied from 0.81 s. to 2.83 s. to
+compute the total mixed derivative, whereas the time required by Mathematica varied from 1.2 s. to
+580 s. and for D*, 6.7 s. to 12.7 s.
+4.2 Learning models for rainfall and H1N1 data
+The JDiff algorithm allows us to compute mixed derivatives of a joint CDF for applications in
+which we may need to learn multivariate heavy-tailed distributions de ﬁned on loopy graphs. The
+graphical structures in our examples are based on geographical location of variables that impose
+dependence constraints based on spatial proximity. To model pairs of heavy-tailed variables, we
+used the bivariate logistic distribution with Gumbel margins [2], given by
+−,
+−,
+ (,  ) = exp  − 
+,   , , > 0,  , > 0, 0 <  < 1.
+−
+−
+,  + 
+Models constructed by computing products of functions of the above type have the properties of
+both being heavy-tailed multivariate distributions and satisfying marginal independence constraints
+between variables that share no function nodes [8]. Here we examined the data studied in [8], which
+consisted of spatial measurements for rainfall and for H1N1 mortality. The rainfall dataset consists
+of 61 daily measurements of rainfall at 22 sites in China and the H1N1 dataset consists of 29 weekly
+mortality rates in 11 cities in the Northeastern US during the 2008-2009 epidemic. Starting from the
+non-loopy CDNs used in [8] (Figures 1(c) and 1(d), shown in blue), we added function nodes and
+edges to construct loopy CDNs (shown in red in Figures 1(c) and 1(d)) to construct CDNs capable
+
+(10)
+
+7
+
+of expressing many more marginal dependencies at the cost of creating numerous loops in the graph.
+All CDN models (non-loopy and loopy) were learned from data using stochastic gradients to update
+model parameters using settings described in the Supplemental Information.
+
+The loopy CDN model was compared via leave-one-out cross-validation to non-loopy CDNs of [8]
+and disconnected CDNs corresponding to independence models. To compare with other multivariate
+approaches for modelling heavy-tailed data, we also tested the following:
+∙ Gaussian bi-directed (BDG) and Markov (MRF) models with the same topology as the loopy
+CDNs for log-transformed data with ˜ = log( +  ) for  = 10− ,  = 1, 2, 3, 4, 5, where we
+show the results for  that yielded the best test likelihood. Models were ﬁtted usi ng the algorithms
+of [3] and [15]. For the Gaussian BDGs, the covariance matrices Σ were constrained so that
+(Σ), = 0 only if there is no edge connecting variable nodes ,  . For the Gaussian MRF, the
+constraints were (Σ)−1
+, = 0).
+∙ Structured nonparanormal distributions [11], which use a Gaussian copula model, where the struc-
+ture was speciﬁed by the same BDG and MRF graphs and estimatio n of the covariance was per-
+formed using the algorithms for Gaussian MRFs and BDGs on nonlinearly transformed data. The
+nonlinear transformation is given by  ( ) = ˜ + ˜Φ−1 ( ˜ ( )) where Φ is the normal
+CDF, ˜ is the Winsorized estimator [11] of the CDF for random variable  and parameters
+˜ , ˜ are the empirical mean and standard deviation for  . Although the nonparanormal al-
+lows for structure learning as part of model ﬁtting, for the s ake of comparison the structure of the
+model was set to be same as those of the BDG and MRF models.
+∙ The multivariate logistic CDF [13] that is heavy-tailed but does not model local dependencies.
+Here we designed the BDG and MRF models to have the same graphical structure as the loopy
+CDN model such that all three model classes represent the same set of local dependencies even
+though the set of global dependencies is different for a BDG, MRF and CDN of the same connec-
+tivity. Additional details about these comparisons are provided in the Supplemental Information.
+The resulting average test log-likelihoods on leave-one-out cross-validation achieved by the above
+models are shown in Figures 2(a) and 2(b). Here, capturing the additional local dependencies and
+heavy-tailedness using loopy CDNs leads to signiﬁcantly be tter ﬁts (  < 10−8 , two-sided sign test).
+To further explore the loopy CDN model, we can visualize the set of log-bivariate densities ob-
+tained from the loopy CDN model for the rainfall data in tandem with observed data (Figure 2(c)).
+The marginal bivariate density for each pair of neighboring variables is obtained by taking limits
+of the learned multivariate CDF and differentiating the resulting bivariate CDF. We can also exam-
+ine the resulting models by comparing the mutual information (MI) between pairs of neighboring
+variables in the graphical models for the H1N1 dataset. This is shown in Figure 2(d) in the form
+of undirected weighted graphs where edges are weighted proportional to the MI between the two
+variable nodes connected by that edge. For the CDN, MI was computed by drawing 50,000 sam-
+ples from the resulting density model via the Metropolis algorithm; for Gaussian models, the MI
+was obtained analytically. As can be seen, the loopy CDN model differs signiﬁcantly from the
+nonparanormal and Gaussian BDGs for log-transformed data in the MI between pairs of variables
+(Figure 2(d)). Not only are the MI values under the loopy CDN model signiﬁcantly higher as com-
+pared to those under the Gaussian models, but also high MI is assigned to the edge corresponding
+to the Newark,NJ/Philadelphia,PA air corridor, which is a likely source of H1N1 transmission be-
+tween cities [1] (edge shown in black in Figure 2(d)). In contrast, this edge is largely missed by the
+nonparanormal and log-transformed Gaussian BDGs.
+
+5 Discussion
+The above results for the rainfall and H1N1 datasets, combined with the lower runtime of JDiff
+compared to standard symbolic differentiation algorithms, highlight A) the usefulness of JDiff as an
+algorithm for exact inference and learning for loopy CDNs and B) the usefulness of loopy CDNs
+in which multiple local functions can be used to model local dependencies between variables in
+the model. Future work could include learning the structure of compact probability models in the
+sense of graphs with bounded treewidth, with practical applications to other problem domains (e.g.:
+ﬁnance, seismology) in which data are heavy-tailed and high -dimensional and comparisons to exist-
+ing techniques for doing this [11]. Another line of research would be to further study the connection
+between CDNs and other copula-based models (e.g.: [9]). Finally, given the demonstrated value of
+adding dependency constraints to CDNs, further development of faster approximate algorithms for
+loopy CDNs will also be of practical value.
+
+8
+
+References
+[1] Colizza, V., Barrat, A., Barthelemy, M. and Vespignani, A. (2006) Prediction and predictability
+of global epidemics: the role of the airline transportation network. Proceedings of the National
+Academy of Sciences USA (PNAS) 103, 2015-2020.
+[2] de Haan, L. and Ferreira, A. (2006) Extreme value theory. Springer.
+[3] Drton, M. and Richardson, T.S. (2004) Iterative conditional ﬁtting for Gaussian ancestral graph
+models. Proceedings of the Twentieth Conference on Uncertainty in Artiﬁcial Intelligence (UAI) ,
+130-137.
+[4] Guenter, B. (2007) Efﬁcient symbolic differentiation f or graphics applications. ACM Transac-
+tions on Graphics 26(3).
+[5] Hardy, M. (2006) Combinatorics of partial derivatives. Electronic Journal of Combinatorics 13.
+[6] Huang, J.C. and Frey, B.J. (2008) Cumulative distribution networks and the derivative-sum-
+product algorithm. Proceedings of the Twenty-Fourth Conference on Uncertainty in Artiﬁcial
+Intelligence (UAI), 290-297.
+[7] Huang, J.C. (2009) Cumulative distribution networks: Inference, estimation and applications
+of graphical models for cumulative distribution functions. University of Toronto Ph.D. thesis.
+http://hdl.handle.net/1807/19194
+[8] Huang, J.C. and Jojic, N. (2010) Maximum-likelihood learning of cumulative distribution func-
+tions on graphs. Journal of Machine Learning Research W&CP Series 9, 342-349.
+[9] Kirschner, S. (2007) Learning with tree-averaged densities and distributions. Advances in Neural
+Information Systems Processing (NIPS) 20, 761-768.
+[10] Koller, D. and Friedman, N. (2009). Probabilistic Graphical Models: Principles and Tech-
+niques, MIT Press.
+[11] Liu, H., Lafferty, J. and Wasserman, L. (2009) The nonparanormal: Semiparametric estimation
+of high dimensional undirected graphs. Journal of Machine Learning Research (JMLR) 10, 2295-
+2328.
+[12] Lauritzen, S.L. and Spiegelhalter, D.J. (1988) Local computations with probabilities on graph-
+ical structures and their application to expert systems. Journal of the Royal Statistical Society
+Series B (Methodological) 50(2), 157224.
+[13] Malik, H.J. and Abraham, B. (1978) Multivariate logistic distributions. Annals of Statistics
+1(3), 588-590.
+[14] Murphy, K.P. (2001) The Bayes Net Toolbox for MATLAB. Computing science and statistics.
+[15] Speed, T.S. and Kiiveri, H.T. (1986) Gaussian Markov distributions over ﬁnite graphs. Annals
+of Statistics 14(1), 138-150.
+[16] Wolfram Research, Inc. (2008) Mathematica, Version 7.0. Champaign, IL.
+
+9
+
+

@@ -1,0 +1,705 @@
+Fast Bayesian Inference for Non-Conjugate
+Gaussian Process Regression
+
+Mohammad Emtiyaz Khan, Shakir Mohamed, and Kevin P. Murphy
+Department of Computer Science, University of British Columbia
+
+Abstract
+
+We present a new variational inference algorithm for Gaussian process regres-
+sion with non-conjugate likelihood functions, with application to a wide array of
+problems including binary and multi-class classiﬁcation, and ordinal regression.
+Our method constructs a concave lower bound that is optimized using an efﬁcient
+ﬁxed-point updating algorithm. We show that the new algorithm has highly com-
+petitive computational complexity, matching that of alternative approximate infer-
+ence methods. We also prove that the use of concave variational bounds provides
+stable and guaranteed convergence – a property not available to other approaches.
+We show empirically for both binary and multi-class classiﬁcation that our new
+algorithm converges much faster than existing variational methods, and without
+any degradation in performance.
+
+1
+
+Introduction
+
+Gaussian processes (GP) are a popular non-parametric prior for function estimation. For real-valued
+outputs, we can combine the GP prior with a Gaussian likelihood and perform exact posterior in-
+ference in closed form. However, in other cases, such as classiﬁcation, the likelihood is no longer
+conjugate to the GP prior, and exact inference is no longer tractable.
+Various approaches are available to deal with this intractability. One approach is Markov Chain
+Monte Carlo (MCMC) techniques [1, 11, 22, 9]. Although this can be accurate, it is often quite
+slow, and assessing convergence is challenging. There is therefore great interest in deterministic ap-
+proximate inference methods. One recent approach is the Integrated Nested Laplace Approximation
+(INLA) [21], which uses numerical integration to approximate the marginal likelihood. Unfortu-
+nately, this method is limited to six or fewer hyperparameters, and is thus not suitable for models
+with a large number of hyperparameters. Expectation propagation (EP) [17] is a popular alterna-
+tive, and is a method that approximates the posterior distribution by maintaining expectations and
+iterating until these expectations are consistent for all variables. Although this is fast and accurate
+for the case of binary classiﬁcation [15, 18], there are difﬁculties extending EP to many other cases,
+such as multi-class classiﬁcation and parameter learning [24, 13]. In addition, EP is known to have
+convergence issues and can be numerically unstable.
+In this paper, we use a variational approach, where we compute a lower bound to the log marginal
+likelihood using Jensen’s inequality. Unlike EP, this approach does not suffer from numerical issues
+and convergence problems, and can easily handle multi-class and other likelihoods. This is an active
+area of research and many solutions have been proposed, see for example, [23, 6, 5, 19, 14]. Un-
+fortunately, most of these methods are slow, since they attempt to solve for the posterior covariance
+matrix, which has size O(N 2 ), where N is the number of data points. In [19], a reparameteriza-
+tion was proposed that only requires computing O(N ) variational parameters. Unfortunately, this
+method relies on a non-concave lower bound. In this paper, we propose a new lower bound that is
+concave, and derive an efﬁcient iterative algorithm for its maximization. Since the original objective
+is unimodal, we reach the same global optimum as the other methods, but we do so much faster.
+
+1
+
+p(z|X, θ) = N (z|µ, Σ)
+N(cid:89)
+p(y|z) =
+p(yn |zn )
+n=1
+
+(1)
+
+(2)
+
+Distribution
+Type
+Binary
+Bernoulli logit
+Categorical Multinomial logit
+Cumulative logit
+Ordinal
+Count
+Poisson
+
+p(y |z )
+p(y = 1|z ) = σ(z )
+p(y = k |z) = ezk−lse(z)
+p(y ≤ k |z ) = σ(φk − z )
+p(y = k |z ) = e−ez
+ekz
+k!
+
+Table 1: Gaussian process regression (top left) and its graphical model (right), along with the exam-
+ple likelihoods for outputs (bottom left). Here, σ(z ) = 1/(1 + e−z ), lse(·) is the log-sum-exp func-
+tion, k indexes over discrete output values, and φk are real numbers such that φ1 < φ2 < . . . < φK
+for K ordered categories.
+
+2 Gaussian Process Regression
+
+Gaussian process (GP) regression is a powerful method for non-parametric regression that has gained
+a great deal of attention as a ﬂexible and accurate modeling approach. Consider N data points with
+the n’th observation denoted by yn , with corresponding features xn . A Gaussian process model uses
+a non-linear latent function z (x) to obtain the distribution of the observation y using an appropriate
+likelihood [15, 18]. For example, when y is binary, a Bernoulli logit/probit likelihood is appropriate.
+Similarly, for count observations, a Poisson distribution can be used.
+A Gaussian process [20] speciﬁes a distribution over z (x), and is a stochastic process that is char-
+acterized by a mean function µ(x) and a covariance function Σ(x, x(cid:48) ), which are speciﬁed using a
+kernel function that depends on the observed features x. Assuming a GP prior over z (x) implies that
+a random vector is associated with every input x, such that given all inputs X = [x1 , x2 , . . . , xN ],
+the joint distribution over z = [z (x1 ), z (x2 ), . . . , z (xN )] is Gaussian.
+The GP prior is shown in Eq. 1. Here, µ is a vector with µ(xi ) as its i’th element, Σ is a matrix with
+Σ(xi , xj ) as the (i, j )’th entry, and θ are the hyperparameters of the mean and covariance functions.
+We assume throughout a zero mean-function and a squared-exponential covariance function (also
+known as radial-basis function or Gaussian) deﬁned as: Σ(xi , xj ) = σ2 exp[−(xi − xj )T (xi −
+xj )/(2s)]. The set of hyperparameters is θ = (s, σ). We also deﬁne Ω = Σ−1 .
+Given the GP prior, the observations are modeled using the likelihood shown in Eq. 2. The exact
+form of the distribution p(yn |zn ) depends on the type of observations and different choices instan-
+tiates many existing models for GP regression [15, 18, 10, 14]. We consider frequently encountered
+data such as binary, ordinal, categorical and count observations, and describe their likelihoods in Ta-
+ble 1. For the case of categorical observations, the latent function z is a vector whose k’th element
+is the latent function for k’th category. A graphical model for Gaussian process regression is also
+shown.
+Given these models, there are three tasks that are to be performed: posterior inference, prediction
+at test inputs, and model selection. In all cases, the likelihoods we consider are not conjugate to
+the Gaussian prior distribution and as a result, the posterior distribution is intractable. Similarly,
+the integrations required in computing the predictive distribution and the marginal likelihood are
+intractable. To deal with this intractability we make use of variational methods.
+
+3 Variational Lower Bound to the Log Marginal Likelihood
+
+Inference and model selection are always problematic in any Gaussian process regression using non-
+conjugate likelihoods due to the fact that the marginal likelihood contains an intractable integral. In
+this section, we derive a tractable variational lower bound to the marginal likelihood. We show
+
+2
+
+z2 y2 X Σ µ θ z1 y1 zN yN ≥ LJ (θ , γ ) := −
+
+that the lower bound takes a well known form and can be maximized using concave optimization.
+Throughout the section, we assume scalar zn , with extension to the vector case being straightfor-
+ward.
+We begin with the intractable log marginal likelihood L(θ) in Eq. 3 and introduce a variational
+posterior distribution q(z|γ ). We use a Gaussian posterior with mean m and covariance V. The
+full set of variational parameters is thus γ = {m, V}. As log is a concave function, we obtain a
+lower bound LJ (θ , γ ) using Jensen’s inequality, given in Eq. 4. The ﬁrst integral is simply the
+Kullback−Leibler (KL) divergence from the variational Gaussian posterior q(z|m, V) to the GP
+prior p(z|µ, Σ) as shown in Eq. 5, and has a closed-form expression that we substitute to get the
+ﬁrst term in Eq. 6 (inside square brackets), with Ω = Σ−1 .
+The second integral can be expressed in terms of the expectation with respect to the marginal
+q(zn |mn , Vnn ) as shown in the second term of Eq. 5. Here mn is the n’th element of m and
+Vnn is the n’th diagonal element of V, the two variables collectively denoted by γn . The lower
+bound LJ is still intractable since the expectation of log p(yn |zn ) is not available in closed form for
+the distributions listed in Table 1. To derive a tractable lower bound, we make use of local variational
+(cid:90)
+(cid:90)
+bounds (LVB) fb , deﬁned such that E[log p(yn |zn )] ≥ fb (yn , mn , Vnn ), giving us Eq. 6.
+p(z|θ)p(y|z)
+(cid:90)
+(cid:90)
+p(z|θ)p(y|z)dz = log
+L(θ) = log
+q(z|γ )
+q(z|γ )
+z
+z
+q(z|γ )
+q(z|γ ) log p(y|z)dz
+q(z|γ ) log
+N(cid:88)
+p(z|θ)
+dz +
+z
+z
+Eq(zn |γn ) [log p(yn |zn )]
+= −DKL [q(z|γ )||p(z|θ)]+
+(cid:2)log |VΩ|− tr(VΩ) − (m−µ)T Ω(m−µ)+N (cid:3) +
+n=1
+We discuss the choice of LVBs in the next section, but ﬁrst discuss the well-known form that the
+lower bound of Eq. 6 takes. Given V, the optimization function with respect to m is a nonlinear
+least-squares function. Similarly, the function with respect to V is similar to the graphical lasso
+[8] or covariance selection problem [7], but is different in that the argument is a covariance matrix
+instead of a precision matrix [8]. These two objective functions are coupled through the non-linear
+term fb (·). Usually this term arises due to the prior distribution and may be non-smooth, for exam-
+ple, in graphical lasso. In our case, this term arises from the likelihood, and is smooth and concave
+as we discuss in next section.
+It is straightforward to show that the variational lower bound is strictly concave with respect to
+γ if fb is jointly concave with respect to mn and Vnn . Strict concavity of terms other than fb is
+well-known since both the least squares and covariance selection problems are concave. Similar
+concavity results have been discussed by Braun and McAuliffe [5] for the discrete choice model,
+and more recently by Challis and Barber [6] for the Bayesian linear model, who consider concavity
+with respect to the Cholesky factor of V. We consider concavity with respect to V instead of its
+Cholesky factor, which allows us to exploit the special structure of V, as explained in Section 5.
+
+≥ LJ (θ , γ ) := 1
+2
+
+N(cid:88)
+n=1
+
+fb (yn , mn ,Vnn ).
+
+dz
+
+(3)
+
+(4)
+
+(5)
+
+(6)
+
+4 Concave Local Variational Bounds
+
+In this section, we describe concave LVBs for various likelihoods. For simplicity, we suppress
+the dependence on n and consider the log-likelihood of a scalar observation y given a predictor z
+distributed according to q(z |γ ) = N (z |m, v) with γ = {m, v}. We describe the LVBs for the
+likelihoods given in Table 1 with z being a scalar for count, binary, and ordinal data, but a vector of
+length K for categorical data, K being the number of classes. When V is a matrix, we denote its
+diagonal by v.
+For the Poison distribution, the expectation is available in closed form and we do not need any
+bounding: E[log p(y |η)] = ym − exp(m + v/2) − log y !. This function is jointly concave with
+respect to m and v since the exponential is a convex function.
+
+3
+
+For binary data, we use the piecewise linear/quadratic bounds proposed by [16], which is a bound
+fb (y , m, v) = ym − (cid:80)R
+on the logistic-log-partition (LLP) function log(1 + exp(x)) and can be used to obtain a bound over
+the sigmoid function σ(x). The ﬁnal bound can be expressed as sum of R pieces: E(log p(y |η)) =
+r=1 fbr (m, v) where fbr is the expectation of r’th quadratic piece. The
+function fbr is jointly concave with respect to m, v and their gradients are available in closed-form.
+An important property of the piecewise bound is that its maximum error is bounded and can be
+driven to zero by increasing the number of pieces. This means that the lower bound in Eq. 6 can
+be made arbitrarily tight by increasing the number of pieces. For this reason, this bound always
+performs better than other existing bounds, such as Jaakola’s bound [12], given that the number
+of pieces is chosen appropriately. Finally, the cumulative logit likeilhood for ordinal observations
+depends on σ(x) and its expectation can be bounded using piecewise bounds in a similar way.
+For the multinomial logit distribution, we can use the bounds proposed by [3] and [4], both leading
+to concave LVBs. The ﬁrst bound takes the form fb (y , m, V) = yT m − lse(m + v/2) with y
+represented using a 1-of-K encoding. This function is jointly concave with respect to m and v,
+which can be shown by noting the fact that the log-sum-exp function is convex. The second bound
+is the product of sigmoids bound proposed by [4] which bounds the likelihood with product of
+sigmoids (see Eq. 3 in [4]), with each sigmoid bounded using Jaakkola’s bound [12]. We can also
+use piecewise linear/quadratic bound to bound each sigmoid. Alternatively, we can use the recently
+proposed stick-breaking likelihood of [14] which uses piecewise bounds as well.
+Finally, note that the original log-likelihood may not be concave itself, but if it is such that LJ has
+a unique solution, then designing a concave variational lower bound will allow us to use concave
+optimization to efﬁciently maximize the lower bound.
+
+5 Existing Algorithms for Variational Inference
+
+In this section, we assume that for each output yn there is a corresponding scalar latent function zn .
+All our results can be easily extended to the case of multi-class outputs where the latent function is a
+vector. In variational inference, we ﬁnd the approximate Gaussian posterior distribution with mean
+m and covariance V that maximizes Eq. 6. The simplest approach is to use gradient-based methods
+for optimization, but this can be problematic since the number of variational parameters is quadratic
+in N due to the covariance matrix V. The authors of [19] speculate that this may perhaps be the
+reason behind limited use of Gaussian variational approximations.
+We now show that the problem is simpler than it appears to be, and in fact the number of parameters
+can be reduced to O(N ) from O(N 2 ). First, we write the gradients with respect to m and v in Eq.
+n := ∂ fb (yn , mn , vn )/∂ vn .
+n := ∂ fb (yn , mn , vn )/∂mn and gv
+7 and 8 and equate to zero, using gm
+Also, gm and gv are the vectors of these gradients, and diag(gv ) is the matrix with gv as its diagonal.
+(cid:0)V−1 − Ω(cid:1) + diag(gv ) = 0
+−Ω(m − µ) + gm = 0
+(7)
+(8)
+1
+2
+At the solution, we see that V is completely speciﬁed if gv is known. This property can be exploited
+to reduce the number of variational parameters.
+Opper and Archambeau [19] (and [18]) propose a reparameterization to reduce the number of pa-
+rameters to O(N ). From the ﬁxed-point equation, we note that at the solution m and V will have
+the following form,
+
+V = (Σ−1 + diag(λ))−1
+(9)
+(10)
+m = µ + Σα,
+where α and λ are real vectors with λd > 0, ∀d. At the maximum (but not everywhere), α and λ
+will be equal to gm and gv respectively. Therefore, instead of solving the ﬁxed-point equations to
+obtain m and V, we can reparameterize the lower bound with respect to α and λ. Substituting Eq.
+9 and 10 in Eq. 6 and after simpliﬁcation using the matrix inversion and determinant lemmas, we
+N(cid:88)
+λ Σ) − αT Σα(cid:3) +
+(cid:2)− log(|Bλ ||diag(λ)|) + Tr(B−1
+get the following new objective function (for a detailed derivation, see [18]),
+n=1
+
+fb (yn , mn , Vnn ),
+
+(11)
+
+1
+2
+
+4
+
+with Bλ = diag(λ)−1 + Σ. Since the mapping between {α, λ} and {m, V} is one-to-one, we can
+recover the latter given the former. The one-to-one relationship also implies that the new objective
+function has a unique maximum. The new lower bound involves vectors of size N , reducing the
+number of variational parameters to O(N ).
+The problem with this reparameterization is that the new lower bound is no longer concave, even
+though it has a unique maximum. To see this, consider the 1-D case. We collect all the terms
+involving V from Eq. 6, except the LVB term, to deﬁne the function f (V ) = [log(V Σ−1 ) −
+V Σ−1 ]/2. We substitute the reparameterization V = (Σ−1 + λ)−1 to get a new function f (λ) =
+[− log(1 + Σλ) − (1 + Σλ)−1 ]/2. The second derivative of this function is f (cid:48)(cid:48) (λ) = 1
+2 [Σ/(1 +
+Σλ)]2 (Σλ − 1). Clearly, this derivative is negative for λ < 1/Σ and non-negative otherwise, making
+the function neither concave nor convex.
+The objective function is still unimodal and the maximum of (11) is equal to the maximum of
+(6). With the reparameterization, we loose concavity and therefore the algorithm may have slow
+convergence. Our experimental results (Section 7) conﬁrm the slow convergence.
+
+6 Fast Convergent Variational Inference using Coordinate Ascent
+
+=
+
+(12)
+
+We now derive an algorithm that reduces the number of variational parameters to 2N while maintain-
+ing concavity. Our algorithm uses simple scalar ﬁxed-point updates to obtain the diagonal elements
+of V. The complete algorithm is shown in Algorithm 1.
+To derive the algorithm, we ﬁrst note that the ﬁxed-point equation Eq. 8 has an attractive property:
+at the solution, the off-diagonal elements of V−1 are the same as the off-diagonal elements of Ω,
+i.e. if we denote K := V−1 , then Kij = Ωij . We need only ﬁnd the diagonal elements of K to get
+the full V. This is difﬁcult, however, since the gradient gv depends on v.
+We take the approach of optimizing each diagonal element Kii ﬁxing all others (and ﬁxing m as
+well). We partition V as shown on the left side of Eq. 12, indexing the last row by 2 and rest of the
+rows by 1. We consider a similar partitioning of K and Ω. Our goal is to compute v22 and k22 given
+ K−1
+
+all other elements of K. Matrices K and V are related through the blockwise inversion, as shown
+(cid:20) V11 v12
+(cid:21)
+below.
+− K−1
+K−1
+12K−1
+11 k12kT
+11 k12
+11 +
+11
+12K−1
+12K−1
+k22−kT
+k22−kT
+11 k12
+11 k12
+12K−1
+−
+vT
+kT
+v22
+1
+12
+11
+12K−1
+12K−1
+k22−kT
+k22−kT
+11 k12
+11 k12
+11 k12 ) ⇒ k22 = (cid:101)k22 + 1/v22
+From the right bottom corner, we have the ﬁrst relation below, which we simplify further.
+v22 = 1/(k22 − kT
+12K−1
+where we deﬁne (cid:101)k22 := kT
+12K−1
+11 k12 . We also know from the ﬁxed point Eq. 8 that the optimal v22
+22 is the gradient of fb with respect to v22 . Substitute
+and k22 satisfy Eq. 14 at the solution, where gv
+the value of k22 from Eq. 13 in Eq. 14 to get Eq. 15. It is easy to check (by taking derivative) that
+the value v22 that satisﬁes this ﬁxed-point can be found by maximizing the function deﬁned in Eq.
+16.
+0 = (cid:101)k22 + 1/v22 − Ω22 + 2gv
+0 = k22 − Ω22 + 2gv
+(14)
+22
+f (v) = log(v) − (Ω22 − (cid:101)k22 )v + 2fb (y2 , m22 , v)
+(15)
+22
+(16)
+update: v22 ← 1/(Ω22 − (cid:101)k22 − 2gv
+The function f (v) is a strictly concave function and can be optimized by iterating the following
+Since all elements of K, except k22 , are ﬁxed, (cid:101)k22 can be computed beforehand and need not be
+22 ). We will refer to this as a “ﬁxed-point iteration”.
+can obtain its value using Eq. 13: (cid:101)k22 = k22 − 1/v22 , and we do this before starting a ﬁxed-point
+evaluated at every ﬁxed-point iteration. In fact, we do not need to compute it explicitly, since we
+iteration. The complexity of these iterations depends on the number of gradient evaluations gv
+22 ,
+which is usually constant and very low.
+
+(13)
+
+5
+
+After convergence of the ﬁxed-point iterations, we update V using Eq. 12. It turns out that this is a
+rank-one update, the complexity of which is O(N 2 ). To show these updates, let us denote the new
+values obtained after the ﬁxed-point iterations by knew
+and vnew
+respectively. and denote the old
+22
+22
+values by kold
+22 and vold
+22 . We use the right top corner of Eq. 12 to get ﬁrst equality in Eq. 17. Using
+Eq. 13, we get the second equality. Similarly, we use the top left corner of Eq. 12 to get the ﬁrst
+22 − (cid:101)k22 )vold
+equality in Eq. 18, and use Eq. 13 and 17 to get the second equality.
+12 = −vold
+11 k12 = −(kold
+K−1
+12 /vold
+22
+22 − (cid:101)k22
+11 − K−1
+12K−1
+11 k12kT
+11 − vold
+K−1
+11 = Vold
+= Vold
+11
+12 )T /vold
+12 (vold
+22
+kold
+Note that both K−1
+11 and k12 do not change after the ﬁxed point iteration. We use this fact to obtain
+Vnew . We use Eq. 12 to write updates for Vnew and use 17, 18, and 13 to simplify.
+22 − (cid:101)k22
+K−1
+= − vnew
+11 k12
+22
+vold
+12
+vold
+knew
+22
+22 − (cid:101)k22
+12K−1
+K−1
+11 k12kT
+11 = K−1
+Vnew
+= Vold
+11
+11 +
+11 +
+knew
+N(cid:88)
+After updating V, we update m by optimizing the following non-linear least squares problem,
+n=1
+
+2 (m − µ)T Ω(m − µ) +
+− 1
+
+22 − vold
+vnew
+22
+(vold
+22 )2
+
+fb (yn , mn , Vnn )
+
+12 (vold
+vold
+12 )T
+
+vnew
+12 =
+
+(17)
+
+(18)
+
+(19)
+
+(20)
+
+(21)
+
+max
+m
+
+We use Newton’s method, the cost of which is O(N 3 ).
+
+6.1 Computational complexity
+O(N 3 + (cid:80)
+The ﬁnal procedure is shown in Algorithm 1. The main advantage of our algorithm is its fast
+convergence as we show this in the results section. The overall computational complexity is
+n ). First term is due to O(N 2 ) update of V for all n and also due to the opti-
+n I f p
+n ﬁxed-point iterations, the total cost of which is linear in N
+mization of m. Second term is for I f p
+n is usually 3 to 5, adding very little cost.
+due to the summation. In all our experiments, I f p
+
+6.2 Proof of convergence
+
+Proposition 2.7.1 in [2] states that the coordinate ascent algorithm converges if the maximization
+with respect to each coordinate is uniquely attained. This is indeed the case for us since each ﬁxed
+point iteration solves a concave problem of the form given by Eq. 16. Similarly, optimization with
+respect to m is also strictly concave. Hence, convergence of our algorithm is assured.
+
+6.3 Proof that V will always be positive deﬁnite
+
+Let us assume that we start with a positive deﬁnite K, for example, we can initialize it with Ω. Now
+22 will be positive since it is the maximum of Eq.
+consider the update of v22 and k22 . Note that vnew
+12K−1
+22 > kT
+16 which involves the log term. Using this and Eq. 13, we get knew
+11 k12 . Hence, the
+22 − kT
+12K−1
+Schur complement knew
+11 k12 > 0. Using this and the fact that K11 is positive deﬁnite, it
+follows that Knew will also be positive deﬁnite, and hence Vnew will be positive deﬁnite.
+
+7 Results
+
+We now show that the proposed algorithm leads to a signiﬁcant gain in the speed of Gaussian process
+regression. The software to reproduce the results of this section are available online1 . We evaluate
+the performance of our fast variational inference algorithm against existing inference methods for
+
+1http://www.cs.ubc.ca/emtiyaz/software/codeNIPS2012.html
+
+6
+
+Algorithm 1 Fast convergent coordinate-ascent algorithm
+1. Initialize K ← Ω, V ← Ω−1 , m ← µ, where Ω := Σ−1 .
+2. Alternate between updating the diagonal of V and then m until convergence, as follows:
+(a) Update the i’th diagonal of V for all i = 1, . . . , N :
+ii. (cid:101)k22 ← k22 − 1/v22 .
+i. Rearrange V and Ω so that the i’th column is the last one.
+iv. Run ﬁxed-point iterations for a few steps: v22 ← 1/(Ω22 − (cid:101)k22 − 2gv
+22 ← v22 .
+iii. Store old value vold
+22 ).
+v. Update V.
+A. V11 ← V11 + (v22 − vold
+22 )2 .
+12/(vold
+22 )v12vT
+vi. Update k22 ← (cid:101)k22 + 1/v22 .
+B. v12 ← −v22v12/vold
+22 .
+(b) Update m by maximizing the least-squares problem of Eq. 21.
+
+binary and multi-class classiﬁcation. For binary classiﬁcation, we use the UCI ionosphere data (with
+351 data examples containing 34 features). For multi-class classiﬁcation, we use the UCI forensic
+glass data set with 214 data examples each with 6 category output and features of length 8. In both
+cases, we use 80% of the dataset for training and the rest for testing.
+We consider GP classiﬁcation using the Bernoulli logit likelihood, for which we use the piecewise
+bound of [16] with 20 pieces. We compare our algorithm with the approach of Opper and Archam-
+beau [19] (Eq. 11). For the latter, we use L-BFGS method for optimization. We also compared to
+the naive method of optimizing with respect to full m and V, e.g. method of [5], but do not present
+these results since these algorithms have very slow convergence.
+We examine the computational cost for each method in terms of the number of ﬂoating point oper-
+ations (ﬂops) for four hyperparameter settings θ = {log(s), log(σ)}. This comparison is shown in
+Figure 1(a). The y-axis shows (negative of) the value of the lower bound, and the x-axis shows the
+number of ﬂops. We draw markers at iteration 1,2,4,50 and in steps of 50 from then on. In all cases,
+due to non-concavity, the optimization of the Opper and Archambeau reparameterization (black
+curve with squares) convergence slowly, passing through ﬂat regions of the objective and requiring
+a large number of computations to reach convergence. The proposed algorithm (blue curve with
+circles) has consistently faster convergence than the existing method. For this dataset, our algorithm
+always converged in 5 iterations.
+We also compare the total cost to convergence, where we count the total number of ﬂops until
+successive increase in the objective function is below 10−3 . Each entry is a different setting of
+{log(s), log(σ)}. Rows correspond to values of log(s) while columns correspond to log(σ), with
+units M,G,T denoting Mega-, Giga-, and Terra-ﬂops. We can see that the proposed algorithm takes
+a much smaller number of operations compared to the existing algorithm.
+
+Proposed Algorithm
+-1
+3
+1
+6M 7M 7M
+26M 20M 22M
+47M 81M 75M
+
+-1
+1
+3
+
+Opper and Archambeau
+3
+1
+-1
+6T
+212G
+20G
+24T
+24T
+101G
+38G
+1T
+24T
+
+-1
+1
+3
+
+We also applied our method to two more datasets of [18], namely ’sonar’ and ’usps-3vs5’ dataset
+and observed similar behavior.
+Next, we apply our algorithm to the problem of multi-class classiﬁcation, following [14], using the
+stick-breaking likelihood, and compare to inference using the approach of Opper and Archambeau
+[19] (Eq. 11). We show results comparing the lower bound vs the number of ﬂops taken in Figure
+1(b), for four hyperparameter settings {log(s), log(σ)}. We show markers at iterations 1, 2, 10,
+100 and every 100th iteration thereafter. The results follow those discussed for binary classiﬁcation,
+
+7
+
+(a) Ionosphere data
+
+(b) Forensic glass data
+
+Figure 1: Convergence results for (a) the binary classiﬁcation on the ionosphere data set and (b) the
+multi-class classiﬁcation on the glass dataset. We plot the negative of the lower bound vs the number
+of ﬂops. Each plot shows the progress of algorithms for a hyperparameter setting {log(s), log(σ)}
+shown at the top of the plot. The proposed algorithm always converges faster than the other method,
+in fact, in less than 5 iterations.
+
+where both methods reach the same lower bound value, but the existing approach converging much
+slower, with our algorithm always converged within 20 iterations.
+
+8 Discussion
+
+In this paper we have presented a new variational inference algorithm for non-conjugate GP re-
+gression. We derived a concave variational lower bound to the log marginal likelihood, and used
+concavity to develop an efﬁcient optimization algorithm. We demonstrated the efﬁcacy of our new
+algorithm on both binary and multiclass GP classiﬁcation, demonstrating signiﬁcant improvement
+in convergence.
+Our proposed algorithm is related to many existing methods for GP regression. For example, the
+objective function that we consider is exactly the KL minimization method discussed in [18], for
+which a gradient based optimization was used. Our algorithm uses an efﬁcient approach where we
+update the marginals of the posterior and then do a rank one update of the covariance matrix. Our
+results show that this leads to fast convergence.
+Our algorithm also takes a similar form to the popular EP algorithm [17], e.g. see Algorithm 3.5 in
+[20]. Both EP and our algorithm update posterior marginals, followed by a rank-one update of
+the covariance. Therefore, the computational complexity of our approach is similar to that of EP.
+The advantage of our approach is that, unlike EP, it does not suffer from any numerical issues (for
+example, no negative variances) and is guaranteed to converge.
+The derivation of our algorithm is based on the observation that the posterior covariance has a special
+structure, and does not directly use the concavity of the lower bound. An alternate derivation based
+on the Fenchel duality exists and shows that the ﬁxed-point iterations compute dual variables which
+are related to the gradients of fb . We skip this derivation since it is tedious, and present the more
+intuitive derivation instead. The alternative derivation will be made available in an online appendix.
+
+Acknowledgements
+
+We thank the reviewers for their valuable suggestions. SM is supported by the Canadian Institute
+for Advanced Research (CIFAR).
+
+8
+
+0300600900134138142(−1.0,−1.0)Mega−Flopsneg−LogLik0100020003000300600900(−1.0,2.5)Mega−Flopsneg−LogLik05K10K15K20K80110140170200(3.5,3.5)Mega−Flopsneg−LogLik02000400060008000100200300Mega−Flopsneg−LogLik(1.0,1.0)  Opper−Archproposed01000200030004000260270280290300310320(−1.0, −1.0)Neg−LogLikMega−flops010K20K30K40K50K500100015002000(−1.0, 2.5)Neg−LogLikMega−flops020K40K60K80K100K200250300350400(2.5, 2.5)Neg−LogLikMega−flops010K20K30K40K50K200300400500600(1.0, 1.0)Neg−LogLikMega−flops  proposedOpper−ArchReferences
+
+[1] J. Albert and S. Chib. Bayesian analysis of binary and polychotomous response data. J. of the
+Am. Stat. Assoc., 88(422):669–679, 1993.
+[2] Dimitri P. Bertsekas. Nonlinear Programming. Athena Scientiﬁc, second edition, 1999.
+[3] D. Blei and J. Lafferty. Correlated topic models. In Advances in Neural Information Proceed-
+ings Systems, 2006.
+[4] G. Bouchard. Efﬁcient bounds for the softmax and applications to approximate inference in
+hybrid models. In NIPS 2007 Workshop on Approximate Inference in Hybrid Models, 2007.
+[5] M. Braun and J. McAuliffe. Variational inference for large-scale models of discrete choice.
+Journal of the American Statistical Association, 105(489):324–335, 2010.
+[6] E. Challis and D. Barber. Concave Gaussian variational approximations for inference in large-
+In Proceedings of the International Conference on Artiﬁcial
+scale Bayesian linear models.
+Intelligence and Statistics, volume 6, page 7, 2011.
+[7] A. Dempster. Covariance selection. Biometrics, 28(1), 1972.
+[8] J. Friedman, T. Hastie, and R. Tibshirani. Sparse inverse covariance estimation with the graph-
+ical lasso. Biostatistics, 9(3):432, 2008.
+[9] S. Fr ¨uhwirth-Schnatter and R. Fr ¨uhwirth. Data augmentation and MCMC for binary and multi-
+nomial logit models. Statistical Modelling and Regression Structures, pages 111–132, 2010.
+[10] M. Girolami and S. Rogers. Variational Bayesian multinomial probit regression with Gaussian
+process priors. Neural Comptuation, 18(8):1790 – 1817, 2006.
+[11] C. Holmes and L. Held. Bayesian auxiliary variable models for binary and multinomial regres-
+sion. Bayesian Analysis, 1(1):145–168, 2006.
+[12] T. Jaakkola and M. Jordan. A variational approach to Bayesian logistic regression problems
+and their extensions. In AI + Statistics, 1996.
+[13] P. Jyl ¨anki, J. Vanhatalo, and A. Vehtari. Robust Gaussian process regression with a student-t
+likelihood. The Journal of Machine Learning Research, 999888:3227–3257, 2011.
+[14] M. Khan, S. Mohamed, B. Marlin, and K. Murphy. A stick-breaking likelihood for categorical
+data analysis with latent Gaussian models. In Proceedings of the International Conference on
+Artiﬁcial Intelligence and Statistics, 2012.
+[15] M. Kuss and C. E. Rasmussen. Assessing approximate inference for binary Gaussian process
+classiﬁcation. J. of Machine Learning Research, 6:1679–1704, 2005.
+[16] B. Marlin, M. Khan, and K. Murphy. Piecewise bounds for estimating Bernoulli-logistic latent
+Gaussian models. In Intl. Conf. on Machine Learning, 2011.
+[17] T. Minka. Expectation propagation for approximate Bayesian inference. In UAI, 2001.
+[18] H. Nickisch and C.E. Rasmussen. Approximations for binary Gaussian process classiﬁcation.
+Journal of Machine Learning Research, 9(10), 2008.
+[19] M. Opper and C. Archambeau. The variational Gaussian approximation revisited. Neural
+computation, 21(3):786–792, 2009.
+[20] C. E. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning. MIT Press,
+2006.
+[21] H. Rue, S. Martino, and N. Chopin. Approximate Bayesian inference for latent Gaussian
+models using integrated nested Laplace approximations. J. of Royal Stat. Soc. Series B, 71:
+319–392, 2009.
+[22] S. L. Scott. Data augmentation, frequentist estimation, and the Bayesian analysis of multino-
+mial logit models. Statistical Papers, 52(1):87–109, 2011.
+[23] M. Seeger. Bayesian Inference and Optimal Design in the Sparse Linear Model. J. of Machine
+Learning Research, 9:759–813, 2008.
+[24] M. Seeger and H. Nickisch. Fast Convergent Algorithms for Expectation Propagation Ap-
+proximate Bayesian Inference. In Proceedings of the International Conference on Artiﬁcial
+Intelligence and Statistics, 2011.
+
+9
+
+

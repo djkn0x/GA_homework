@@ -1,0 +1,779 @@
+Accelerated Adaptive Markov Chain
+for Partition Function Computation∗
+
+Stefano Ermon, Carla P. Gomes
+Dept. of Computer Science
+Cornell University
+Ithaca NY 14853, U.S.A.
+
+Ashish Sabharwal
+IBM Watson Research Ctr.
+Yorktown Heights
+NY 10598, U.S.A.
+
+Bart Selman
+Dept. of Computer Science
+Cornell University
+Ithaca NY 14853, U.S.A.
+
+Abstract
+
+We propose a novel Adaptive Markov Chain Monte Carlo algorithm to compute
+the partition function. In particular, we show how to accelerate a ﬂat histogram
+sampling technique by signiﬁcantly reducing the number of “null moves” in the
+chain, while maintaining asymptotic convergence properties. Our experiments
+show that our method converges quickly to highly accurate solutions on a range of
+benchmark instances, outperforming other state-of-the-art methods such as IJGP,
+TRW, and Gibbs sampling both in run-time and accuracy. We also show how ob-
+taining a so-called density of states distribution allows for efﬁcient weight learning
+in Markov Logic theories.
+
+1
+
+Introduction
+
+We propose a novel and general method to approximate the partition function of intricate probability
+distributions deﬁned over combinatorial spaces. Computing the partition function is a notoriously
+hard computational problem. Only a few tractable cases are know. In particular, if the corresponding
+graphical model has low treewidth, then the problem can be solved exactly using methods based on
+tree decompositions, such as the junction tree algorithm [1]. The partition function for planar graphs
+with binary variables and no external ﬁeld can also be computed in polynomial time [2].
+We will consider an adaptive MCMC sampling strategy, inspired by the Wang-Landau method [3],
+which is a so-called ﬂat histogram sampling strategy from statistical physics. Given a combinatorial
+space and an energy function (for instance, describing the negative log-likelihood of each conﬁgu-
+ration), a ﬂat histogram method is a sampling strategy based on a Markov Chain that converges to a
+steady state where it spends approximately the same amount of time in states with a low density of
+conﬁgurations (which are usually low energy states) as in states with a high density.
+We propose two key improvements to the Wang-Landau method, namely energy saturation
+and a focused-random walk component, leading to a new and more efﬁcient algorithm called
+FocusedFlatSAT. Energy saturation allows the chain to visit fewer energy levels, and the ran-
+dom walk style moves reduce the number of “null moves” in the Markov chain. Both improvements
+maintain the same global stationary distribution, while allowing us to go well beyond the domain of
+spin glasses where the Wang-Landau method has been traditionally applied.
+We demonstrate the effectiveness of our approach by a comparison with state-of-the-art methods to
+approximate the partition function or bound it, such as Tree Reweighed Belief Propagation [4], IJGP-
+SampleSearch [5], and Gibbs sampling [6]. Our experiments show that our approach outperforms
+these approaches in a variety of problem domains, both in terms of accuracy and run-time.
+The density of states serves as a rich description of the underlying probabilistic model. Once com-
+puted, it can be used to efﬁciently evaluate the partition function for all parameter settings without
+∗Supported by NSF Expeditions in Computing award for Computational Sustainability (grant 0832782).
+
+1
+
+the need for further inference steps — a stark contrast with competing methods for partition function
+computation. For instance, in statistical physics applications, we can use it to evaluate the partition
+function Z (T ) for all values of the temperature T . This level of abstraction can be a fundamental
+advantage for machine learning methods: in fact, in a learning problem we can parameterize Z (·)
+according to the model parameters that we want to learn from the training data. For example, in
+the case of a Markov Logic theory [7, 8] with weights w1 , . . . , wK of its K ﬁrst order formulas,
+we can parameterize the partition function as Z (w1 , . . . , wK ). Upon deﬁning an appropriate energy
+function and obtaining the corresponding density of states, we can then use efﬁcient evaluations of
+the partition function to search for model parameters that best ﬁt the training data, thus obtaining a
+promising new approach to learning in Markov Logic Networks and graphical models.
+
+2 Probabilistic model and the partition function
+
+(1)
+
+(2)
+
+Pw (x) =
+
+exp
+
+exp
+
+1
+Z (w)
+
+We focus on intricate probability distributions deﬁned over a set of conﬁgurations, i.e., assignments
+to a set of N discrete variables {x1 , . . . , xN }, assumed here to be Boolean for simplicity. The
+probability distribution is speciﬁed through a set of combinatorial features or constraints over these
+variables. Such constraints can be either hard or soft, with the i-th soft constraint Ci being associated
+with a weight wi . Let χi (x) = 1 if a conﬁguration x violates Ci , and 0 otherwise. The probability
+!
+ 
+Pw (x) of x is deﬁned as 0 if x violates any hard constraint, and as
+− X
+wiχi (x)
+Ci∈Csoft
+otherwise, where Csoft is the set of soft constraints. The partition function, Z (w), is simply the
+!
+ 
+normalization constant for this probability distribution, and is given by:
+− X
+Z (w) = X
+wiχi (x)
+x∈Xhard
+Ci∈Csoft
+where Xhard ⊆ {0, 1}N is the set of conﬁgurations satisfying all hard constraints. Note that as
+wi → ∞, the soft constraint Ci effectively becomes a hard constraint. This factored representation
+is closely related to a graphical model where we use weighted Boolean formulas to specify clique
+potentials. This is a natural framework for combining purely logical and probabilistic inference,
+used for example to deﬁne grounded Markov Logic Networks [8, 9].
+The partition function is a very important quantity but computing it is a well-known computational
+challenge, which we propose to address by employing the “density of states” method to be discussed
+shortly. We will compare our approach against several state-of-the-art methods available for com-
+puting the partition function or obtaining bounds on it. Wainwright et al. [4], for example, proposed
+a variational method known as tree re-weighting (TRW) to obtain bounds on the partition function
+of graphical models. Unlike standard Belief Propagation schemes which are based on Bethe free en-
+ergies [10], the TRW approach uses a tree-reweighted (TRW) free energy which consists of a linear
+combination of free energies deﬁned on spanning trees of the model. Using convexity arguments it
+is then possible to obtain upper bounds on various quantities, such as the partition function.
+Based on iterated join-graph propagation, IJGP-SampleSearch [5] is a popular solver for the proba-
+bility of evidence problem (i.e., partition function computation with a subset of “evidence” variables
+ﬁxed) for general graphical models. This method is based on an importance sampling scheme which
+is augmented with systematic constraint-based backtracking search. An alternative approach is to
+use Gibbs sampling to estimate the partition function by estimating, using sample average, a se-
+quence of multipliers that correspond to the ratios of the partition function evaluated at different
+weight levels [6]. Lastly, the partition function for planar graphs where all variables are binary and
+have only pairwise interactions (i.e., the zero external ﬁeld case) can be calculated exactly in poly-
+nomial time [2]. Although we are interested in algorithms for the general (intractable) case, we used
+the software associated with this approach to obtain the ground truth for planar graphs and evaluate
+the accuracy of the estimates obtained by other methods.
+
+2
+
+3 Density of states
+
+Our approach for computing the partition function is based on solving the density of states problem.
+Given a combinatorial space such as the one deﬁned earlier and an energy function E : {0, 1}N →
+R, the density of states (DOS) n is a function n : range(E ) → N that maps energy levels to the
+number of conﬁgurations with that energy, i.e., n(k) = |{σ ∈ {0, 1}N | E (σ) = k}|. In our context,
+we are interested in computing the number of conﬁgurations that satisfy certain properties that are
+speciﬁed using an appropriate energy function. For instance, we might deﬁne the energy E (σ) of a
+conﬁguration σ to be the number of hard constraints that are violated by σ . Or we may use the sum
+of the weights of the violated soft constraints.
+Once we are able to compute the full density of states, i.e., the number of conﬁgurations at each
+possible energy level, it is straightforward to evaluate the partition function Z (w) for any weight
+vector w , by summing up terms of the form n(i) exp(−E (i)), where E (i) denotes the energy of
+every conﬁguration in state i. This is the method we use in this work for estimating the partition
+function. More complex energy functions may be deﬁned for other related tasks, such as weight
+learning, i.e., given some training data x ∈ X = {0, 1}N , computing arg maxw Pw (x) where
+Pw (x) is given by Equation (1). Here we can deﬁne the energy E (σ) to be w · ‘, where ‘ =
+(‘1 , . . . , ‘M ) gives the number of constraints of weight wi violated by σ . Our focus in the rest of
+the paper will thus be on computing the density of states efﬁciently.
+
+3.1 The MCMCFlatSAT algorithm
+
+MCMCFlatSAT [11] is an Adaptive Markov Chain Monte Carlo (adaptive MCMC) method for
+computing the density of states for combinatorial problems, inspired by the Wang-Landau algorithm
+[3] from statistical physics. Interestingly, this algorithm does not make any assumption about the
+form or semantics of the energy. At least in principle, the only thing it needs is a partitioning of the
+state space, where the “energy” just provides an index over the subsets that compose the partition.
+The algorithm is based on the ﬂat histogram idea and works by trying to construct a reversible
+Markov Chain on the space {0, 1}N of all conﬁgurations such that the steady state probability of a
+conﬁguration σ is inversely proportional to the density of states n(E (σ)). In this way, the stationary
+distribution is such that all the energy levels are visited equally often (i.e., when we count the visits
+to each energy level, we see a ﬂat visit histogram). Speciﬁcally, we deﬁne a Markov Chain with the
+n
+o
+( 1
+following transition probability:
+dH (σ, σ 0 ) = 1
+1, n(E (σ))
+N min
+n(E (σ 0 ))
+pσ→σ 0 =
+dH (σ, σ 0 ) > 1
+0
+is given by the normalization constraint pσ→σ + P
+where dH (σ, σ 0 ) is the Hamming distance between σ and σ 0 . The probability of a self-loop pσ→σ
+σ 0 |dH (σ,σ 0 )=1 pσ→σ 0 = 1. The detailed balance
+equation P (σ)pσ→σ 0 = P (σ 0 )pσ 0→σ is satisﬁed by P (σ) ∝ 1/n(E (σ)). This means1 that the
+Markov Chain will reach a stationary probability distribution P (regardless of the initial state) such
+of the states visited because P (E ) = P
+that the probability of a conﬁguration σ with energy E = E (σ) is inversely proportional to the num-
+ber of conﬁgurations with energy E . This leads to an asymptotically ﬂat histogram of the energies
+σ :E (σ)=E P (σ) ∝ n(E ) 1
+n(E ) = 1 (i.e., independent of E ).
+Since the density of states is not known a priori, and computing it is precisely the goal of the algo-
+rithm, it is not possible to construct directly a random walk with transition probability (3). However
+it is possible to start with an initial guess g(·) for n(·) and keep updating this estimate g(·) in a
+systematic way to produce a ﬂat energy histogram and simultaneously make the estimate g(E ) con-
+verge to the true value n(E ) for every energy level E . The estimate is adjusted using a modiﬁcation
+factor F which controls the trade-off between the convergence rate of the algorithm and its accuracy
+(large initial values of F lead to fast convergence to a rather inaccurate solution). For completeness,
+we provide the pseudo-code as Algorithm 1; see [11] for details.
+
+(3)
+
+1The chain is ﬁnite, irreducible, and aperiodic, therefore ergodic.
+
+3
+
+Algorithm 1 MCMCFlatSAT algorithm to compute the density of states
+1: Start with a guess g(E ) = 1 for all E = 1, . . . , m
+2: Initialize H (E ) = 0 for all E = 1, . . . , m
+3: Start with a modiﬁcation factor F = F0 = 1.5
+4: repeat
+Randomly pick a conﬁguration σ
+5:
+repeat
+6:
+n
+o
+Generate a new conﬁguration σ 0 (by ﬂipping a variable)
+7:
+Let E = E (σ) and E 0 = E (σ 0 ) (saturated energies)
+8:
+Set σ = σ 0 with probability min
+1, g(E )
+9:
+(move acceptance/rejection step)
+g(E 0 )
+Let Ec = E (σ) be the current energy level
+10:
+Adjust the density g(Ec ) = g(Ec ) × F
+11:
+Update visit histogram H (Ec ) = H (Ec ) + 1
+12:
+Reduce F , F ← √
+until H is ﬂat (all the values are at least 90% of the maximum value)
+13:
+14:
+F
+17: Normalize g so that P
+15:
+Reset the visit histogram H
+16: until F is close enough to 1
+E g(E ) = 2N
+18: return g as estimate of n
+
+4 FocusedFlatSAT: Efﬁcient computation of density of states
+
+improvements to MCMCFlatSAT, namely energy saturation and
+We propose two crucial
+the introduction of a focused-random walk component,
+leading to a new algorithm called
+FocusedFlatSAT. As we will see in Table 1, FocusedFlatSAT provides the same accuracy as
+MCMCFlatSAT but is about 10 times faster on that benchmark. Moreover, our results for the Ising
+model (described below) in Figure 2 demonstrate that FocusedFlatSAT scales much better.
+
+Energy saturation. The time needed for each iteration of MCMCFlatSAT to converge is signif-
+icantly affected by the number of different non-empty energy levels (buckets). In many cases, the
+weights deﬁning the probability distribution Pw (x) are all positive (i.e., there is an incentive to sat-
+isfy the constraints), and as an effect of the exponential discounting in Equation (1), conﬁgurations
+that violate a large number of constraints have a negligible contribution to the sum deﬁning the par-
+tition function Z . We therefore deﬁne a new saturated energy function E 0 (σ) = min{E (σ), K },
+where K is a user-deﬁned parameter. For the positive weights case, the partition function Z 0 asso-
+ciated with the saturated energy function is a guaranteed upper bound on the original Z , for any K .
+When all constraints are hard, Z 0 = Z for any value K ≥ 1 because only the ﬁrst energy bucket
+matters. In general, when soft constraints are present, the bound gets tighter as K increases, and we
+can obtain theoretical worst-case error bounds when K is chosen to be a percentile of the energy
+distribution (e.g., saturation at median energy yields a 2x bound). In our experiments, we set K to be
+the average number of constraints violated by a random conﬁguration, and we found that the error
+introduced by the saturation is negligible compared to other inherent approximations in density of
+states estimation. Intuitively, this is because the states where the probability is concentrated turn out
+to typically have a much lower energy than K , and thus an exponentially larger contribution to Z.
+Furthermore, energy saturation preserves the connectivity of the chain.
+
+Focused Random Walk. Both in the original Wang-Landau method and in MCMCFlatSAT, new
+conﬁgurations are generated by ﬂipping a variable selected uniformly at random [3, 11]. Let us
+call this conﬁguration selection distribution the proposal distribution, and let Tσ→σ 0 denote the
+probability of generating a σ 0 from this distribution while in conﬁguration σ . In the Wang-Landau
+algorithm, proposed conﬁgurations are then rejected with a probability that depends on the density
+of states of the respective energy levels. Move rejections obviously lengthen the mixing time of
+the underlying Markov Chain. We introduce here a novel proposal distribution that signiﬁcantly
+reduces the number of move rejections, resulting in much faster convergence rates. It is inspired by
+(cid:26)
+(cid:27)
+local search SAT solvers [12] and is especially critical for the class of highly combinatorial energy
+functions we consider in this work. We note that if the acceptance probability is taken to be
+n(E (σ)) Tσ 0→σ
+n(E (σ 0 )) Tσ→σ 0
+
+min
+
+1,
+
+4
+
+Figure 1: Histograms depicting the number of proposed moves accepted and rejected. Left: MCM-
+CFlatSAT. Right: FocusedFlatSAT. See PDF for color version.
+
+the properties of the steady state distribution are preserved as long as the proposal distribution is
+such that the ergodicity property is maintained.
+In order to understand the motivation behind the new proposal distribution, consider the move accep-
+tance/rejection histogram shown in the left panel of Figure 1. For the instance under consideration,
+MCMCFlatSAT converged to a ﬂat histogram after having visited each of the 385 energy levels (on
+x-axis) roughly 2.6M times. Each colored region shows the cumulative number of moves (on y-axis)
+accepted or rejected from each energy level (on x-axis) to another conﬁguration with a higher, equal,
+or lower energy level, resp. This gives six possible move types, and the histogram shows how often
+is each taken at any energy level. Most importantly, notice that at low energy levels, a vast majority
+of the moves were proposed to a higher energy level and were rejected by the algorithm (shown as
+the dominating purple region). This is an indirect consequence of the fact that in such instances, in
+the low energy regime, the density of states increases drastically as the energy level is increases, i.e.,
+g(E 0 ) (cid:29) g(E ) when E 0 > E . As a result, most of the proposed moves are to higher energy levels
+and are in turn rejected by the algorithm in the move acceptance/rejection step discussed above.
+In order to address this issue, we propose to modify the proposal distribution in a way that increases
+the chance of proposing moves to the same or lower energy levels, despite the fact that there are
+relatively few such moves. Inspired by local search SAT solvers, we enhance MCMCFlatSAT with
+a focused random walk component that gives preference to selecting variables to ﬂip from violated
+constraints (if any), thereby introducing an indirect bias towards lower energy states. Speciﬁcally,
+if the given conﬁguration σ is a satisfying assignment, pick a variable uniformly at random to be
+ﬂipped (thus Tσ→σ 0 = 1/N when the Hamming distance dH (σ, σ 0 ) = 1, zero otherwise). If σ is
+not a solution, then with probability p a variable to be ﬂipped is chosen uniformly at random from
+a randomly chosen violated constraint, and with probability 1 − p a variable is chosen uniformly at
+P
+random. With this approach, when σ is not solution and σ and σ 0 differ only on the i-th variable,
+P
+c∈C |i∈c χc (σ) · 1/|c|
+1
+Tσ→σ 0 = (1 − p)
++ p
+c∈C χc (σ)
+N
+where χc (σ) = 1 iff σ violates constraint c and |c| denotes the number of variables in constraint c.
+With this proposal distribution we ensure that for all 1 > p ≥ 0 whenever Tσ→σ 0 > 0, we also have
+Tσ 0→σ > 0. Moreover, the connectivity of the Markov Chain is preserved (since we don’t remove
+any edge from the original Markov Chain). We therefore have the following result:
+Proposition 1 For all p ∈ [0, 1), the Markov Chain with proposal distribution Tσ→σ 0 deﬁned above
+is irreducible and aperiodic. Therefore it has a unique stationary distribution, given by 1/n(E (σ)).
+
+The right panel of Figure 1 shows the move acceptance/rejection histogram when FocusedFlatSAT
+is used, i.e., with the above proposal distribution. The same instance now needs under 1.2M visits
+per energy level for the method to converge. Moreover, the number of rejected moves (shown in
+purple and green) in low energy states is signiﬁcantly fewer than the dominating purple region in the
+left panel. This allows the Markov Chain to move more freely in the space and to converge faster.
+Figure 2 shows a runtime comparison of FocusedFlatSAT against MCMCFlatSAT on n × n Ising
+models (details to be discussed in Section 5). As we see, incorporating energy saturation reduces the
+time to convergence (while achieving the same level of accuracy), and using focused random walk
+moves further decreases the convergence time, especially as n increases.
+
+5
+
+050000010000001500000200000025000003000000123456789111133155177199221243265287309331353375Number of movesEnergy levelMCMCFlatSATAcc. upAcc. sameAcc. downRej. upRej. sameRej. down0200000400000600000800000100000012000001400000123456789111133155177199221243265287309331353375Number of movesEnergy levelFocusedFlatSATAcc. upAcc. sameAcc. downRej. upRej. sameRej. downFigure 2: Runtime comparison on ferromagnetic Ising models on square lattices of size n × n.
+
+Table 1: Comparison with model counters; only hard constraints. Runtime is in seconds.
+Instance
+n
+m
+Exact #
+SampleCount
+SampleMiniSAT
+FocusedFlatSat
+MCMC-FlatSat
+Time
+Models
+Time
+Time
+Models
+Time
+Models
+Models
+29 2.08 × 1029
+1863 ≥ 2.40 × 1028
+156 1.96 × 1029
+766 2.10 × 1029 1.91 × 1029
+2bitmax 6 252
+525 1.40 × 1014 1.43 × 1014
+20 1.34 × 1014
+393 ≥ 1.60 × 1013
+145 1.60 × 1013
+150
+wff-3-3.5
+150 1.80 × 1021 1.86 × 1021
+1 1.83 × 1021
+21 ≥ 1.00 × 1020
+240 1.58 × 1021
+wff-3.1.5
+100
+9.31 × 1016
+5 8.64 × 1016
+189 ≥ 8.00 × 1015
+120 1.09 × 1017
+500
+wff-4-5.0
+100
+2693 ≥ 3.10 × 1010 1140 2.22 × 1011
+231 5.93 × 1011
+ls8-norm 301 1603 5.40 × 1011 5.78 × 1011
+
+345
+240
+128
+191
+168
+
+5 Experimental evaluation
+
+We compare FocusedFlatSAT against several state-of-the-art methods for computing an estimate
+of or bound on the partition function.2 An evaluation such as this is inherently challenging as the
+ground truth is very hard to obtain and computational bounds can be orders of magnitude off from
+the truth, making a comparison of estimates not very meaningful. We therefore propose to evaluate
+the methods on either small instances whose ground truth can be evaluated by “brute force,” or larger
+instances whose ground truth (or bounds on it) can be computed analytically or through other tools
+such as efﬁcient model counters. We also consider planar cases for which a specialized polynomial
+time exact algorithm is available. Efﬁcient methods for handling instances of small treewidth are
+also well known; here we push the boundaries to instances of relatively higher treewidth.
+For partition function evaluation, we compare against the tree re-weighting (TRW) variational
+method for upper bounds, the iterated join-graph propagation (IJGP), and Gibbs sampling; see Sec-
+tion 2 for a very brief discussion of these approaches. For weight learning, we compare against
+the Alchemy system. Unless otherwise speciﬁed, the energy function used is always the number of
+violated constraints, and we use a 50% ratio of random moves (p = 0.5). The algorithm is run for
+20 iterations, with an initial modiﬁcation factor F0 = 1.5. The experiments were conducted on a
+16-core 2.4 GHz Intel Xeon machine with 32 GB memory, running RedHat Linux.
+
+Hard constraints. First, consider models with only hard constraints, which deﬁne a uniform mea-
+sure on the set of satisfying assignments. In this case, the problem of computing the partition func-
+tion is equivalent to standard model counting. We compare the performance of FocusedFlatSAT
+with MCMC-FlatSat and with two state-of-the-art approximate model counters: SampleCount
+[13] and SampleMiniSATExact [14]. The instances used are taken from earlier work [11]. The re-
+sults in Table 1 show that FocusedFlatSAT almost always obtains much more accurate solution
+counts, and is often signiﬁcantly faster (about an order of magnitude faster than MCMC-FlatSat).
+P
+σ exp(−E (σ)) with E (σ) = P
+Soft Constraints. We consider Ising Models deﬁned on an n × n square lattice where P (σ) =
+6= σj ]. Here I is the indicator function. This
+(i,j ) wij I [σi
+imposes a penalty wij if spins σi and σj are not aligned. We consider a ferromagnetic case where
+wij = w > 0 for all edges, and a frustrated case with a mixture of positive and negative interactions.
+The partition function for these planar models is computable with a specialized polynomial time
+algorithm, as long as there is no external magnetic ﬁeld [2]. In Figure 3, we compare the true value
+of the partition function Z ∗ with the estimate obtained using FocusedFlatSAT and with the upper
+2Benchmark instances available online at http://www.cs.cornell.edu/∼ermonste
+
+6
+
+050001000015000200002500030000010203040Time (s)Grid size nMCMCFlatSATMCMCFlatSAT+SaturationFocusedFlatSATFigure 3: Error in log10 (Z ). Left: 40 × 40 ferromagnetic grid. Right: 32 × 32 spin glass grid.
+
+Instance
+
+grid32x32
+grid32x32
+grid40x40
+2bitmax6
+2bitmax6
+wff.100.150
+wff.100.150
+ls8-normalized
+ls8-normalized
+ls8-normalized
+ls8-normalized
+ls8-simpliﬁed-2
+ls8-simpliﬁed-4
+ls8-simpliﬁed-5
+
+n
+
+1024
+1024
+1600
+252
+252
+100
+100
+301
+301
+301
+301
+172
+119
+83
+
+Table 2: Log partition function for weighted formulas.
+IJGP-SampleSearch
+m Weight
+FocusedFlatSat
+log10 Z (w)
+Time
+Time
+log10 Z (w)
+log10 Z (w)
+628
+16.0964
+600
+14.4330
+628
+16.0964
+2000
+13.8980
+1522
+23.4844
+2000
+15.9386
+30.4373
+360
+12.0526
+600
+360
+30.4373
+2000
+12.3802
+200
+21.3373
+5
+21.3187
+200
+21.2694
+21.2551
+5
+600
+16.5458
+589
+17.6655
+589
+11.7974
+600
+-2.3987
+11.7974
+589
+-1.7459
+1200
+589
+11.7974
+2000
+-1.8578
+100
+4.3379
+1200
+-1.8305
+1200
+2.7037
+63
+2.3399
+1.3880
+40
+1.3688
+600
+
+1
+16.0920
+1
+16.0920
+1
+23.5434
+5 > 29.3222
+5 > 29.3222
+5 > 21.2553
+8 > 21.2553
+3 > 11.7324
+6 > 11.7324
+6 > 11.7324
+6 > 11.7324
+6
+> 4.3083
+6
+> 2.2479
+6
+> 1.3424
+
+3968
+3968
+6240
+766
+766
+150
+150
+1603
+1603
+1603
+1603
+673
+410
+231
+
+Gibbs
+log10 Z (w)
+15.4856
+
+22.3125
+25.1274
+
+21.3992
+21.3107
+8.6825
+-17.356
+
+2.8516
+-6.7132
+1.3420
+
+Time
+651
+
+1650
+732
+
+40
+40
+708
+770
+
+300
+174
+51
+
+bound given by TRW (which is generally much faster but inaccurate), for a range of w values. What
+is plotted is the accuracy, log Z − log Z ∗ . We see that the estimate provided by FocusedFlatSAT
+is very accurate throughout the range of w values. For the ferromagnetic model, the bounds obtained
+by TRW, on the other hand, are tight only when the weights are sufﬁciently high, when essentially
+only the two ground states of energy zero matter. On spin glasses, where computing ground states is
+itself an intractable problem, TRW is unsurprisingly inaccurate even in the high weights regime. The
+consistent accuracy of FocusedFlatSAT here is a strong indication that the method is accurately
+computing the density of most of the underlying states. This is because, as the weight w changes,
+the value of the partition function is dominated by the contributions of a different set of states.
+Table 2 (top) shows a comparison with IJGP-SampleSearch and Gibbs Sampling for the ferromag-
+netic case with w = 1. Here FocusedFlatSAT provides the most accurate estimates, even
+when other methods are given a longer running time. E.g., IJGP is two orders of magnitude off
+for the 32 × 32 grid.3 Results with other weights are similar but omitted due to limited space.
+FocusedFlatSAT also signiﬁcantly outperforms IJGP and Gibbs sampling in accuracy on the
+circuit synthesis instance 2bitmax6. All methods perform well on randomly generated 3-SAT in-
+stances, but FocusedFlatSAT is much faster.
+As another test case, we use formulas from a previously used model counting benchmark involving
+n × n Latin Square completion [11], and add a weight w to each constraint. Since these instances
+have high treewidth, are non-planar, and beyond the reach of direct enumeration, we don’t have
+ground truth for this benchmark. However, we are able to provide a lower bound,4 which is given
+by the number of models of the original formula. Our results are reported in Table 2. Our lower
+bound indicates that the estimate given by FocusedFlatSAT is more accurate, even when other
+methods are given a longer running time. As the last 3 lines of the table show, IJGP and Gibbs
+sampling improve in performance as the problem is simpliﬁed more and more, by ﬁxing the values
+of 2, 4, or 5 “cells” and simplifying the instance. Nonetheless, on the un-simpliﬁed ls8-normalized
+with weight 6, both IJGP and Gibbs sampling underestimate by over 12 orders of magnitude.
+
+3On smaller instances with limited treewidth, IJGP-SampleSearch quickly provides good estimates.
+4The upper bound provided by TRW is very loose on this benchmark (possibly because of the conversion
+to a pairwise ﬁeld) and not reported.
+
+7
+
+010203040506070800123456Log10(Z)-Log10(Z*)weight wFocusedFlatSATTRW-500501001502002503000123456Log10(Z)-Log10(Z*)weight wFocusedFlatSATTRWTable 3: Weight learning: likelihood of the training data x computed using learned weights.
+Optimal
+Alchemy
+Type
+Training Data
+FocusedFlatSAT
+Likelihood (O)
+Accuracy (A/O)
+Accuracy (F/O)
+4.09 × 10−27
+1.0
+0.08
+9.31 × 10−10
+1.0
+0.93
+5.77 × 10−6
+1.0
+0.61
+3.84 × 10−3
+1.0
+0.000097
+1.19 × 10−9
+1.0
+0.87
+2.62 × 10−9
+1.0
+0.53
+2.98 × 10−8
+1.0
+0.69
+2.44 × 10−9
+1.0
+0.2
+
+x =data-30-1
+x =data-30-2
+x =dataFC-5-1
+x =dataFC-5-2
+x =dataH-10-1
+x =dataH-10-2
+x =data-SN-1
+x =data-SN-2
+
+SocialNetwork(5)
+
+ThreeChain(30)
+
+FourChain(5)
+
+HChain(10)
+
+Weight learning. Suppose the set of soft constraints Csoft is composed of M disjoint sets of con-
+straints {Si }M
+i=1 , where all the constraints c ∈ Si have the same weight wi that we wish to learn
+from data (for instance, these constraints can all be groundings of the same ﬁrst order formula in
+‘2 . . . P
+the partition function can be written as Z (w) = P
+P
+Markov Logic [8]). Let us assume for simplicity that there are no hard constraints. The probability
+Pw (x) can be parameterized by a weight vector w = (w1 , . . . , wM ). The key observation is that
+n(‘1 , . . . , ‘M ) exp (−w · ‘),
+where n(‘1 , . . . , ‘M ) gives the number of conﬁgurations that violate ‘i constraints of type Si for
+‘1
+‘M
+i = 1, . . . , M . This function n(‘1 , . . . , ‘M ) is precisely the density of states required to compute
+Z (w) for all values of w, without additional inference steps.
+Given training data x ∈ {0, 1}N , the problem of weight learning is that of ﬁnding arg maxw Pw (x)
+where Pw (x) is given by Eqn. (1). Once we compute n(‘1 , . . . , ‘M ) using FocusedFlatSAT,
+we can efﬁciently evaluate Z (w), and therefore Pw (x), as a function of the parameters w =
+(w1 , . . . , wM ). Using this efﬁcient evaluation as a black-box, we can solve the weight learning
+problem using a numerical optimization package with no additional inference steps required.5
+We evaluate this learning method on relatively simple instances on which commonly used software
+such as Alchemy can be a few orders of magnitude off from the optimal likelihood of the training
+data. Speciﬁcally, Table 3 compares the likelihood of the training data under the weights learned by
+FocusedFlatSAT and by Generative Weight Learning [7], as implemented in Alchemy, for four
+types of Markov Logic theories. The Optimal Likelihood value is obtained using a partition function
+computed either by direct enumeration or using analytic results for the synthetic instances.
+The instance ThreeChain(K) is a grounding of the following ﬁrst order formulas ∀xP (x) ⇒
+Q(x), ∀xQ(x) ⇒ R(x), ∀xR(x) ⇒ P (x) while FourChain(K) is a similar chain of 4 implica-
+tions. The instance HChain(K) is a grounding of ∀xP (x) ∧ Q(x) ⇒ R(x), ∀xR(x) ⇒ P (x) where
+x ∈ {a1 , a2 , . . . , aK }. The instance SocialNetwork(K) (from the Alchemy Tutorial) is a ground-
+ing of the following ﬁrst order formulas where x, y ∈ {a1 , a2 , . . . , aK }: ∀x ∀y F riend(x, y) ⇒
+(Smokes(x) ⇔ Smokes(y)), ∀x Smokes(x) ⇒ C ancer(x).
+Table 3 shows the accuracy of FocusedFlatSAT and Alchemy for the weight learning task, as
+measured by the resulting likelihood of observing the data in the learned model, which we are trying
+to maximize. The accuracy is measured as the ratio of the optimal likelihood (O) and the likelihood
+in the learned model (F and A, resp.). In these instances, FocusedFlatSAT always matches the
+optimal likelihood up to two digits of precision, while Alchemy can underestimate it by several
+orders of magnitude, e.g., by over 4 orders in the case of FourChain(5).
+
+6 Conclusion
+
+We introduced FocusedFlatSAT, a Markov Chain Monte Carlo technique based on the ﬂat his-
+togram method with a random walk style component to estimate the partition function from the
+density of states. We demonstrated the effectiveness of our approach on several types of problems.
+Our method outperforms the current state-of-the-art techniques on a variety of instances, at times
+by several orders of magnitude. Moreover, from the density of states we can obtain directly the
+partition function Z (w) as a function of the model parameters w . We show an application of this
+property to weight learning in Markov Logic Networks.
+
+5Storing the full density function n(‘1 , . . . , ‘M ) of course requires space (and hence time) that is exponen-
+tial in M . One must use a relatively coarse partitioning of the state space for scalability when M is large.
+
+8
+
+In Proc. of
+
+References
+[1] Martin J Wainwright and Michael I Jordan. Graphical Models, Exponential Families, and Variational
+Inference. Now Publishers Inc., Hanover, MA, USA, 2008.
+[2] N.N. Schraudolph and D. Kamenetsky. Efﬁcient exact inference in planar Ising models.
+NIPS-08, 2008.
+[3] F. Wang and DP Landau. Efﬁcient, multiple-range random walk algorithm to calculate the density of
+states. Physical Review Letters, 86(10):2050–2053, 2001.
+[4] M.J. Wainwright, T.S. Jaakkola, and A.S. Willsky. A new class of upper bounds on the log partition
+function. Information Theory, IEEE Transactions on, 51(7):2313–2335, 2005.
+[5] Vibhav Gogate and Rina Dechter. SampleSearch: A Scheme that Searches for Consistent Samples. Jour-
+nal of Machine Learning Research, 2:147–154, 2007.
+[6] Mark Jerrum and Alistair Sinclair. The Markov chain Monte Carlo method: an approach to approximate
+counting and integration, pages 482–520. PWS Publishing Co., Boston, MA, USA, 1997.
+[7] P. Domingos, S. Kok, H. Poon, M. Richardson, and P. Singla. Unifying logical and statistical ai. In Proc.
+of AAAI-06, pages 2–7, Boston, Massachusetts, 2006. AAAI Press.
+[8] M. Richardson and P. Domingos. Markov logic networks. Machine Learning, 62(1):107–136, 2006.
+[9] H. Poon and P. Domingos. Sound and efﬁcient inference with probabilistic and deterministic dependen-
+cies. In Proc. of AAAI-06, pages 458–463, 2006.
+[10] J.S. Yedidia, W.T. Freeman, and Y. Weiss. Constructing free-energy approximations and generalized
+belief propagation algorithms. Information Theory, IEEE Transactions on, 51(7):2282–2312, 2005.
+[11] S. Ermon, C. Gomes, and B. Selman. Computing the density of states of Boolean formulas. In Proc. of
+CP-2010, 2010.
+[12] B. Selman, H.A. Kautz, and B. Cohen. Local search strategies for satisﬁability testing. In DIMACS Series
+in Discrete Mathematics and Theoretical Computer Science, 1996.
+[13] C.P. Gomes, J. Hoffmann, A. Sabharwal, and B. Selman. From sampling to model counting. In Proc. of
+IJCAI-07, 2007.
+[14] V. Gogate and R. Dechter. Approximate counting by sampling the backtrack-free search space. In Proc.
+of AAAI-07, pages 198–203, 2007.
+
+9
+
+

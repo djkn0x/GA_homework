@@ -1,0 +1,734 @@
+Improvements to the Sequence Memoizer
+
+Jan Gasthaus
+Gatsby Computational Neuroscience Unit
+University College London
+London, WC1N 3AR, UK
+j.gasthaus@gatsby.ucl.ac.uk
+
+Yee Whye Teh
+Gatsby Computational Neuroscience Unit
+University College London
+London, WC1N 3AR, UK
+ywteh@gatsby.ucl.ac.uk
+
+Abstract
+
+The sequence memoizer is a model for sequence data with state-of-the-art per-
+formance on language modeling and compression. We propose a number of
+improvements to the model and inference algorithm, including an enlarged range
+of hyperparameters, a memory-efﬁcient representation, and inference algorithms
+operating on the new representation. Our derivations are based on precise deﬁ-
+nitions of the various processes that will also allow us to provide an elementary
+proof of the “mysterious” coagulation and fragmentation properties used in the
+original paper on the sequence memoizer by Wood et al. (2009). We present some
+experimental results supporting our improvements.
+
+1
+
+Introduction
+
+The sequence memoizer (SM) is a Bayesian nonparametric model for discrete sequence data producing
+state-of-the-art results for language modeling and compression [1, 2]. It models each symbol of a
+sequence using a predictive distribution that is conditioned on all previous symbols, and thus can be
+understood as a non-Markov sequence model. Given the very large (inﬁnite) number of predictive
+distributions needed to model arbitrary sequences, it is essential that statistical strength be shared in
+their estimation. To do so, the SM uses a hierarchical Pitman-Yor process prior over the predictive
+distributions [3]. One innovation of the SM over [3] is its use of coagulation and fragmentation
+properties [4, 5] that allow for efﬁcient representation of the model using a data structure whose size
+is linear in the sequence length. However, in order to make use of these properties, all concentration
+parameters, which were allowed to vary freely in [3], were ﬁxed to zero.
+In this paper we explore a number of further innovations to the SM. Firstly, we propose a more ﬂexible
+setting of the hyperparameters with potentially non-zero concentration parameters that still allow the
+use of the coagulation/fragmentation properties. In addition to better predictive performance, the
+setting also partially mitigates a problem observed in [1], whereby on encountering a long sequence
+of the same symbol, the model becomes overly conﬁdent that it will continue with the same symbol.
+The second innovation addresses memory usage issues in inference algorithms for the SM. In
+particular, current algorithms use a Chinese restaurant franchise representation for the HPYP, where
+the seating arrangement of customers in each restaurant is represented by a list, each entry being the
+number of customers sitting around one table [3]. This is already an improvement over the na¨ıve
+Chinese restaurant franchise in [6] which stores pointers from customers to the tables they sit at, but
+can still lead to huge memory requirements when restaurants contain many tables. One approach to
+mitigate this problem has been explored in [7], which uses a representation that stores a histogram of
+table sizes instead of the table sizes themselves. Our proposal is to store even less, namely only the
+minimal statistics about each restaurant required to make predictions: the number of customers and
+the number of tables occupied by the customers. Inference algorithms will have to be adapted to this
+compact representation, and we describe and compare a number of these.
+
+1
+
+In Section 2 we will give precise deﬁnitions of Pitman-Yor processes and Chinese restaurant processes.
+These will be used to deﬁne the SM model in Section 3, and to derive the results about the extended
+hyperparameter setting in Section 4 and the memory-efﬁcient representation in Section 5. As a
+side beneﬁt we will also be able to give an elementary proof of the coagulation and fragmentation
+properties in Section 4, which was presented as a fait accompli in [1], while the general and rigorous
+treatment in the original papers [4, 5] is somewhat inaccessible to a wider audience.
+
+2 Pitman-Yor Processes and Chinese Restaurant Processes
+
+[1 − d]|a|−1
+1
+
+for each A ∈ Ac ,
+
+A Pitman-Yor process (PYP) is a particular distribution over distributions over some probability
+space Σ [8, 9]. We denote by PY(α, d, G0 ) a PYP with concentration parameter α > −d, discount
+parameter d ∈ [0, 1), and base distribution G0 over Σ. We can describe a Pitman-Yor process using
+its associated Chinese restaurant process (CRP). A Chinese restaurant has customers sitting around
+tables which serve dishes. If there are c customers we index them with [c] = {1, . . . , c}. We deﬁne a
+seating arrangement of the customers as a set of disjoint non-empty subsets partitioning [c]. Each
+subset is a table and consists of the customers sitting around it, e.g. {{1, 3}, {2}} means customers 1
+and 3 sit at one table and customer 2 sits at another by itself. Let Ac be the set of seating arrangements
+of c customers, and Act those with exactly t tables. The CRP describes a distribution over seating
+arrangements as follows: customer 1 sits at a table; for customer c + 1, if A ∈ Ac is the current
+seating arrangement, then she joins a table a ∈ A with probability |a|−d
+α+c and starts a new table with
+probability α+|A|d
+α+c . We denote the resulting distribution over Ac as CRPc (α, d). Multiplying the
+(cid:89)
+conditional probabilities together,
+[α + d]|A|−1
+d = (cid:81)n−1
+P (A) =
+d
+[α + 1]c−1
+a∈A
+1
+(cid:81)
+where [y ]n
+i=0 y + id is Kramp’s symbol. Note that the denominator is the normalization
+constant. Fixing the number of tables to be t ≤ c, the distribution, denoted as CRPct (d), becomes:
+a∈A [1 − d]|a|−1
+where the normalization constant Sd (c, t) = (cid:80)
+(cid:81)
+for each A ∈ Act ,
+1
+P (A) =
+Sd (c, t)
+a∈A [1 − d]|a|−1
+is a generalized Stirling
+A∈Act
+1
+number of type (−1, −d, 0) [10]. These can be computed recursively [3] (see also Section 5). Note
+that conditioning on a ﬁxed t the seating arrangement will not depend on α, only on d.
+Suppose G ∼ PY(α, d, G0 ) and z1 , . . . , zc |G iid∼ G. The CRP describes the PYP in terms of its effect
+on z1:c = z1 , . . . , zc . In particular, marginalizing out G, the distribution of z1:c can be described as
+follows: draw A ∼ CRPc (α, d), on each table serve a dish which is an iid draw from G0 , ﬁnally let
+variable zi take on the value of the dish served at the table that customer i sat at. Now suppose we
+wish to perform inference given observation of z1:c . This is equivalent to conditioning on the dishes
+that each customer is served. Since customers at the same table are served the same dish, the different
+values among the zi ’s split the restaurant into multiple sections, with customers and tables in each
+section being served a distinct dish. There can be more than one table in each section since multiple
+tables can serve the same dish (if G0 has atoms). If s ∈ Σ is a dish, let cs be the number of zi ’s with
+value s (number of customers served dish s), ts the number of tables, and As ∈ Acs ts the seating
+(cid:32)(cid:89)
+(cid:33) (cid:32)
+(cid:33)
+arrangement of customers around the tables serving dish s (we reindex the cs customers to be [cs ]).
+(cid:89)
+(cid:89)
+The joint distribution over seating arrangements and observations is then:1
+[α + d]t·−1
+[1 − d]|a|−1
+P ({cs , ts , As}, z1:c ) =
+where t· = (cid:80)
+G0 (s)ts
+d
+,
+[α + 1]c·−1
+1
+(cid:33)
+(cid:32)(cid:89)
+(cid:33) (cid:32)
+a∈As
+s∈Σ
+s∈Σ
+1
+(cid:89)
+s∈Σ ts and similarly for c· .We can marginalize out {As} from (3) using (2):
+[α + d]t·−1
+P ({cs , ts}, z1:c ) =
+Sd (cs , ts )
+G0 (s)ts
+(4)
+d
+.
+[α + 1]c·−1
+s∈Σ
+s∈Σ
+1
+Inference then amounts to computing the posterior of either {ts , As} or only {ts} given z1:c (cs are
+ﬁxed) and can be achieved by Gibbs sampling or other means.
+1We have omitted the set subscript {·}s∈Σ . We will drop these subscripts when they are clear from context.
+
+(1)
+
+(2)
+
+(3)
+
+2
+
+3 The Sequence Memoizer and its Chinese Restaurant Representation
+
+P (x1:T ) =
+
+(5)
+
+(6)
+
+Gx1:i−1 (xi ),
+
+P (xi |x1:i−1 ) =
+
+In this section we review the sequence memoizer (SM) and its representation using Chinese restaurants
+[3, 11, 1, 2]. Let Σ be the discrete set of symbols making up the sequences to be modeled, and
+let Σ∗ be the set of ﬁnite sequences of symbols from Σ. The SM models a sequence x1:T =
+x1 , x2 , . . . , xT ∈ Σ∗ using a set of conditional distributions:
+T(cid:89)
+T(cid:89)
+i=1
+i=1
+where Gu (s) is the conditional probability of the symbol s ∈ Σ occurring after a context u ∈ Σ∗ (the
+sequence of symbols occurring before s). The parameters of the model consist of all the conditional
+distributions {Gu}u∈Σ∗ , and are given a hierarchical Pitman-Yor process (HPYP) prior:
+Gε ∼ PY(αε , dε , H )
+for u ∈ Σ∗ \{ε},
+Gu |Gσ(u) ∼ PY(αu , du , Gσ(u) )
+where ε is the empty sequence, σ(u) is the sequence obtained by dropping the ﬁrst symbol in u, and
+H is the overall base distribution over Σ (we take H to be uniform over a ﬁnite Σ). Note that we
+have generalized the model to allow each Gu to have its own concentration and discount parameters,
+whereas [1, 2] worked with αu = 0 and du = d|u| (i.e. context length-dependent discounts).
+As in previous works, the hierarchy over {Gu} is represented using a Chinese restaurant franchise
+[6]. Each Gu has a corresponding restaurant indexed by u. Customers in the restaurant are draws
+from Gu , tables are draws from its base distribution Gσ(u) , and dishes are the drawn values from Σ.
+For each s ∈ Σ and u ∈ Σ∗ , let cus and tus be the numbers of customers and tables in restaurant u
+served dish s, and let Aus ∈ Acus tus be their seating arrangement. Each observation of xi in context
+x1:i−1 corresponds to a customer in restaurant x1:i−1 who is served dish xi , and each table in each
+restaurant u, being a draw from the base distribution Gσ(u) , corresponds to a customer in the parent
+us + (cid:88)
+restaurant σ(u). Thus, the numbers of customers and tables have to satisfy the constraints
+cus = cx
+v:σ(v)=u
+us = 1 if s = xi and u = x1:i−1 for some i, and 0 otherwise.
+where cx
+The goal of inference is to compute the posterior over the states {cus , tus , Aus}s∈Σ,u∈Σ∗ of the
+restaurants (and possibly the concentration and discount parameters). The joint distribution can be
+(cid:33)
+(cid:32)(cid:89)
+(cid:32) [αu + du ]tu·−1
+(cid:33) (cid:89)
+(cid:89)
+(cid:89)
+obtained by multiplying the probabilities of all seating arrangements (3) in all restaurants:
+du
+[αu + 1]cu·−1
+s∈Σ
+a∈Aus
+s∈Σ
+u∈Σ∗
+1
+
+P ({cus , tus , Aus }, x1:T ) =
+
+[1 − du ]|a|−1
+1
+
+.
+
+tvs ,
+
+(7)
+
+H (s)tεs
+
+(8)
+The ﬁrst parentheses contain the probability of draws from the overall base distribution H , and the
+second parentheses contain the probability of the seating arrangement in restaurant u. Given a state
+of the restaurants drawn from the posterior, the predictive probability of symbol s in context v can
+then be computed recursively (with P ∗
+σ(ε) (s) deﬁned to be H (s)):
+v (s) = cvs − tvsd
++ αv + tv·d
+P ∗
+P ∗
+σ(v) (s).
+αv + cv·
+αv + cv·
+
+(9)
+
+4 Non-zero Concentration Parameters
+
+In [1] the authors proposed setting all the concentration parameters to zero. Though limiting the
+ﬂexibility of the model, this allowed them to take advantage of coagulation and fragmentation
+properties of PYPs [4, 5] to marginalize out all but a linear number (in T ) of restaurants from the
+hierarchy. We propose the following enlarged family of hyperparameter settings: let αε = α > 0
+be free to vary at the root of the hierarchy, and set each αu = ασ(u)du for each u ∈ Σ∗ \{ε}. The
+
+3
+
+discounts can vary freely. In addition to more ﬂexible modeling, this also partially mitigates the
+overconﬁdence problem [2]. To see why, notice from (9) that the predictive probability is a weighted
+average of predictive probabilities given contexts of various lengths. Since αv > 0, the model gives
+higher weights to the predictive probabilities of shorter contexts (compared to αv = 0). These
+typically give less extreme values since they include inﬂuences not just from the sequence of identical
+symbols, but also from other observations of other symbols in other contexts.
+Our hyperparameter settings also retain the coagulation and fragmentation properties which allow us
+to marginalize out many PYPs in the hierarchy for efﬁcient inference. We will provide an elementary
+proof of these results in terms of CRPs in the following. First we describe the coagulation and
+fragmentation operations. Let c ≥ 1 and suppose A2 ∈ Ac and A1 ∈ A|A2 | are two seating
+arrangements where the number of customers in A1 is the same as that of tables in A2 . Each customer
+in A1 can be put in one-to-one correspondence to a table in A2 and sits at a table in A1 . Now
+consider re-representing A1 and A2 . Let C ∈ Ac be the seating arrangement obtained by coagulating
+(merging) tables of A2 corresponding to customers in A1 sitting at the same table. Further, split A2
+into sections, one for each table a ∈ C , where each section Fa ∈ A|a| contains the |a| customers and
+tables merged to make up a. The converse of coagulating tables of A2 into C is of course to fragment
+each table a ∈ C into the smaller tables in Fa . Note that there is a one-to-one correspondence
+between tables in C and in A1 , and the number of customers in each table of A1 is that of tables in
+the corresponding Fa . Thus A1 and A2 can be reconstructed from C and {Fa}a∈C .
+Theorem 1 ([4, 5]). Suppose A2 ∈ Ac , A1 ∈ A|A2 | , C ∈ Ac and Fa ∈ A|a| for each a ∈ C are
+related as above. Then the following describe equivalent distributions:
+(I) A2 ∼ CRPc (αd2 , d2 ) and A1 |A2 ∼ CRP|A2 | (α, d1 ).
+(II) C ∼ CRPc (αd2 , d1d2 ) and Fa |C ∼ CRP|a| (−d1d2 , d2 ) for each a ∈ C .
+(cid:19)(cid:18) [αd2 + d2 ]|A2 |−1
+(cid:19)
+(cid:18) [α + d1 ]|A1 |−1
+(cid:89)
+(cid:89)
+Proof. We simply show that the joint distributions are the same. Starting with (I) and using (1),
+[1 − d2 ]|b|−1
+[1 − d1 ]|a|−1
+d2
+d1
+P (A1 , A2 ) =
+(cid:18) (cid:89)
+(cid:19)
+(cid:19)(cid:18) (cid:89)
+[αd2 + 1]c−1
+[α + 1]|A2 |−1
+1
+1
+a∈A1
+b∈A2
+1
+1
+[αd2 + d1d2 ]|A1 |−1
+[1 − d2 ]|b|−1
+d1 d2
+[αd2 + 1]c−1
+1
+a∈A1
+b∈A2
+1
+We used the identity [β δ + δ ]n−1
+δ = δn−1 [β + 1]n−1
+for all β , δ, n. Re-grouping the products and
+expressing the same quantities in terms of C and {Fa},
+1
+(cid:19)
+(cid:18)
+(cid:89)
+(cid:89)
+[αd2 + d1d2 ]|C |−1
+[d2 − d1d2 ]|Fa |−1
+d1 d2
+[αd2 + 1]c−1
+d2
+a∈C
+b∈Fa
+1
+We see that conditioning on C each Fa ∼ CRP|a| (−d1d2 , d2 ). Marginalizing {Fa} out using (1),
+(cid:89)
+[αd2 + d1d2 ]|C |−1
+d1 d2
+[αd2 + 1]c−1
+a∈C
+1
+So C ∼ CRPc (αd2 , d1d2 ) and (I)⇒(II). Reversing the same argument shows that (II)⇒(I).
+
+= P (C, {Fa}a∈C ).
+
+[d2 − d1d2 ]|a|−1
+d2
+
+[1 − d1d2 ]|a|−1
+1
+
+.
+
+=
+
+=
+
+.
+
+[1 − d2 ]|b|−1
+1
+
+P (C ) =
+
+Statement (I) of the theorem is exactly the Chinese restaurant franchise of the hierarchical model
+G1 |G0 ∼ PY(α, d1 , G0 ), G2 |G1 ∼ PY(αd2 , d2 , G1 ) with c iid draws from G2 . The theorem shows
+
+4
+
+a1a2CFigure1:Illustrationoftherelationshipbe-tweentherestaurantsA1,A2,CandFa.A1A2Fa1Fa2that the clustering structure of the c customers in the franchise is equivalent to the seating arrangement
+in a CRP with parameters αd2 , d1d2 , i.e. G2 |G0 ∼ PY(αd2 , d1d2 , G0 ) with G1 marginalized out.
+Conversely, the fragmentation operation (II) regains Chinese restaurant representations for both
+G2 |G1 and G1 |G0 from one for G2 |G0 .
+This result can be applied to marginalize out all but a linear number of PYPs from (6) [1]. The
+resulting model is still a HPYP of the same form as (6), except that it only need be deﬁned over the
+preﬁxes of x1:T as well as some subset of their ancestors. In the rest of this paper we will refer to (6)
+and its Chinese restaurant franchise representation (8) with the understanding that we are operating in
+this reduced hierarchy. Let U denote the reduced set of contexts, and redeﬁne σ(u) to be the parent
+of u in U . The concentration and discount parameters need to be modiﬁed accordingly.
+
+5 Compact Representation
+
+Current inference algorithms for the SM and hierarchical Pitman-Yor processes operate in the Chinese
+restaurant franchise representation, and use either Gibbs sampling [3, 11, 1] or particle ﬁltering [2].
+To lower memory requirements, instead of storing the precise seating arrangement of each restaurant,
+the algorithms only store the numbers of customers, numbers of tables and sizes of all tables in the
+franchise. This is sufﬁcient for sampling and for prediction. However, for large data sets the amount
+of memory required to store the sizes of the tables can still be very large. We propose algorithms that
+only store the numbers of customers and tables but not the table sizes. This compact representation
+needs to store only two integers (cus , tus ) per context/symbol pair, as opposed to tus integers.2 These
+counts are already sufﬁcient for prediction, as (9) does not depend on the table sizes. We will also
+consider a number of sampling algorithms in this representation.
+Our starting point is the joint distribution over the Chinese restaurant franchise (8). Integrating out
+(cid:33)
+(cid:32) [αu + du ]tu·−1
+(cid:33) (cid:89)
+(cid:32)(cid:89)
+the seating arrangements {Aus } using (2) gives the joint distribution over {cus , tus }:
+(cid:89)
+du
+[αu + 1]cu·−1
+s∈Σ
+s∈Σ
+u∈U
+1
+Note that each cus is in fact determined by (7) so in fact the only unobserved variables in (10) are
+{tus}. With this joint distribution we can now derive various sampling algorithms.
+
+P ({cus , tus}, x1:T ) =
+
+H (s)tεs
+
+Sdu (cus , tus )
+
+.
+
+(10)
+
+Sdu (cus , tus )Sdσ(u) (cσ(u)s , tσ(u)s ),
+
+5.1 Sampling Algorithms
+Direct Gibbs Sampling of {cus , tus}. It is straightforward derive a Gibbs sampler from (10). Since
+us and the tvs at child restaurants v, it is sufﬁcient to update each tus ,
+each cus is determined by cx
+which for tus in the range {1, . . . , cus} has conditional distribution
+P (tus |rest) ∝ [αu + du ]tu·−1
+du
+[ασ(u) + 1]cσ(u)·−1
+1
+where tu· , cσ(u)· and cσ(u)s all depend on tus through the constraints (7). One problem with this
+sampler is that we need to compute Sdu (c, t) for all 1 ≤ c, t ≤ cus . If du is ﬁxed these can be
+precomputed and stored, but the resulting memory requirement is again large since each restaurant
+typically has its own du value. If du is updated in the sampling, then these will need to be computed
+each time as well, costing O(c2
+us ) per iteration. Further, Sd (c, t) typically has very high dynamic
+range, so care has to be taken to avoid numerical under-/overﬂow (e.g. by performing the computations
+in the log domain, involving many expensive log and exp computations).
+Re-instantiating Seating Arrangements. Another strategy is to re-instantiate the seating arrange-
+ment by sampling Aus ∼ CRPcus tus (du ) from its conditional distribution given cus , tus (see
+Section 5.2 below), then performing the original Gibbs sampling of seating arrangements [3, 11].
+This produces a new number of tables tus and the seating arrangement can be discarded. Note
+however that when tus changes this sampler will introduce changes to ancestor restaurants (by adding
+2 In both representations one may also want to store the total number of customers and tables in each restaurant
+for efﬁciency. In practice, where there is additional overhead due to the data structures involved, storage space
+for the full representation can be reduced by treating context/symbol pairs with only one customer separately.
+
+(11)
+
+5
+
+or removing customers), so these will need to have their seating arrangements instantiated as well. To
+implement this sampler efﬁciently, we visit restaurants in depth-ﬁrst order, keeping in memory only
+the seating arrangements of all restaurants on the path to the current one. The computational cost is
+O(cus tus ), but with a potentially smaller hidden constant (no log/exp computations are required).
+Original Gibbs Sampling of {cus , tus }. A third strategy is to “imagine” having a seating arrange-
+ment and running the original Gibbs sampler, incrementing tus if a table would have been created,
+and decrementing tus if a table would have been deleted. Recall that the original Gibbs sampler
+operates by iterating over customers, treating each as the last customer in the restaurant, removing
+it, then adding it back into the restaurant. When removing, if the customer were sitting by himself,
+a table would need to be deleted too, so the probability of decrementing tus is the probability of a
+customer sitting by himself. From (2), this can be worked out to be
+P (decrement tus ) = Sdu (cus − 1, tus − 1)
+(12)
+.
+Sdu (cus , tus )
+The numerator is due to a sum over all seating arrangements where the other cus − 1 customers sit at
+the other tus − 1 tables. When adding back the customer, the probability of incrementing the number
+of tables is the probability that the customer sits at a new table of the same dish s:
+(αu + du tu· )P ∗
+σ(u) (s)
+σ(u) (s) + cus − tusdu
+(αu + du tu· )P ∗
+where P ∗
+σ(u) (s) is the predictive (9) with the current value of tus , and cus , tus are values with the
+customer removed. This sampler also requires computation of Sdu (c, t), but only for 1 ≤ t ≤ tus
+which can be signiﬁcantly smaller than cus . Computation cost is O(cus tus ) (but again with a larger
+constant due to computing the Stirling numbers in a stable way). We did not ﬁnd a sampling method
+taking less time than O(cus tus ).
+Particle Filtering. (13) gives the probability of incrementing tus (and adding a customer to the
+parent restaurant) when a customer is added into a restaurant. This can be used as the basis for a
+particle ﬁlter, which iterates through the sequence x1:T , adding a customer corresponding to s = xi
+in context u = x1:i−1 at each step. Since no customer deletion is required, the cost is very small:
+just O(cus ) for the cus customers per s and u (plus the cost of traversing the hierarchy to the current
+restaurant, which is always necessary). Particle ﬁltering works very well in online settings, e.g.
+compression [2], and as initialization for Gibbs sampling.
+
+P (increment tus ) =
+
+(13)
+
+,
+
+5.2 Re-instantiating Aus given cus , tus
+To simplify notation, here we will let d = du , c = cus , t = tus and A = Aus ∈ Act . We will use the
+forward-backward algorithm in an undirected chain to sample A from CRPct (d) given in (2). First
+we re-express A using two sets of variables z1 , . . . , zc and y1 , . . . , yc . Label a table a ∈ A using
+the index of the ﬁrst customer at the table, i.e. the smallest element of a. Let zi be the number of
+tables occupied by the ﬁrst i customers, and yi the label of the table that customer i sits at. The
+variables satisfy the following constraints: z1 = 1, zc = t, and zi = zi−1 in which case yi ∈ [i − 1]
+or zi = zi−1 + 1 in which case yi = i. This gives a one-to-one correspondence between seating
+arrangements in Act and settings of the variables satisfying the above constraints. Consider the
+i − 1 − zid if zi = zi−1 ,
+following distribution over the variables satisfying the constraints: z1 , . . . , zc is distributed according
+to a Markov network with z1 = 1, zc = t, and edge potentials:
+1
+if zi = zi−1 + 1,
+0
+otherwise.
+(cid:81)
+It is easy to see that the normalization constant is simply Sd (c, t) and
+i:zi=zi−1 (i − 1 − zid)
+P (z1:c ) =
+.
+Sd (c, t)
+(cid:40)1
+Given z1:c , we give each yi the following distribution conditioned on y1:i−1 :
+Pi−1
+if yi = i and zi = zi−1 + 1,
+P (yi |z1:c , y1:i−1 ) =
+j=1 1(yj =yi )−d
+if zi = zi−1 and yi ∈ [i − 1].
+i−1−zi d
+
+f (zi , zi−1 ) =
+
+(14)
+
+(15)
+
+(16)
+
+6
+
+(c)
+(b)
+(a)
+Figure 2: (a), (b) Number of context/symbol pairs and total number of tables (counted after particle ﬁlter
+initialization and 10 sampling iterations using the compact original sampler) as a function input size. Subﬁgure
+(a) shows the counts obtained from a byte-level model of the news ﬁle in the Calgary corpus, whereas (b)
+shows the counts for word-level model of the Brown corpus (training set). The space required for the compact
+representation is proportional to the number of context/symbol pairs, whereas for the full representation it is
+proportional to the number of tables. Note also that sampling tends to increase the number of tables over the
+particle ﬁlter initialization. (c) Time per iteration (seconds) as a function of input size for the original Gibbs
+sampler in the compact representation and the re-instantiating sampler (on the Brown corpus).
+
+Multiplying all the probabilities together, we see that P (z1:c , y1:c ) is exactly equal to P (A) in (2).
+Thus we can sample A by ﬁrst sampling z1:c from (15), then each yi conditioned on previous ones
+using (16), and converting this representation into A. We use a backward-ﬁltering-forward-sampling
+algorithm to sample z1:c , as this avoids numerical underﬂow problems that can arise when using
+forward-ﬁltering. Backward-ﬁltering avoids these problems by incorporating the constraint that zc
+has to equal t into the messages from the beginning.
+Fragmenting a Restaurant. In particle ﬁltering and in prediction, we often need to re-instantiate a
+restaurant which was previously marginalized out. We can do so by sampling Aus given cus , tus for
+each s, then fragmenting each Aus using Theorem 1, counting the resulting numbers of customers
+and tables, then forgetting the seating arrangements.
+
+6 Experiments
+
+In order to evaluate the proposed improvements in terms of reduced memory requirements and to
+compare the performance of the different sampling schemes we performed three sets of experiments.3
+In the ﬁrst experiment we evaluated the potential space saving due to the compact representation.
+Figure 2 shows the number of context/symbol pairs and the total number of tables as a function
+of data set size. While the difference does not seem dramatic, there is still a signiﬁcant amount of
+memory that can be saved by using the compact representation, as there is no additional overhead and
+memory fragmentation due to variable-size arrays. The comparison between the byte-level model and
+the word-level model in Figure 2 also demonstrates that the compact representation saves more space
+when |Σ| is small (which leads to context/symbol pairs having larger cus ’s and tus ’s). Finally, Figure
+2 illustrates another interesting effect: the number of tables is generally larger after a few iterations of
+Gibbs sampling have been performed after the initialization using a single-particle particle ﬁlter [2].
+The second experiment compares the computational cost of the compact original sampler and
+the sampler that re-instantiates full seating arrangements. The main computational cost of the
+original sampler is computing the ratio (12), while sampling the seating arrangements is the main
+computational cost of the re-instantiating sampler. Figure 2(c) shows the time needed for one iteration
+of Gibbs sampling as a function of data set size. The re-instantiating sampler is found to be much
+more efﬁcient, as it avoids the overhead involved in computing the Stirling numbers in a stable
+manner (e.g. log/exp computations). For the original sampler, time can be traded off with space
+
+3All experiments were performed on two data sets: the news ﬁle from the Calgary corpus (modeled as a
+sequence of 377,109 bytes; |Σ| = 256), and the Brown corpus (preprocessed as in [12]), modeled as a sequence
+of words (800,000 words training set; 181,041 words test set; |Σ| = 16383). Following [1], the discount
+parameters were ﬁxed to .62, .69, .74, .80 for the ﬁrst 4 levels and .95 for all subsequent levels of the hierarchy.
+
+7
+
+0123x 10500.511.522.5x 107Input sizeCalgary: news  context/symbol pairstables (sampling)tables (particle filter)02468x 10502468x 107Brown corpusInput size  context/symbol pairstables (sampling)tables (particle filter)02468x 105010203040Input sizeSeconds per iterationBrown corpus  OriginalRe−instantiatingα Particle Filter only Gibbs (1 sample) Gibbs (50 samples averaged)
+Online
+Parent
+Fragment Parent Fragment
+Fragment Parent
+PF Gibbs
+0
+8.39
+8.43
+8.41
+8.44
+8.41
+8.45
+8.04
+8.04
+1
+8.38
+8.39
+8.39
+8.40
+8.39
+8.41
+8.01
+8.01
+3
+8.37
+8.37
+8.37
+8.37
+8.35
+8.35
+7.98
+7.98
+10
+8.32
+8.32
+8.33
+8.33
+8.34
+8.33
+7.94
+7.95
+20
+8.31
+8.31
+8.32
+8.32
+8.33
+8.32
+7.94
+7.94
+50
+8.32
+8.33
+8.31
+8.32
+8.31
+8.31
+7.95
+7.95
+Table 1: Average log-loss on the Brown corpus (test set) for different values of α, different inference strategies,
+and different modes of prediction. Inference is performed by either just using the particle ﬁlter or using the
+particle ﬁlter followed by 50 burn-in iterations of Gibbs sampling. Subsequently either 1 or 50 samples are
+collected for prediction. Prediction is performed either using fragmentation or by predicting from the parent
+node. The ﬁnal two columns labelled Online show the results obtained by using the particle ﬁlter on the test set
+as well, after training with either just the particle ﬁlter or particle ﬁlter followed by 50 Gibbs iterations. Non-zero
+values of α can be seen to provide a signiﬁcant increase in perfomance, while the gains due to averaging samples
+or proper fragmentation during prediction are small.
+
+by tabulating all required Stirling numbers along the path down the tree (as was done in these
+experiments). However, this leads to an additional memory overhead that mostly undoes any savings
+from the compact representation.
+The third set of experiments uses the re-instantiating sampler and compares different modes of
+prediction and the effect of the non-zero concentration parameter. The results are shown in Table 1.
+Predictions with the SM can be made in several different ways. After obtaining one or more samples
+from the posterior distribution over customers and tables (either using particle ﬁltering or Gibbs
+sampling on the training set) one has a choice of either using particle ﬁltering on the test set as well
+(online setting), or making predictions while keeping the model ﬁxed. One also has a choice when
+making predictions involving contexts that were marginalized out from the model: one can either
+re-instantiate these contexts by fragmentation or simply predict from the parent (or even the child) of
+the required node. While one ultimately wants to average predictions over the posterior distribution,
+one may consider using just a single sample for computational reasons.
+
+7 Discussion
+
+In this paper we proposed an enlarged set of hyperparameters for the sequence memoizer that re-
+tains the coagulation/fragmentation properties important for efﬁcient inference, and we proposed a
+new minimal representation of the Chinese restaurant processes to reduce the memory requirement
+of the sequence memoizer. We developed novel inference algorithms for the new representation,
+and presented experimental results exploring their behaviors. We found that the algorithm which
+re-instantiates seating arrangements is signiﬁcantly more efﬁcient than the other two Gibbs sam-
+plers, while particle ﬁltering is most efﬁcient but produces slightly worse predictions. Along the
+way, we formalized the metaphorical language often used to describe Chinese restaurant processes
+in the machine learning literature, and were able to provide an elementary proof of the coagula-
+tion/fragmentation properties. We believe this more precise language will be of use to researchers
+interested in hierarchical Dirichlet processes and its various generalizations.
+We are currently exploring methods to compute or approximate the generalized Stirling numbers, and
+efﬁcient methods to optimize the hyperparameters in the sequence memoizer. A parting remark is
+that the posterior distribution over {cus , tus} in (10) is in the form of a standard Markov network
+with sum constraints (7). Thus other inference algorithms like loopy belief propagation or variational
+inference can potentially be applied. There are however two difﬁculties to be resolved before these
+are possible: the large domains of the variables, and the large dynamic ranges of the factors.
+
+Acknowledgments
+
+We would like to thank the Gatsby Charitable Foundation for generous funding.
+
+8
+
+References
+[1] F. Wood, C. Archambeau, J. Gasthaus, L. F. James, and Y. W. Teh. A stochastic memoizer for
+sequence data. In Proceedings of the International Conference on Machine Learning, volume 26,
+pages 1129–1136, 2009.
+[2] J. Gasthaus, F. Wood, and Y. W. Teh. Lossless compression based on the Sequence Memoizer.
+In James A. Storer and Michael W. Marcellin, editors, Data Compression Conference, pages
+337–345, Los Alamitos, CA, USA, 2010. IEEE Computer Society.
+[3] Y. W. Teh. A Bayesian interpretation of interpolated Kneser-Ney. Technical Report TRA2/06,
+School of Computing, National University of Singapore, 2006.
+[4] J. Pitman. Coalescents with multiple collisions. Annals of Probability, 27:1870–1902, 1999.
+[5] M. W. Ho, L. F. James, and J. W. Lau. Coagulation fragmentation laws induced by general co-
+agulations of two-parameter Poisson-Dirichlet processes. http://arxiv.org/abs/math.PR/0601608,
+2006.
+[6] Y. W. Teh, M. I. Jordan, M. J. Beal, and D. M. Blei. Hierarchical Dirichlet processes. Journal
+of the American Statistical Association, 101(476):1566–1581, 2006.
+[7] P. Blunsom, T. Cohn, S. Goldwater, and M. Johnson. A note on the implementation of
+hierarchical Dirichlet processes. In Proceedings of the ACL-IJCNLP 2009 Conference Short
+Papers, pages 337–340, Suntec, Singapore, August 2009. Association for Computational
+Linguistics.
+[8] J. Pitman and M. Yor. The two-parameter Poisson-Dirichlet distribution derived from a stable
+subordinator. Annals of Probability, 25:855–900, 1997.
+[9] H. Ishwaran and L. F. James. Gibbs sampling methods for stick-breaking priors. Journal of the
+American Statistical Association, 96(453):161–173, 2001.
+[10] L. C. Hsu and P. J.-S. Shiue. A uniﬁed approach to generalized Stirling numbers. Advances in
+Applied Mathematics, 20:366–384, 1998.
+[11] Y. W. Teh. A hierarchical Bayesian language model based on Pitman-Yor processes.
+In
+Proceedings of the 21st International Conference on Computational Linguistics and 44th
+Annual Meeting of the Association for Computational Linguistics, pages 985–992, 2006.
+[12] Y. Bengio, R. Ducharme, P. Vincent, and C. Jauvin. A neural probabilistic language model.
+Journal of Machine Learning Research, 3:1137–1155, 2003.
+
+9
+
+

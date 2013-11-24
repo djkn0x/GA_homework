@@ -1,0 +1,736 @@
+Hierarchical Mixture of Classiﬁcation Experts
+Uncovers Interactions between Brain Regions
+
+Diane M. Beck2,3∗
+Li Fei-Fei1 ∗
+Bangpeng Yao1
+Dirk B. Walther2
+1Computer Science Department, Stanford University, Stanford, CA 94305
+2Beckman Institute, University of Illinois at Urbana-Champaign, Urbana, IL 61801
+3Psychology Department, University of Illinois at Urbana-Champaign, Champaign, IL 61820
+{bangpeng,feifeili}@cs.stanford.edu {walther,dmbeck}@illinois.edu
+
+Abstract
+
+The human brain can be described as containing a number of functional regions.
+These regions, as well as the connections between them, play a key role in in-
+formation processing in the brain. However, most existing multi-voxel pattern
+analysis approaches either treat multiple regions as one large uniform region or
+several independent regions, ignoring the connections between them. In this paper
+we propose to model such connections in an Hidden Conditional Random Field
+(HCRF) framework, where the classiﬁer of one region of interest (ROI) makes
+predictions based on not only its voxels but also the predictions from ROIs that it
+connects to. Furthermore, we propose a structural learning method in the HCRF
+framework to automatically uncover the connections between ROIs. We illus-
+trate this approach with fMRI data acquired while human subjects viewed images
+of different natural scene categories and show that our model can improve the
+top-level (the classiﬁer combining information from all ROIs) and ROI-level pre-
+diction accuracy, as well as uncover some meaningful connections between ROIs.
+
+1 Introduction
+
+In recent years, machine learning approaches for analyzing fMRI data have become increasingly
+popular [15, 24, 18, 16].
+In these multi-voxel pattern analysis (MVPA) approaches, patterns of
+voxels are associated with particular stimuli, leading to veriﬁable predictions about independent
+test data. Voxels are extracted from previously known regions of interest (ROIs) [15, 31], selected
+from the brain by some statistical criterion [24], or deﬁned by a sliding window (“searchlight”)
+positioned at each location in the brain in turn [20]. All of these methods, however, ignore the
+highly interconnected nature of the brain.
+Neuroanatomical evidence from macaque monkeys [10] indicates that brain regions involved in
+visual processing are indeed highly interconnected. Since research on human subjects is largely
+limited to non-invasive procedures, considerably less is known about interactions between visual
+areas in the human brain. Here we demonstrate a method of learning the interactions between
+regions from fMRI data acquired while human subjects view images of natural scenes.
+Determining the category of a natural scene (e.g. classifying a scene as a beach, or a forest) is impor-
+tant for many human activities such as navigation or object perception [30]. Despite the large variety
+of images within and across categories, humans are very good at categorizing natural scenes [27, 9].
+In our recent study of natural scene categorization in humans with functional magnetic resonance
+imaging (fMRI), we discovered that information about natural scene categories is represented in pat-
+terns of activity in the parahippocampal place area (PPA), the retrosplenial cortex (RSC), the lateral
+occipital complex (LOC), and the primary visual cortex (V1) [31]. We demonstrated that this infor-
+mation can be read out from fMRI activity with a linear support vector machine (SVM) classiﬁer.
+∗
+
+Diane M. Beck and Li Fei-Fei contributed equally to this work.
+
+1
+
+Given the highly interconnected nature of the brain, however, it is unlikely that these regions encode
+natural scene categories independently of each other.
+As previous ROI-based MVPA methods studies, in [31] we built predictors for each ROI indepen-
+dently, ignoring their interactions. The method in [31] neither explores connections among the ROIs
+nor uses the connections to build a classiﬁer on top of all ROIs. In this work, we propose a method
+for simultaneously learning the voxel patterns associated with natural scene categories in sev-
+eral ROIs and their interactions in a Hidden Conditional Random Field (HCRF) [28] frame-
+work. In our model, the classiﬁer of each ROI makes predictions based on not only its voxels, but
+also the prediction results of the ROIs that it connects to. Using the same fMRI data set, we also ex-
+plore a mutual information based method to discover functional connectivity [5]. Our current model
+differs from [5], however, by applying a generative model to concurrently estimate the structure of
+connectivity as well as maximize the end behavioral task (in this case, a scene classiﬁcation task).
+Furthermore, we propose a structural learning method to automatically uncover the structure
+of the interactions between ROIs for natural scene categorization, i.e.
+to decide which ROIs
+should be and which ones should not be connected. Unlike existing models for functional connec-
+tivity, which mostly rely on the correlation of time courses of voxels [23], our approach makes use of
+the patterns of activity in ROIs as well as the category labels of the images presented to the subjects.
+Built in the hierarchical framework of HCRF, our structural learning method utilizes information in
+the voxel values at the bottom layer of the network as well as categorical labels at the top layer. In
+our method, the connections between each pair of ROIs are evaluated for their potential to improve
+prediction accuracy, and only those that show improvement will be added to the ﬁnal structural map.
+In the remaining part of this paper, we ﬁrst elaborate on our model and structural learning approach
+in Section 2. We discuss related work on MVPA and connectivity analysis in Section 3. Finally, we
+present experimental results in Section 4 and conclude the paper in Section 5.
+
+2 Modeling Interactions of Brain Regions: a HCRF Representation
+
+The brain is highly interconnected, and the nature of the connections determines to a large extent
+how information is processed in the brain. We model the connections of brain regions in a Hid-
+den Conditional Random Field (HCRF) framework for the task of natural scene categorization and
+propose a structural learning method to uncover the pattern of connectivity. In the ﬁrst part of this
+section we assume that the structural connections between brain regions are already known. We will
+discuss in Section 2.2 how these connections are automatically learned.
+
+2.1
+
+Integrating Information across Brain Regions
+
+Suppose we are given a set of regions of interest (ROIs) and connections between these regions (see
+the intermediate layer of Fig.1). Existing ROI-based MVPA approaches build a classiﬁer for each
+ROI independently [15, 24, 18, 16, 31], neglecting the connections between ROIs. It is our objective
+here to explore the structure of the connections between ROIs to improve prediction accuracy for
+decoding viewed scene category from fMRI data.
+In order to achieve these goals, we propose a Hidden Conditional Random Field (HCRF) model
+(Fig.1) to allow each ROI to be inﬂuenced by the ROIs that it connects to and build a top-level
+classiﬁer which makes use of information in all ROIs. In this framework, the classiﬁer for one ROI
+makes prediction based on the voxels in this region as well as the results of the classiﬁers of its
+connected ROIs, thereby improving the accuracy of each ROI. In the absence of evidence about
+the directionality of connections, we assume them to be symmetric, i.e., to allow the information
+between two ROIs to go in both directions to the same extent. On the technical side, using an
+undirected model avoids the difﬁculties of deﬁning a coherent generative process for graph structures
+in directed models, thereby giving us more ﬂexibility in representing complex patterns [29].
+Our model starts with independently trained classiﬁers for each ROI as in [31] (the bottom layer of
+Fig.1). Consider an fMRI data set whose individual brain acquisitions are associated with one of
+𝐶 class labels. For an acquisition sample 𝑖, the decision values of the 𝐶 independent classiﬁers are
+𝑀 }, where 𝑀 is the number of ROIs. X𝑖
+represented as 𝒳 𝑖 = {X𝑖
+1 , ⋅ ⋅ ⋅ , X𝑖
+𝑚 = {𝑥𝑖
+𝑚,1 , ⋅ ⋅ ⋅ , 𝑥𝑖
+𝑚,𝐶 }
+are the decision values for the 𝑚-th ROI, where 𝑥𝑖
+𝑚,𝑐 is the probability that region 𝑚 assigns sample
+𝑖 to the 𝑐-th class, irrespective of the information in any other ROI.
+
+2
+
+Figure 1:
+the HCRF
+Illustration of
+model for modeling connections between
+ROIs. Four ROIs, placed ﬁguratively on a
+schematic brain, are shown here for illustra-
+tion of the model. Superscripts indexing dif-
+ferent samples are omitted in the ﬁgure. 𝑍
+is the category label predicted from all ROIs.
+𝑌𝑚 , the hidden variable of the model, is the
+prediction result of the classiﬁer of ROI 𝑚.
+X𝑚 is the output of an independently trained
+classiﬁer for ROI 𝑚. Section 2.1 gives de-
+tails about the three types of connections.
+In the ﬁgure thicker lines represent stronger
+connections,
+thinner lines weaker connec-
+tions. The weights of all connections and
+connectivity pattern of the type-II potentials
+are estimated by the model.
+
+𝑚 as input, the classiﬁer for ROI 𝑚 can directly predict sample 𝑖 as belonging to the 𝑐∗ -th
+Given X𝑖
+𝑚,𝑐∗ is the largest component of X𝑖
+class if 𝑥𝑖
+𝑚 . However, this method ignores the dependencies
+between ROIs. To remedy this, our model allows collaborative error-correction over the ROIs by
+using the given structure of connections (the intermediate layer of Fig.1). Denoting the prediction
+results of the ROI classiﬁers as 𝒴 = {𝑌1 , ⋅ ⋅ ⋅ , 𝑌𝑀 }, where 𝑌𝑚 ∈ {1, ⋅ ⋅ ⋅ , 𝐶 } is the classiﬁer output
+for ROI 𝑚, our model allows for the predictions 𝑌𝑚 and 𝑌𝑙 to interact if ROIs 𝑚 and 𝑙 are connected
+in the given structure (the intermediate layer in Fig.1).
+Based on the ROI-level prediction results 𝒴 , our model outputs the category label of sample 𝑖: 𝑍 𝑖 ∈
+{1, ⋅ ⋅ ⋅ , 𝐶 } (the top layer of Fig.1). Furthermore, because we cannot directly observe the prediction
+of each ROI when acquiring the fMRI data, we treat 𝒴 as hidden variables. The underlying graphical
+∑
+∑
+model is shown in Fig.1. To estimate the overall classiﬁcation probability given the observed voxel
+values, we marginalize over all possible values of 𝒴 . The HCRF model is therefore deﬁned as
+∑
+∑
+𝒴 exp(Ψ(𝑍 𝑖 , 𝒴 , 𝒳 𝑖 ; 𝜽))
+𝑝(𝑍 𝑖 ∣𝒳 𝑖 ; 𝜽) =
+𝑝(𝑍 𝑖 , 𝒴 ∣𝒳 𝑖 ; 𝜽) =
+𝒴 exp(Ψ(𝑍, 𝒴 , 𝒳 𝑖 ; 𝜽))
+(1)
+𝒴
+𝑍
+where 𝜽 are the parameters of the model, and Ψ(𝑍, 𝒴 , 𝒳 ; 𝜽) is a potential function parameterized by
+𝜽 . We deﬁne the potential function Ψ(𝑍, 𝒴 , 𝒳 ; 𝜽) as the weighted sum of edge potential functions
+∑
+deﬁned on every edge 𝑒 (2-clique) of the model:
+Ψ(𝑍, 𝒴 , 𝒳 ; 𝜽) =
+𝑒
+
+𝜃𝑒𝜓𝑒 (𝑍, 𝒴 , 𝒳 )
+
+(2)
+
+As shown in Fig.1, there are three types of potentials which describe different edges in the model:
+Type-I Potential
+𝑒 = (X𝑚 , 𝑌𝑚 ). Such edges model the distribution of class labels of different
+ROIs conditioned on the observations X𝑚 . The edge connects an X𝑚 node and a 𝑌𝑚 node where
+𝑚 = 1, ⋅ ⋅ ⋅ , 𝑀 . The edge potential function is deﬁned by:
+𝜓𝑒 (𝑍, 𝒴 , 𝒳 ) = 𝑓𝑦𝑥 (𝑌𝑚 , X𝑚 ) = 𝑥𝑚,𝑌𝑚
+(3)
+where 𝑥𝑚,𝑌𝑚 is the 𝑌𝑚 -th component of the vector X𝑚 . A large weight for (X𝑚 , 𝑌𝑚 ) implies that
+the independent classiﬁer trained on voxels of ROI 𝑚 is effective in giving correct predictions.
+{
+Type-II Potential
+𝑒 = (𝑌𝑚 , 𝑌𝑙 ). Such edges model the dependencies between the ROIs. Note
+that not all pairs of ROIs are connected. The edge potential function is deﬁned by:
+𝜓𝑒 (𝑍, 𝒴 , 𝒳 ) = 𝑓𝑦𝑦 (𝑌𝑚 , 𝑌𝑙 ) =
+𝛼, 𝑌𝑚 = 𝑌𝑙
+0, 𝑌𝑚 ∕= 𝑌𝑙
+where 𝛼 > 0. If two ROIs are connected, they tend to make similar predictions. A large weight for
+(𝑌𝑚 , 𝑌𝑙 ) means the connection between 𝑌𝑚 and 𝑌𝑙 is strong.
+Type-III Potential
+𝑒 = (𝑍, 𝑌𝑚 ). Such edges deﬁne a joint distribution over the class label and the
+prediction result of each ROI. The edge connects a 𝑌𝑚 node and the 𝑍 node where 𝑚 = 1, ⋅ ⋅ ⋅ , 𝑀 .
+
+(4)
+
+3
+
+Y1Y2Y3Y41234ZTop-layerIntermediate-layerBottom-layerType-IType-IIType-IIIPotentialsPotentialsPotentials{
+
+(5)
+
+The edge potential function is deﬁned by:
+𝜓𝑒 (𝑍, 𝒴 , 𝒳 ) = 𝑓𝑦𝑧 (𝑌𝑚 , 𝑍 ) =
+
+𝛽 , 𝑌𝑚 = 𝑍
+0, 𝑌𝑚 ∕= 𝑍
+where 𝛽 > 0. A large weight for (𝑍, 𝑌𝑚 ) means ROI 𝑚 has a big contribution to the top-level
+prediction of the brain.
+Allowing connected ROIs to interact with each other makes our model signiﬁcantly different from
+existing MVPA methods [15, 24, 18, 16], and can improve the prediction accuracy of each ROI.
+Intuitively, if the values of all components in X𝑖
+𝑚 are similar, then ROI 𝑚 is likely to have incorrect
+predictions if its classiﬁer merely relies on X𝑖
+𝑚 . In such situations it is possible for the classiﬁer for
+one ROI to make better predictions if it can use the information in its connected ROIs.
+
+2.2 Learning the Structural Connections of the Hidden Layer in HCRF Model
+
+We have described a method that models the connections between ROIs to build a classiﬁcation
+predictor on top of all ROIs. However, for many tasks (e.g. scene categorization), one critical sci-
+entiﬁc goal is to uncover which ROIs are functionally connected for that task. Automatic learning
+of the structures of graphical models is a difﬁcult problem in machine learning. To illustrate the
+difﬁculty, let us assume that we have 4 ROIs and that we want to explore all possible models of
+connectivity between them. There are 6 possible connections between the ROIs, so in order to in-
+vestigate whether all possible combinations of connections are present, we need to evaluate 26 = 64
+different models. For 5 ROIs we have 10 potential connections, leading to 210 = 1024. In general,
+given 𝑀 ROIs, there are 2𝑀 (𝑀 −1)/2 possible combinations of connections. In situations with many
+ROIs, evaluating all possible structures quickly becomes impractical because of the computational
+constraints. Approximate approaches to learn the structures of directed graphs use the generative
+process in the model [21, 19, 32]. For undirected graphs, it is usually assumed that the structures are
+pre-deﬁned [29]. Some incremental approaches [26, 22] were proposed for random ﬁelds construc-
+tion. However the computational complexity of these approaches is still high.
+In our model shown in Fig.1, the potentials represented by solid lines are ﬁxed (type-I and type-III).
+That is to say, each ROI always makes predictions based on the information in its voxels, and the
+response at the top level is always inﬂuenced by the prediction results of all ROIs. That leaves the
+dependencies between ROIs (type-II edges, the dashed line in Fig.1) to be learned. Therefore, our
+structural learning starts from a graphical model containing only type-I and type-III potentials, with-
+out any interactions between ROIs. Based on this initial model, we evaluate each type-II potential
+respectively to decide if it should be added to the model.
+As we have described in Section 1, connections among ROIs play a key role in information process-
+ing. Executing a speciﬁc task (e.g., scene categorization) activates certain ROIs as well as rely on
+connections between some of them. Inspired by this fact, we evaluate whether two ROIs, say ROIs
+𝑚 and 𝑙, should be connected by comparing two models with and without an edge between 𝑌𝑚 and
+
+Figure 2: An illustration for evaluating if ROIs 2 and 4 should be connected. All other ROIs are omitted. We
+compare the performance of two modes with (left) and without (right) interactions between ROIs 2 and 4.
+
+4
+
+Y1Y2Y3Y41234ZTraining accuracy: cPTraining accuracy: nP24Connect  and YYIf and only if cnPP>Y1Y2Y3Y41234ZInput: 𝑀 ROIs and their feature vectors 𝒳 = {X1 , ⋅ ⋅ ⋅ , X𝑀 }. A HCRF model 𝒢 with nodes 𝑍 ,
+𝑌1 , ⋅ ⋅ ⋅ , 𝑌𝑀 , X1 , ⋅ ⋅ ⋅ , X𝑀 , and edges (𝑌1 , X1 ), ⋅ ⋅ ⋅ ,(𝑌𝑀 , X𝑀 ), (𝑍, 𝑌1 ), ⋅ ⋅ ⋅ , (𝑍, 𝑌𝑀 ).
+foreach pair of ROIs 𝑚 and 𝑙 do
+Train an HCRF model with nodes 𝑍, 𝑌𝑚 , 𝑌𝑙 , 𝒳𝑚 , 𝒳𝑙 , and edges (𝑌𝑚 , X𝑚 ), (𝑌𝑙 , X𝑙 ), (𝑍, 𝑌𝑚 ),
+(𝑍, 𝑌𝑙 ), (𝑌𝑚 , 𝑌𝑙 ). Obtain training accuracy 𝑃𝑐 ;
+Train an HCRF model with nodes 𝑍, 𝑌𝑚 , 𝑌𝑙 , 𝒳𝑚 , 𝒳𝑙 , and edges (𝑌𝑚 , X𝑚 ), (𝑌𝑙 , X𝑙 ), (𝑍, 𝑌𝑚 ),
+(𝑍, 𝑌𝑙 ). Obtain training accuracy 𝑃𝑛 ;
+if 𝑃𝑐 > 𝑃𝑛 then Add edge (𝑌𝑚 , 𝑌𝑙 ) to the input model 𝒢 ;
+Output: The updated model 𝒢 .
+Algorithm 1: The algorithm for uncovering structural connections between ROIs in the HCRF model.
+
+𝑌𝑙 . If allowing interactions between ROIs 𝑚 and 𝑙 helps to improve top-level recognition perfor-
+mance, thus more closely approximating human performance, then 𝑚 and 𝑙 should be connected.
+Furthermore, we ignore information in all other ROIs when evaluating the connection between ROIs
+𝑚 and 𝑙 (Fig.2). So the model will only contain 5 nodes: 𝑍, 𝑌𝑚 , 𝑌𝑙 , X𝑚 , and X𝑙 . Although some
+useful information might be lost compared to evaluating all possible combinations of connections,
+approximating the algorithm in this way can enable the evaluation of many possible connections in
+a reasonable amount of time, making this algorithm much more practical.
+The structural learning algorithm is shown in Algorithm 1, and an illustration of evaluating the
+connection between ROI 2 and 4 is in Fig.2.
+
+2.3 Model Learning and Inference
+
+Learning In the step of structural learning, we need to estimate model parameters to compare the
+models with or without a type-II connection (see Fig.2 for an illustration). Once we have determined
+which ROIs should interact, i.e. which type-II potentials should be set, we would like to ﬁnd out the
+strength of these connections as well as type-I and III potentials. Here the parameters 𝜽 = {𝜃𝑒 }𝑒 are
+∑
+learned by maximizing the conditional log-likelihood of class label 𝑍 on training data 𝒳 :
+∑
+log 𝑝(𝑍 𝑖 ∣𝒳 𝑖 ; 𝜽)
+𝜽∗ = arg max
+∑
+𝐿(𝜽) = arg max
+∑
+∑
+𝜽
+𝜽
+𝑖
+𝒴 exp(Ψ(𝑍 𝑖 , 𝒴 , 𝒳 𝑖 ; 𝜽))
+𝒴 exp(Ψ(𝑍, 𝒴 , 𝒳 𝑖 ; 𝜽))
+= arg max
+𝜽
+𝑍
+𝑖
+The objective function is not concave due to the hidden variables 𝒴 . Although ﬁnding the global
+optimum is difﬁcult, we can still ﬁnd a local optimum by iteratively updating the values of 𝜽 using
+the gradient descent method. To be speciﬁc, we ﬁrst set 𝜽 to be initial values 𝜽(0) , and for each
+iteration we adopt the following formula to update 𝜽(𝑛) to 𝜽 (𝑛+1) :
+G(𝜽(𝑛) )⊤G(𝜽 (𝑛) )
+𝜽 (𝑛+1) = 𝜽(𝑛) −
+G(𝜽(𝑛) )⊤H(𝜽 (𝑛) )G(𝜽 (𝑛) )
+
+G(𝜽(𝑛) )
+
+(7)
+
+log
+
+(6)
+
+where G(𝜽) and H(𝜽) are the gradient vector and Hessian matrix of 𝐿(𝜽) respectively. This it-
+erative updating continues until reaching a maximum number of iterations or ∥G(𝜽)∥ is smaller
+than a threshold. When the number of ROIs is large, marginalizing over all possible values of 𝒴 is
+time-consuming. In such situations we can use Gibbs sampling to compute the gradient vector and
+Hessian matrix of 𝐿(𝜽). In the case of natural scene categorization, evidence from neuroscience
+studies have postulated that 7 regions are likely to play critical roles in this task [31]. We therefore
+consider 7 ROIs in our experiment, allowing us to marginalize over all possible values of Y.
+Inference Given the model parameters 𝜽∗ and a sample 𝒳 , the top-level prediction result is
+𝑝(𝑍 ∣𝒳 ; 𝜽∗ )
+𝑍 ∗ = arg max
+𝑍
+After 𝑍 ∗ is obtained, we can get the prediction results corresponding to each ROI by
+𝒴 ∗ = arg max𝒴 𝑝(𝑍 ∗ , 𝒴 ∣𝒳 ; 𝜽∗ )
+
+(8)
+
+(9)
+
+5
+
+3 Related Work
+
+In this paper, we model the dependencies between ROIs in an HCRF framework, which improves
+the ROI-level as well as the top-level decoding accuracy by allowing ROIs to exchange information.
+Other approaches to inferring connections between brain regions from fMRI data can be broadly
+separated into effective connectivity and functional connectivity [11]. Models for effective connec-
+tivity, such as Granger causality mapping [14] and dynamic causal modeling [13], model directed
+connections between brain regions. These approaches were developed to account for biological tem-
+poral dependencies, which is not the case in this work. Functional connectivity refers to undirected
+connections, which can be either model-driven or data-driven [23]. Model-driven methods usually
+test a prior hypothesis by correlating the time courses of a seed voxel and a target voxel [12]. Data-
+driven methods, such as Independent Component Analysis [8], are typically used to identify spatial
+modes of coherent activity in the brain at rest.
+None of these methods, however, has the ability to use the speciﬁc relation between the patterns
+of voxel activations inside ROIs and the ground truth of the experimental condition. The structural
+learning method proposed in this paper offers an entirely new way to assess the interactions between
+brain regions based on the exchange of information between ROIs so that the accuracy of decoding
+experimental conditions from the data is improved. Furthermore in contrast with the conventional
+model comparison approaches of trying to optimize the evidence of each model [2], our method
+relates the connectivity structure to observed brain activities as well as the classes of stimuli that
+elicited the activities. Therefore the model proposed here provides a novel and natural way to model
+the implicit dependencies between different ROIs.
+
+4 Experimental Evaluation
+
+4.1 Data Set and Experimental Design
+
+In order to evaluate the proposed method we re-analyze the fMRI data set from our work in [31].
+In this experiment, 5 subjects were presented with color images of 6 scene categories: beaches,
+buildings, forests, highways, industry, and mountains. Photographs were chosen to capture the high
+variability within each scene category. Images were presented in blocks of 10 images of the same
+category lasting for 16 seconds (8 brain acquisitions). Each subject performed 12 runs, with each
+run containing one block for each of the six categories. Please refer to [31] for more details.
+We use 7 ROIs that are likely to play critical roles for natural scene categorization. They were
+determined in separate localizer scans: V1, left/right LOC, left/right PPA, left/right RSC. The data
+for two subjects were excluded, because not all of the ROIs could be found in the localizer scans
+for these subjects. For the analysis we use two nested cross validations over the 12 runs for each
+subject. In the outer loop we cross-validate on each subject to test the performance of the proposed
+method. For each subject, 11 runs out of 12 are selected as training samples and the remaining
+run is used as the testing set. For each subject this procedure is repeated 12 times, in turn leaving
+each run out for testing once. Average accuracy of the 36 experiments across all subjects is used to
+evaluate the performance of the model. In the inner loop, we use 10 of the 11 training runs to train
+an SVM classiﬁer for each ROI and each subject, and the remaining run to learn the connections
+between ROIs and train the HCRF model by using outputs of the SVM classiﬁers. We repeat this
+procedure 11 times, giving us 11 models. Results of the 11 models on the test data in the inner loop
+are combined using bagging [4]. We empirically set both 𝛼 in Equ.(4) and 𝛽 in Equ.(5) to 0.5.
+
+4.2 Scene Classiﬁcation Results and Analysis
+
+In order to comprehensively evaluate the performance of the proposed structural learning and mod-
+eling approach, we consider different settings of the intermediate layer of our HCRF model. While
+always keeping all type-I and type-III potentials connected, we consider ﬁve different dependencies
+between the ROIs as shown in Fig.3. The setting in Fig.3(e) possesses all properties of our method:
+the connections between ROIs are determined by structural learning, and the weights of the connec-
+tions are obtained by estimating model parameters in Equ.(6). In order to estimate the effectiveness
+of our structural learning method, we compare this setting with the situations where no connections
+exists between any of the ROIs (Fig.3(a)), and all ROIs are fully connected (Fig.3(b,c)). In each con-
+nectivity situation, we either use the same (Fig.3(b,d)) or different (Fig.3(c,e)) weights for type-II
+
+6
+
+Figure 3: Various settings of the intermediate layer of our model. Dashed lines represent type-II potentials.
+In each setting we keep all type-I and III potentials connected. For simplicity, we omit the visualizations of
+type-I and III potentials here. Different line widths represent different potential weights. (a) No connection
+exists between any pair of ROIs. (b,c) The ROIs are fully connected. (d,e) The connections between ROIs are
+obtained by structural learning. (b,d) All type-II potentials have equal weights. (c,e) The weights of different
+type-II potentials can be different. Note that (e) is the full model in this paper.
+
+Table 1: Recognition accuracy for predicting natural scene categories with different methods (chance is 1/6).
+“Overall classiﬁcation” means the accuracy for predicting the categories by the top-level node in Fig.1. We
+carry out experiments on the HCRF models with different settings of the type-II potentials, as shown in Fig.3.
+Note that we always learn the weights of type-I and type-III potentials. We also list classiﬁcation results of
+the SVM classiﬁers independently trained on each ROI as the baseline. The bolded numbers indicate superior
+∗∗ 𝑝 < 0.005.
+∗ 𝑝 < 0.01;
+performance compared to all other settings for each ROI.
+Method
+Fig.3(c)
+Fig.3(b)
+SVM Fig.3(a)
+29%∗
+31%∗
+33%∗∗
+Overall classiﬁcation
+N/A
+V1
+21%
+22%
+25%
+24%
+29%∗
+27%
+23%
+22%
+left LOC
+30%∗
+27%
+24%
+25%
+right LOC
+28%∗
+27%
+left PPA
+27%
+26%
+28%∗
+28%∗
+31%∗
+right PPA
+26%
+32%∗
+30%∗
+30%∗
+30%
+left RSC
+26%∗
+29%∗
+30%∗
+right RSC
+27%
+
+Fig.3(e)
+36%∗∗
+28%∗
+32%∗∗
+33%∗∗
+31%∗
+32%∗∗
+35%∗∗
+32%∗∗
+
+ROI
+
+Fig.3(d)
+34%∗∗
+27%
+31%∗
+29%∗
+31%∗
+31%∗
+33%∗∗
+30%∗
+
+potentials. Note that the type-II potentials of the models in Fig.3(b,d) are also obtaining by learning.
+Classiﬁcation accuracy of the ﬁve different HCRF models, along with individual SVM classiﬁcation
+accuracy for each ROI, is shown in Tbl.1. Note that the model with no type-II potentials (Fig.3(a))
+is different from independent SVM classiﬁers because of the type-I potentials.
+From Table 1 it becomes clear that learning both the structure of the connections and their strengths
+leads to more improvement in decoding accuracy than either one of these alone. The overall, top-
+level classiﬁcation rate increases from 31% for the variant of the model without any connections
+(Fig.3(a)) to 36% for the variant with the structure of the model as well as the connection strengths
+learned (Fig.3(e)). We see similar improvements for the individual ROIs: 4-5% for PPA and RSC,
+6% for V1, and 9% for LOC. The fact that decoding from LOC beneﬁts most from interacting with
+other ROIs is interesting and signiﬁcant. We will discuss this ﬁnding in more detail below.
+
+4.3 Structural Learning Results and Analysis
+
+Having established that our full HCRF model outperforms other comparison models in the recogni-
+tion task, we now investigate how our model can shed light on learning connectivity between brain
+regions. In the nested cross validation procedure, 12×11=132 structural maps are learned for each
+subject. Tbl.2 reports for each subject which connections are present in what fraction of these struc-
+tural maps. A connection is regarded as a strong connection for a subject if it presents in at least
+half of the models learned for this subject. In Tbl.2 we use larger font size to denote the connections
+which are strong on more subjects. Connections that are strong for all subjects are marked in bold.
+We see that both LOC and PPA show strong interactions between the contralateral counterparts,
+which makes sense for integrating information across the visual hemiﬁelds. We also observe strong
+interactions between PPA and RSC across hemispheres, which underscores the importance of across-
+hemiﬁeld integration of visual information. We see a similar effect in the interactions between LOC
+and PPA: strong contralateral interactions. Left LOC also interacts strongly with right RSC.
+
+7
+
+Y1Y2Y3Y4Y1Y2Y3Y4Y1Y2Y3Y4Y1Y2Y3Y4Y1Y2Y3Y4Table 2: Statistics of structural connections. For each subject we have 132 learned structural maps (12-fold
+cross-validation, each one has 11 models). This table shows the percentage of the times that the corresponding
+connection is learned in the 132 experiments. Larger font size denotes connections that are strong on more
+subjects. Connections that are strong on all subjects are marked in bold.
+Connection
+Connection
+Sbj.1
+Sbj.1
+rightLOC-leftPPA 0.58
+0.67
+V1-leftLOC
+0.50
+0.36
+rightLOC-rightPPA
+V1-rightLOC
+0.44
+V1-leftPPA
+rightLOC-leftRSC
+0.63
+0.38
+0.36
+rightLOC-rightRSC
+V1-rightPPA
+0.99
+leftPPA-rightPPA
+0.29
+V1-leftRSC
+0.97
+leftPPA-leftRSC
+V1-rightRSC
+0.36
+leftLOC-rightLOC 0.66
+0.61
+leftPPA-rightRSC
+rightPPA-leftRSC
+0.67
+leftLOC-leftPPA
+0.46
+0.75
+leftLOC-rightPPA
+0.93
+rightPPA-rightRSC
+0.41
+leftLOC-leftRSC
+leftRSC-rightRSC
+0.65
+leftLOC-rightRSC
+0.75
+
+Sbj.2
+0.25
+0.29
+0.29
+0.33
+0.30
+0.29
+0.88
+0.64
+0.96
+0.78
+0.83
+
+Sbj.3
+0.33
+0.54
+0.36
+0.69
+0.23
+0.59
+0.71
+0.76
+0.65
+0.61
+0.76
+
+Sbj.2
+0.58
+0.58
+0.38
+0.30
+0.56
+0.34
+0.53
+0.74
+0.74
+0.20
+
+Sbj.3
+0.66
+0.89
+0.31
+0.87
+0.78
+0.46
+0.40
+0.51
+0.41
+0.45
+
+The strong interactions between PPA and RSC are not surprising, since both are typically associated
+with the processing of natural scenes [25], albeit with slightly different roles [7]. The interactions
+between LOC and PPA are somewhat more surprising, since LOC is usually associated with the
+processing of isolated objects. Together with the strong improvement of decoding accuracy for
+natural scene categories from LOC when it is allowed to interact with other ROIs (see above), this
+suggests a role for LOC in scene categorization. It is conceivable that the detection of typical objects
+(e.g., a car) helps with determining the scene category (e.g., highway), as has been shown in [17,
+6]. On the other hand, it is also possible that information ﬂows the other way, that scene-speciﬁc
+information in PPA and RSC feeds into LOC to bias object detection based on the scene category
+(see [3, 1]), and that the classiﬁer decodes this bias signal in LOC. Fig.4 shows the connections
+which are strong on at least two subjects.
+
+Figure 4: Schematic illustration of the connec-
+tions between the seven ROIs obtained by our
+structural learning method. Activated regions for
+the seven ROIs are marked in red. The connec-
+tions shown in this ﬁgure are strong on at least
+two of the three subjects. Connections that are
+strong for all three subjects (marked with bold
+in Table 2) are marked with thicker lines in this
+ﬁgure.
+
+5 Conclusion
+
+In this paper we modeled the interactions between brain regions in an HCRF framework. We also
+presented a structural learning method to automatically uncover the connections between ROIs.
+Experimental results showed that our approach can improve the top-level as well as ROI-level pre-
+diction accuracy, as well as uncover some meaningful connections between ROIs. One direction for
+future work is to use an exploratory “searchlight” approach [20] to automatically discover ROIs, and
+apply our structural learning and modeling method to those ROIs.
+
+Acknowledgements
+This work is funded by National Institutes of Health Grant 1 R01 EY019429 (to L.F.-F., D.M.B.,
+D.B.W.), a Beckman Postdoctoral Fellowship (to D.B.W.), a Microsoft Research New Faculty Fel-
+lowship (to L.F.-F.), and the Frank Moss Gift Fund (to L.F-F.). The authors would like to thank
+Barry Chai, Linjie Luo, and Hao Su for helpful comments and discussions.
+
+8
+
+right LOCV1left LOCright PPAleft PPAleftrightRSCRSCReferences
+[1] M. Bar. Visual objects in context. Nature Rev Neurosci, 5(8):617–629, 2004.
+[2] D. Barber and C. M. Bishop. Bayesian model comparison by monte carlo chaining. In NIPS, 1997.
+[3] I. Biederman. Perceiving real-world scenes. Science, 177(4043):77–80, 1972.
+[4] L. Breiman. Bagging predictors. Mach Learn, 24:123–140, 1996.
+†
+†
+∗
+∗
+. Exploring functional connectivities of the human
+[5] B. Chai
+, D. B. Walther
+, D. M. Beck
+, and L. Fei-Fei
+† ,∗
+brain using multivariate information analysis. In NIPS, 2009. (
+indicates equal contribution).
+[6] J. L. Davenport and M. C. Potter. Scene consistency in object and background perception. Psychol Sci,
+15(8):559–564, 2004.
+[7] R. A. Epstein and J. S. Higgins. Differential parahippocampal and retrosplenial involvement in three types
+of scene recognition. Cereb Cortex, 17:1680–1693, 2007.
+[8] F. Esposito, E. Formisano, E. Seifritz, R. Geobel, R. Morrone, G. Tedeschi, and F. D. Salle. Spatial
+independent component analysis of functional MRI time-series: To what extent do results depend on the
+algorithm used. Hum Brain Mapp, 16:146–157, 2002.
+[9] L. Fei-Fei, A. Iyer, C. Koch, and P. Perona. What do we perceive in a glance of a real-world scene? J
+Vision, 7(1):1–29, 2007.
+[10] D. J. Felleman and D. C. van Essen. Distributed hierarchical processing in the primate cerebral cortex.
+Cereb Cortex, 1:1–47, 1991.
+[11] K. J. Friston. Functional and effective connectivity in neuroimaging: a synthesis. Hum Brain Mapp,
+2:56–78, 1995.
+[12] K. J. Friston, C. Frith, F. P. Liddle, and R. Frackowiak. Functional connectivity: The principal-component
+analysis of large (PET) data sets. J Cerebr Blood F Met, 13:5–14, 1993.
+[13] K. J. Friston, L. Harrison, and W. Penny. Dynamic causal modeling. NeuroImage, 19:1273–1302, 2003.
+[14] R. Goebel, A. Roebroeck, D.-S. Kim, and E. Formisano. Investigating directed cortical interactions in
+time-resolved fMRI data using vector autoregressive modeling and granger causality mapping. Magn
+Reson Imaging, 21:1251–1261, 2003.
+[15] J. V. Haxby, M. I. Gobbini, M. L. Furey, A. Ishai, J. Schouten, and P. Pietrini. Distributed and overlapping
+representations of faces and objects in ventral temporal cortex. Science, 293(5539):2425–2430, 2001.
+[16] J.-D. Haynes and G. Rees. Predicting the orientation of invisible stimuli from activity in human primary
+visual cortex. Nat Neurosci, 8:686–691, 2005.
+[17] A. Hollingworth and J. M. Henderson. Accurate visual memory for previously attended objects in natural
+scenes. J Exp Psychol Human, 28:113–136, 2002.
+[18] Y. Kamitani and F. Tong. Decoding the visual and subjective contents of the human brain. Nat Neurosci,
+8:679–685, 2005.
+[19] C. Kemp and J. B. Tenenbaum. The discovery of structural form. P Natl Acad Sci USA, 105(31):10687–
+10692, 2008.
+[20] N. Kriegeskorte, R. Goebel, and P. Bandettini. Information-based functional brain mapping. P Natl Acad
+Sci USA, 103(10):3863–3868, 2006.
+[21] W. Lam and F. Bacchus. Learning Bayesian belief networks: An approach based on the mdl principle.
+Comput Intell, 10(4):269–293, 1994.
+[22] S. Lee, V. Ganapahthi, and D. Koller. Efﬁcient structure learning of markov networks using 𝑙1 -
+regularization. In NIPS, 2006.
+[23] K. Li, L. Guo, J. Nie, G. Li, and T. Liu. Review of methods for functional brain connectivity detection
+using fmri. Comput Med Imag Grap, 33:131–139, 2009.
+[24] D. Neill, A. Moore, F. Pereira, and T. Mitchell. Detecting signiﬁcant multidimensional spatial clusters.
+In NIPS, 2004.
+[25] K. O’Craven and N. Kanwisher. Mental imagery of faces and places activates corresponding stimulus-
+speciﬁc brain regions. J Cognitive Neurosci, 12:1013–1023, 2000.
+[26] S. D. Pietra, V. D. Pietra, and J. Lafferty.
+Inducing features of random ﬁelds.
+19(4):380–393, 1997.
+[27] M. C. Potter. Short-term conceptual memory for pictures. J Exp Psychol - Hum L, 2(5):509–522, 1976.
+[28] A. Quattoni, S. Wang, L.-P. Morency, M. Collins, and T. Darrell. Hidden conditional random ﬁelds. IEEE
+T Pattern Anal, 29(10):1848–1852, 2007.
+[29] B. Taskar, P. Abbeel, and D. Koller. Discriminative probabilistic models for relational data. In UAI, 2002.
+[30] B. Tversky and K. Hemenway. Categories of scenes. Cognitive Psychol, 15:121–149, 1983.
+∗
+∗
+. Natural scene categories revealed in dis-
+[31] D. B. Walther, E. Caddigan, L. Fei-Fei
+, and D. M. Beck
+∗
+tributed patterns of activity in the human brain. J Neurosci, 29(34):10573–10581, 2009. (
+indicates
+equal contribution).
+[32] M. L. Wong, W. Lam, and K. S. Leung. Using evoluntionary programming and minimum description
+length principle for data mining of bayesian networks. IEEE T Pattern Anal, 21(2):174–178, 1999.
+
+IEEE T Pattern Anal,
+
+9
+
+

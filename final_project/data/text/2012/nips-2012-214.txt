@@ -1,0 +1,719 @@
+Slice Normalized Dynamic Markov Logic Networks
+
+Tivadar Papai
+Daniel Stefankovic
+Henry Kautz
+Department of Computer Science
+University of Rochester
+Rochester, NY 14627
+{papai,kautz,stefanko}@cs.rochester.edu
+
+Abstract
+
+Markov logic is a widely used tool in statistical relational learning, which uses
+a weighted ﬁrst-order logic knowledge base to specify a Mark ov random ﬁeld
+(MRF) or a conditional random ﬁeld (CRF). In many applicatio ns, a Markov logic
+network (MLN) is trained in one domain, but used in a different one. This pa-
+per focuses on dynamic Markov logic networks, where the size of the discretized
+time-domain typically varies between training and testing. It has been previously
+pointed out that the marginal probabilities of truth assignments to ground atoms
+can change if one extends or reduces the domains of predicates in an MLN. We
+show that in addition to this problem, the standard way of unrolling a Markov logic
+theory into a MRF may result in time-inhomogeneity of the underlying Markov
+chain. Furthermore, even if these representational problems are not signi ﬁcant for
+a given domain, we show that the more practical problem of generating samples
+in a sequential conditional random ﬁeld for the next slice re lying on the samples
+from the previous slice has high computational cost in the general case, due to the
+need to estimate a normalization factor for each sample. We propose a new dis-
+criminative model, slice normalized dynamic Markov logic networks (SN-DMLN),
+that suffers from none of these issues. It supports efﬁcient online inference, and
+can directly model inﬂuences between variables within a tim e slice that do not
+have a causal direction, in contrast with fully directed models (e.g., DBNs). Ex-
+perimental results show an improvement in accuracy over previous approaches to
+online inference in dynamic Markov logic networks.
+
+1
+
+Introduction
+
+Markov logic [1] is a language for statistical relational learning, which employs weighted ﬁrst-order
+logic formulas to compactly represent a Markov random ﬁeld ( MRF) or a conditional random ﬁeld
+(CRF). A Markov logic theory where each predicate can take an argument representing a time point
+is called a dynamic Markov logic network (DMLN). We will focus on two-slice dynamic Markov
+logic networks, i.e., ones in which each quanti ﬁed temporal argument is of the for m t or t + 1, in
+the conditional (CRF) setting. DMLNs are the undirected analogue of dynamic Bayesian networks
+(DBN) [13] and akin to dynamic conditional random ﬁelds [19] .
+DMLNs have been shown useful for relational inference in complex dynamic domains; for example,
+[17] employed DMLNs for reasoning about the movements and strategies of 14-player games of
+Capture the Flag. The usual method for performing ofﬂine inf erence in a DMLN is to simply unroll
+it into a CRF and employ a general MLN or CRF inference algorithm. We will show, however, that
+the standard unrolling approach has a number of undesirable properties.
+The ﬁrst two negative properties derive from the fact that ML Ns are in general sensitive to the
+number of constants in each variable domain [6]; and so, in particular cases, unintuitive results can
+occur when the length of training and testing sequences differ. First, as one increases the number
+of time points in the domain, the marginals can ﬂuctuate, eve n if the observations have little or no
+inﬂuence on the hidden variables. Second, the model can beco me time-inhomogeneous, even if the
+ground weighted formulas between the time slices originate from the same weighted ﬁrst-order logic
+formulas.
+The third negative property is of greater practical concern. In domains where there are a large num-
+ber of variables within each slice dynamic programming based exact inference cannot be used. When
+
+1
+
+the number of time steps is high and/or online inference is required, unrolling the entire sequence
+(perhaps repeatedly) becomes prohibitively expensive. Kersting et al. [7] suggests reducing the cost
+by exploiting symmetries while Nath & Domingos [14] propose reusing previously sent messages
+while performing a loopy belief propagation. Both algorithms are restricted by the capabilities of
+loopy belief propagation, which can fail to converge to the correct distribution in MLNs. Geier &
+Biundo [2] provides a slice-by-slice approximate inference algorithm for DMLNs that can utilize
+any inference algorithm as a black box, but assumes that projecting the distribution over the random
+variables at every time step to the product of their marginal distributions does not introduce a large
+degree of error — an assumption that does not always hold. Seq uential Monte Carlo methods, or
+particle ﬁlters, are perhaps the most popular methods for on line inference in high-dimensional se-
+quential models. However, except for special cases such as, e.g., the Gaussian distributions used in
+[11], sampling from a two-slice CRF model can become expensive, due to the need to evaluate a
+partition function for each particle (see Sec. 3 for more details).
+As a solution to all of these concerns, we propose a novel way of unrolling a Markov logic theory
+such that in the resulting probabilistic model a smaller CRF is embedded into a larger CRF mak-
+ing the clique potentials between adjacent slices normalized. We call this model slice normalized
+dynamic Markov logic network (SN-DMLN). Because of the embedded CRF and the undirected
+components in our proposed model, the distribution represented by a SN-DMLN cannot be com-
+pactly captured by conventional chain graph [10], DBN or CRF graph representations, as we will
+explain in Sec. 4. The SN-DMLN has none of the negative theoretical or practical properties out-
+lined above, and for accuracy and/or speed of inference matches or outperforms unrolled CRFs and
+the slice-by-slice approximate inference methods. Finally, because the maximum likelihood param-
+eter learning for an SN-DMLN can be a non-convex optimization problem, we provide an effective
+heuristic for weight learning, along with initial experimental results.
+2 Background
+
+Probabilistic graphical models compactly represent probability distributions using a graph struc-
+ture that expresses conditional independences among the variables. Directed graphical models are
+mainly used in the generative setting, i.e., they model the joint distribution of the hidden variables
+and the observations, and during training the joint probability of the training data is maximized.
+Hidden Markov models are the prototypical directed models used for sequential data with hidden
+and observable parts. It has been demonstrated that for classi ﬁcation problems, discriminative mod-
+els, which model the conditional probability of the hidden variables given the observations, can
+outperform generative models [12]. The main justi ﬁcations
+for their success are that complex de-
+pendencies between observed variables do not have to be modeled explicitly, and the conditional
+probability of the training data (which is maximized during parameter learning) is a better objective
+function if we eventually want to use our model for classi ﬁca tion. Markov random ﬁelds (MRFs)
+and conditional random ﬁelds (CRFs) belong to the class of un directed graphical models. MRFs
+are generative models, while CRFs are their discriminative version. (For a more detailed discussion
+of the relationships between these models see [8]). Markov logic [1] is a ﬁrst-order probabilistic
+language that allows one to deﬁne template features that app ly to whole classes of objects at once.
+A Markov logic network is a set of weighted ﬁrst-order logic formulas and a ﬁnite set
+of constants
+C = {c1 , c2 , . . . , c|C | } which together deﬁne a Markov network ML,C that contains a binary node
+for each possible grounding of each predicate (ground atom) and a binary valued feature for each
+grounding of each ﬁrst-order logic formula. We will also cal
+l the ground atoms variables (since they
+are random variables). In each truth assignment to the variables, each variable or feature (ground
+formula) evaluates to 1 (true) or 0 (false). In this paper we assume function-free clauses and Her-
+brand interpretations. Using the knowledge base we can either create an MRF or a CRF. If we
+instantiate the model as a CRF, the conditional probability of a truth assignment y to the hidden
+ground atoms (query atoms) in an MLN, given truth assignment x to the observable ground atoms
+(evidence atoms), is deﬁned as:
+
+,
+
+(1)
+
+P r(Y = y |X = x) =
+
+exp(Pi wi Pj fi,j (x, y))
+Z (x)
+where fi,j (x, y) = 1 if the j th grounding of the ith formula is true under truth assignment {x, y},
+and fi,j (x, y) = 0 otherwise. wi is the weight of the ith formula and Z (x) is the normalization
+factor. Ground atoms share the same weight if they are groundings of the same weighted ﬁrst-
+order logic formula, and (1) could be expressed in terms of ni (x, y) = Pj fi,j (x, y). Instantiation
+as an MRF can be done similarly, having an empty set of evidence atoms. Dynamic MLNs [7]
+are MLNs with distinguished arguments in every predicate representing the ﬂow of time or some
+other sequential quantity. In our settings, Yt and Xt will denote the set of hidden and observable
+random variables, respectively, at time t, and Y1:t and X1:t from time step 1 to t. Each set can
+contain many variables, and we should note that their distribution will be represented compactly
+by weighted ﬁrst-order logic formulas. The formulas in the k nowledge base can be partitioned into
+
+2
+
+two sets. The transitions part contains the formulas for which it is true that for any grounding of
+each formula, there is a t such that the grounding shares variables only with Yt and Yt+1 . The
+emission part represents the formulas which connect the hidden and observable variables, i.e. Yt and
+Xt . We will use ˜P (Yt , Yt+1 ) (or ˜P (Yt:t+1 )) and ˜P (Yt , Xt ) to denote the product of the potentials
+corresponding to weighted ground formulas at time t of the transition and the observation formulas,
+respectively. Since some ground formulas may contain only variables from Yt ( i.e., deﬁned over
+hidden variables within the same slice), in order to count the corresponding potentials exactly once,
+we always include their potentials ˜P (Yt , Yt−1 ), and for t = 1 we have a separate ˜P (Y1 ). Hence, the
+distribution deﬁned in (1) in sequential domains can be fact orized as:
+˜P (Yi−1:i = yi−1:i ) Qt
+˜P1 (Y1 = y1 ) Qt
+i=2
+i=1
+Z (x1:t )
+In the rest of the paper, we only allow the temporal domain to vary, and the rest of the domains are
+ﬁxed.
+3 Unrolling MLNs into random ﬁelds in temporal domains
+
+P r(Y1:t = y1:t |X1:t = x1:t ) =
+
+˜P (Yi = yi , Xi = xi )
+
+(2)
+
+We now describe disadvantages of the standard deﬁnition of D MLNs, i.e., when the knowledge base
+is unrolled into a CRF:
+
+1. As one increases the number of time points the marginals can ﬂuctuate, even if all the clique
+potentials ˜P (Yi = yi , Xi = xi ) in (2) are uninformative.
+2. The transition probability Pr(Yi+1 |Yi ) can be dependent on i, even if every ˜P (Yi =
+yi , Xi = xi ) is uninformative and we use the same weighted ﬁrst-order log ic formula
+responsible for the ground formulas covering the transitions between every i and i + 1.
+3. Particle ﬁltering is costly in general, i.e., if we have the marginal probabilities at time t, we
+cannot compute them at time t + 1 using particle ﬁltering unless certain special conditions
+are satis ﬁed.
+
+Saying that ˜P (Yi = yi , Xi = xi ) is uninformative is equivalent to saying that ˜P (Yi = yi , Xi = xi )
+is constant. (Note that, if Yi and Xi are independent, i.e., for some q and r ˜P (Yi = yi , Xi = xi ) =
+r(yi )q(xi ) then q could be marginalized out and r(Yi ) could be snapped to ˜P (Yi , Yi−1 ) in (2).) To
+demonstrate Property 1, consider an unrolled MRF with the temporal domain T = {1, . . . , T },
+with only predicate P (t) (t ∈ T ) and with the weighted formulas (+∞, P (t) ⇔ P (t + 1))
+(hard constraint) and (w, P (t)) (soft constraint). Because of the hard constraint, only the se-
+quences ∀t : P (t) and ∀t : ¬P (t) have non-zero probabilities. The soft weights imply that
+Pr(P (t)) = exp(wT )Pr(¬P (t)), i.e., Pr(P (t)) converges to 1, 0 or to 0.5 with exponential rate
+depending on the sign of w . But we are not always fortunate to have converging marginals, e.g., if
+we change the hard constraint to be P (t) ⇔ ¬P (t + 1) and w 6= 0 the marginals will diverge. If
+T is even, then for every t ∈ T , Pr(P (t)) = Pr(¬P (t)), since in both sequences P (t) has the same
+number of true groundings. If T is odd then for every odd t ∈ T : Pr(P (t)) = exp(w)Pr(¬P (t)).
+Consequently, we have diverging marginals as T → +∞. This phenomenon not only makes the
+inference unreliable, but a weight learning algorithm that maximizes the log-likelihood of the data
+would produce different weights depending on whether T is even or odd. A similar effect aris-
+ing from moving between different sized domains is discussed in more details in [6]. The akin
+Property 2 (inhomogeneity) can be demonstrated similarly, consider, e.g., an MLN with a single
+ﬁrst-order logic formula P (t) ∨ P (t + 1) with weight w . For the sake of simplicity, assume T = 3.
+1+exp(w)
+The unrolled MRF deﬁnes a distribution where Pr (¬P (3)|¬P (2)) =
+1+2exp(w)+exp(2w) which is
+1+exp(w)
+not equal to Pr(¬P (2)|¬P (1)) =
+1+exp(w)+2 exp(2w) for an arbitrary choice of w .
+The examples we just gave involved hard constraints.
+In fact, we can show that if there are no
+hard hard constraints, as T increases the marginals converge and the system becomes homogeneous
+(except for a ﬁnite number of transitions). Consider the mat rix Φ s.t. Φi,j = ˜P (Yt = aj , Yt−1 = ai ),
+where ai , i = 1, . . . , N is an enumeration of the all the possible truth assignments within each
+slice and N is the number of the possible truth assignments in the slice. Let PrT (Y1 = y1 ) =
+Z (Y1:T ) Py2 ,...,yT QT −1
+˜P (Yi = yi , Yi+1 = yi+1 ), where Z (Y1:T ) = Py1 ,...,yT QT −1
+˜P (Yi =
+1
+i=1
+i=1
+yi , Yi+1 = yi+1 ).
+Proposition 1. limt→∞ Prt (Y1 = y) exists if Φ is a positive matrix, i.e., ∀i, j : Φi,j > 0.
+
+3
+
+Proof. Using Φ and the notation ~1 for all one vector and ~ei for a vector which has 1 at the ith
+component and 0 everywhere else, we can express Prt (Y1 = y) as:
+˜P (Y1 = ai , Y2 = y2 ) ~eiΦt−1~1
+Prt (Y1 = y) = Py2
+~1T Φt~1
+Since Φ is positive we can apply theorem 8.2.8. from [5], i.e., if the spectral radius of Φ is ρ(Φ)
+(which is always positive for positive matrices): limt→∞ (ρ−1 (Φ)Φ)t = L, where L = xyT , Φx =
+ρ(Φ)x, ΦT y = ρ(Φ)y , x > 0,y > 0 and xT y = 1. Dividing both the numerator and the denominator
+by ρt (Φ) in (3) proves the convergence of Prt (Y1 = y).
+
+(3)
+
+The issue of diverging marginals and time-inhomogeneity has not been previously recognized as a
+practical problem. However, the increasing interest in probabilistic models that contain large num-
+bers of deterministic constraints (see, e.g. [4]) might bring this issues to the fore. This proposition
+can serve as an explanation why in practice we do not encounter diverging marginals in linear chain
+type CRFsand why except for a ﬁnite number of transitions the model becomes time-homogeneous.
+A more signi ﬁcant practical challenge is described by Prope rty 3, the problem of sampling from
+Pr(Yt |X1:t = x1:t ) using the previously drawn samples from Pr(Yt−1 |X1:t−1 = x1:t−1 ).
+In a
+directed graphical model (e.g., in a hidden Markov model), following standard particle ﬁlt er design,
+having sampled s1:t−1 ∼ Pr(Y1:t−1 = s1:t−1 |X1:t−1 = x1:t−1 ), and then using s1:t−1 one would
+sample st ∼ Pr(Yt , Y1:t−1 = s1:t−1 |X1:t−1 ). Since
+Pr(Y1:t = s1:t |X1:t−1 = x1:t−1 ) = Pr(Yt = st |Yt−1 = st−1 )Pr(Y1:t−1 = s1:t−1 |X1:t−1 = x1:t−1 )
+(4)
+
+1
+Zt−1 (yt−1 )
+
+(5)
+
+˜P (Yi , Yi−1 ) ˜P (Yi , Xi = xi )
+
+we do not have any difﬁculty performing this sampling step, a nd all that is left is to re-sample
+the collection of s1:t with importance weights Pr(Yt = st |Xt = xt ). The analogue of this pro-
+If one ﬁrst draws a sampl e s1:t−1 ∼ ˜P (Y1 , X1 =
+cess does not work in a CRF in general.
+x1 ) ˜P (Y1 ) Qt−1
+˜P (Yi , Yi−1 ) ˜P (Yi , Xi = xi ), and then draws st ∼ ˜P (Yt , Yt−1 = st−1 ), we end
+i=2
+up sampling from:
+s ∼ ˜P (Y1 , X1 = x1 ) ˜P (Y1 )
+
+t
+Yi=2
+˜P (Yt = yt , Yt−1 = yt−1 ). Unless Zt−1 (yt−1 ) is the same for every
+where Zt−1 (yt−1 ) = Pyt
+yt−1 , it is necessary to approximate Zt−1 (st−1 ) for every st−1 . 1 Although several algorithms have
+been proposed to estimate partition functions [16, 18], the partition function estimation can increase
+both the running time of the sampling algorithm signi ﬁcantl y and the error of the approximation of
+the sampling algorithm. While there are restricted special cases where the normalization factor can
+be ignored [11], in general ignoring the approximation of Zt−1 (yt−1 ) could cause a large error in
+the computed marginals. Consider, e.g., when we have three weighted formulas in the previously
+used toy domain, namely, w : ¬P (Yt ) ∨ ¬P (Yt+1 ), −w : P (Yt ) ∧ ¬P (Yt+1 ) and w ′ : P (Yt ) ↔
+¬P (Yt+1 ), where w > 0 and w ′ < 0. It can be proved that in this setting using particle ﬁlterin g in a
+CRF without accounting for Zt−1 (yt−1 ) would result in limt→∞ Pr(P (Yt )) = 1
+2 , while in the CRF
+the correct marginal would be limt→∞ Pr(P (Yt )) = 1 − exp(w)
+1+exp(w) exp(w ′ ) + O(exp(2w ′ )), which
+gets arbitrarily close to 1 as we decrease w ′ .
+4 Slice normalized DMLNs
+
+As we demonstrated in Section 3, the root cause of the weaknesses of an ordinarily unrolled CRF
+lies in that ˜P (Yt = yt , Yt−1 = yt−1 ) is unnormalized, i.e., Pyt
+˜P (Yt = yt , Yt−1 = yt−1 ) 6= 1 in
+general. One approach to introduce normalization could be to use maximum entropy Markov models
+(MEMM) [12]. In that case we would directly represent Pr(Yt |Xt , Yt−1 ), hence we could implement
+a sequential Monte Carlo algorithm simply directly sampling st ∼ Pr(Yt |Xt = xt , Yt−1 = st−1 )
+from slice to slice. However, in [9], it was pointed out that MEMMs suffer from the label-bias prob-
+lem to which as a solution CRFs were invented. Chain graphs (see e.g. [10]) have also the advantage
+of mixing directed and undirected components, and would be a tempting choice to use, but they could
+only model the transition between slices by either representing (i) Pr(Yt |Xt = xt , Yt−1 = st−1 ),
+
+1Exploiting inner structure according to the graphical model within the slice would in worst case still result
+in computation of the expensive partition function, or could result in a higher variance estimator the same way
+as, e.g., using a uniform proposal distribution does.
+
+4
+
+in which case the model would again suffer from the label-bias problem, or (ii) Pr(Yt , Xt |Yt−1 )
+or (iii) Pr(Xt |Yt ) and Pr(Yt |Yt−1 ). The deﬁned distributions both in (ii) and (iii) do not give a ny
+advantage performing the sampling step in (4), and similarly to CRFs would require the expensive
+computation of a normalization factor. We propose a slice normalized dynamic Markov logic net-
+work (SN-DMLN) model, which consists of directed and undirected components on the high level,
+and can be thought of as a smaller CRF nested into a larger CRF describing the transition probabil-
+ities constructed using weighted ﬁrst-order logic formula s as templates. SN-DMLNs neither suffer
+from the label bias problem, nor bear the disadvantageous properties presented in Section 3. The
+distribution deﬁned by an unrolled SN-DMLN is as follows:
+
+Pr(Y1:t = y1:t |X1:t = x1:t ) =
+
+where
+
+˜P (Yi = yi , Xi = xi )
+
+(6)
+
+P1 (Y1 )
+
+t
+Yi=1
+P (Yi = yi |Yi−1 = yi−1 ) ,
+
+1
+Z (x1:t )
+t
+Yi=2
+
+,
+
+P1 (Y1 = y1 ) =
+
+˜P (Yi = yi , Xi = xi )
+
+, P (Yi = yi |Yi−1 = yi−1 ) =
+
+˜P (Yi = yi , Yi−1 = yi−1 )
+˜P (Y1 = y1 )
+˜P (Yi = y ′
+˜P (Y1 = y ′
+Py ′
+Py ′
+i , Yi−1 = yi−1 )
+1 )
+1
+i
+and the partition function is deﬁned by:
+Z (x1:t ) = Xy1 ,...,yt(P1 (Y1 = y1 )
+P (Yi = yi |Yi−1 = yi−1 )) .
+t
+t
+Yi=1
+Yi=2
+P (Yt = yt |Yt−1 = yt−1 ) is deﬁned by a two-slice Markov logic network (CRF), which de scribes
+the state transitions probabilities in a compact way. If we hide the details of this nested CRF compo-
+nent and treat it as one potential, we could represent the distribution in (6) by regular chain graphs or
+CRFs; however we would lose then the compactness the nested CRF provides for describing the dis-
+tribution. Similarly, we could collapse the variables at every time slice into one and could use a DBN
+(or again a chain graph), but it would need exponentially more entries in its conditional probability
+tables. If ˜P (Yi = yi , Xi = xi ) does not have any information content , the probability distribution
+deﬁned in (6) reduces to P1 (Y1 = y1 ) Qt
+i=2 P (Yi = yi |Yi−1 = yi−1 ), which is a time-homogeneous
+Markov chain 2 , hence this model clearly does not have Properties 1 and 2, no matter what formulas
+are present in the knowledge base. Furthermore, we do not have to compute the partition function
+between the slices, because equation (5) shows, drawing a sample yt ∼ ˜P (Yt , Yt−1 = yt−1 ) while
+keeping the value yt−1 ﬁxed is equivalent to sampling from P (Yt |Yt−1 = yt−1 ), the quantity present
+in equation (6). This means that using our model one can avoid estimating Z (yt−1 ). To learn the
+parameters of the model we will maximize the conditional log-likelihood (L) of the data. We use a
+modi ﬁed version of a hill climbing algorithm. The modi ﬁcati
+on is needed, because in our case L is
+not necessarily concave. We will partition the weights (parameters) of our model based on whether
+they belong to transition or to emission part of the model. The gradient of the L of a data sequence
+d = y1 , x1 , . . . , yt , xt w.r.t. an emission parameter we (to which feature ne belongs) is:
+P r(Y |X=x) " t
+ne (Yi , xi )# ,
+t
+Xi=1
+Xi=1
+ne (yi , xi ) − E
+which is analogous to what one would expect for CRFs. However, for a transition parameter wtr
+(belonging to feature ntr ) we get something different:
+t−1
+t
+Xi=1
+Xi=1
+ntr (yi+1 , yi ) −
+t−1
+P r(Y |X=x)· t−1
+P ( ˜Yi+1 |Yi ) hntr ( ˜Yi+1 , Yi )i ¸ .
+Xi=1
+Xi=1
+− E
+ntr (Yi+1 , Yi ) −
+E
+(Note that, Ld is concave w.r.t.
+the emission parameters, i.e., when the transition parameters are
+kept ﬁxed, allowing the transition parameters to vary makes Ld no longer concave.) In (8) the ﬁrst
+
+P (Yi+1 |yi ) [ntr (Yi+1 , Yi = yi )]
+E
+
+∂Ld
+∂we
+
+=
+
+∂Ld
+∂wtr
+
+=
+
+(7)
+
+(8)
+
+2Note that, in the SN-DMLN model the uniformity of ˜P (Yi = yi , Xi = xi ) is a stronger assumption than
+the independence of Xi and Yi .
+
+5
+
+friendships reﬂect
+people’s similarity in
+smoking habits
+symmetry and
+reﬂexivity of
+friendship
+persistence of
+smoking
+
+people with different smoking
+habits hang out separately
+
+Smokes(p1 , t) ∧ ¬Smokes(p2 , t) ∧ (p1 6= p2 ) ⊃ ¬F riends(p1 , p2 , t)
+Smokes(p1 , t) ∧ Smokes(p2 , t) ∧ (p1 6= p2 ) ⊃ F riends(p1 , p2 , t)
+¬Smokes(p1 , t) ∧ ¬Smokes(p2 , t) ∧ (p1 6= p2 ) ⊃ F riends(p1 , p2 , t)
+¬F riends(p1 , p2 , t) ⊃ ¬F riends(p2 , p1 , t)
+F riends(p1 , p2 , t) ⊃ F riends(p2 , p1 , t)
+F riends(p, p, t)
+Smokes(p, t) ⊃ Smokes(p, t + 1)
+¬Smokes(p, t) ⊃ ¬Smokes(p, t + 1)
+H angout(p1 , g1 , t) ∧ H angout(p2 , g2 , x) ∧ Smokes(p1 , t)∧
+(p1 6= p2 ) ∧ (g1 6= g2 ) ⊃ ¬Smokes(p2 , t)
+H angout(p1 , g1 , t) ∧ H angout(p2 , g2 , t) ∧ ¬Smokes(p1 , t)∧
+(p1 6= p2 ) ∧ (g1 6= g2 ) ⊃ Smokes(p2 , t)
+
+Table 1: Formulas in the knowledge base
+
+∂Ld
+∂wtr
+
+=
+
+(9)
+
+two and the last two terms can be grouped together. The ﬁrst gr oup would represent the gradient
+in the case of uninformative observations, i.e., when the model simpli ﬁes to a Markov chain with
+a compactly represented transition probability distribution. The second group is the expected value
+of the expression in the ﬁrst group. The ﬁrst three terms corr
+espond to the gradient of a concave
+function; while the fourth term corresponds to the gradient of a convex function, so the function as
+a whole is not guaranteed to be maximized by convex optimization techniques alone. Therefore, we
+chose a heuristic for our optimization algorithm which gradually increases the effects of the second
+group in the gradient. More precisely, we always compute the gradient w.r.t. wo according to (7),
+but w.r.t. wtr we use:
+t
+Xi=1
+ntr (yi+1 , yi ) −
+t−1
+P r(Y |X=x)· t
+P ( ˜Yi+1 |Yi ) hntr ( ˜Yi+1 , Yi )i ¸
+Xi=1
+Xi=1
+− αE
+E
+where α is kept at the value of 0 until convergence, and then gradually increased from 0 to 1 to
+converge to the nearest local optimum. In Section 5, we experimentally demonstrate that this heuris-
+tic provides reasonably good results, hence we did not turn to more sophisticated algorithms. The
+rationale behind our heuristic is that if ˜P (Yi = yi , Xi = xi ) had truly no information content, then
+for α = 0 we would ﬁnd the global optimum, and as we increase α we are taking into account that
+the observations are correlated with the hidden variables with an increasing weight.
+5 Experiments
+
+t−1
+Xi=1
+ntr (Yi+1 , Yi ) −
+
+P (Yi+1 |yi ) [ntr (Yi+1 , yi )]
+E
+
+For our experiments we extended the Probabilistic Consistency Engine (PCE) [3], a Markov logic
+implementation that has been used effectively in different problem domains. For training, we
+used 10000 samples for the unrolled CRF and 100 particles and 100 samples for approximat-
+ing the conditional expectations in (9) for the SN-DMLN to estimate the gradients. For infer-
+ence we used 10000 samples for the CRF and 10000 particles for the mixed model. The sam-
+pling algorithm we relied on was MC-SAT [15]. Our example training data set was a modi-
+ﬁed version of the dynamic social network example [7, 2]. The hidden predicates in our knowl-
+edge base were Smokes(person, time), F riends(person1 , person2 , time) and the observable
+was H angout(person, group, time). The goal of inference was to predict which people could
+potentially be friends, based on the similarity in their smoking habits, which similarity could be in-
+ferred based on the groups the individuals hang out. We generated training and test data as follows:
+there were two groups g1 , g2 , one for smokers and one for non-smokers. Initially 2 people were
+randomly chosen to be smokers and 2 to be non-smokers. People with the same smoking habits
+can become friends at any time step with probability 1 − 0.05α, and a smoker and a non-smoker
+can become friends with probability 0.05α. Every 5th time step (starting with t = 0) people hang
+out in groups and for each person the probability of joining one of the groups is 1 − 0.05α. With
+probability 1 − 0.05α, everyone spends time with the group reﬂecting their smokin g habits, and with
+probability 0.05α they go to hang out with the other group. The rest of the days people do not hang
+out. The smoking habits persist, i.e., a smoker stays a smoker and a non-smoker stays a non-smoker
+at the next time step with probability 1 − 0.05α. In our two conﬁgurations we had α = 0 (deter-
+ministic case) and α = 1 (non-deterministic case). The weights of the clauses we learned using the
+SN-DMLN and the CRF unrolled models are in Table 1.
+We used chains with length 5, 10, 20 and 40 as training data, respectively. For each chain we had
+40, 20, 10 and 5 examples both for the training and for testing, respectively. In our experiments
+we compared three types of inference, and measured the prediction quality for the hidden predicate
+F riends by assigning true to every ground atom the marginal probability of which was greater than
+
+6
+
+length
+
+α = 0
+
+α = 1
+
+accuracy
+SN MAR MC-SAT
+1.0
+0.40
+1.0
+0.97
+0.40
+1.0
+1.0
+0.40
+0.67
+0.60
+0.85
+1.0
+
+f1
+SN MAR MC-SAT
+1.0
+0.14
+1.0
+0.95
+0.14
+1.0
+1.0
+0.14
+0.49
+0.43
+0.72
+1.0
+
+accuracy
+SN MAR MC-SAT
+0.81
+0.36
+0.84
+0.77
+0.36
+0.84
+0.92
+0.55
+0.66
+0.59
+0.73
+0.88
+
+f1
+SN MAR MC-SAT
+0.69
+0.10
+0.75
+0.61
+0.11
+0.74
+0.85
+0.32
+0.47
+0.42
+0.55
+0.78
+
+5
+10
+20
+40
+
+Table 2: Accuracy and F-score results when models were trained and tested on chains with the same
+length
+
+(a) α = 0
+
+(b) α = 1
+
+Figure 1: F-score of models trained and tested on the same length of data
+
+0.55, and false if its probability was less than 0.45; otherwise we considered it as a misclassi ﬁcation.
+Prediction of Smokes was impossible in the generated data set, because the data generation was
+symmetric w.r.t to smoking and not smoking, and from the observations we could only tell that
+certain pairs of people have similar or different smoking habits, but not who smokes and who does
+not. The three methods we compared were (i) particle ﬁlterin g in the SN-DMLN model (SN), (ii) the
+approximate online inference algorithm of [2], which projects the inferred distribution of the random
+variables at the previous slice to the product of their marginals, and incorporates this information
+into a two slice MLN to infer the probabilities at the next slice (we re-implemented the algorithm
+in PCE) (MAR), and (iii) using a general inference algorithm (MC-SAT [15]) for a CRF which is
+always completely unrolled in every time step (UNR). In UNR and MAR the same CRF models
+were used. The training of the SN-DMLN model took approximately for 120 minutes for all the test
+cases, while for the CRF model, it took 120, 145, 175 and 240 minutes respectively. The inference
+over the entire test set, took approximately 6 minutes for SN and MAR in every test case, while
+UNR required 5, 8, 12 and 40 minutes for the different test cases. The accuracy and F-scores for the
+different test cases are summarized in Table 2 and the F-scores are plotted in Fig. 1.
+SN outperforms MAR, because as we see that in the knowledge base, MAR can only conclude that
+people have the same or different smoking habits on the days when people hang out (every 5th time
+step), and the marginal distributions of Smokes do not carry enough information about which pair
+of people have different smoking habits, hence the quality of MAR’s prediction decreases on days
+when people do not hang out. The performance of SN and MAR stays the same as we increase
+the length of the chain while the performance of UNR degrades. This is most pronounced in the
+deterministic case (α = 0). This can be explained by that MC-SAT requires more sampling steps to
+maintain the same performance as the chain length increases.
+To demonstrate that if we use the same number of particles in SN as number of samples in UNR,
+the performance of SN stays approximately the same while the performance of UNR degrades over
+time, we trained both the CRF and SN-DMLN on length 5 chains where both SN and UNR were
+performing equally well and used test sets of different lengths up to length 150. F-scores are plotted
+in Fig. 2.
+We see from Fig. 2 that SN outperforms both UNR and MAR as the chain length increases. More-
+over, UNR’s performance is clearly decreasing as the length of the chain increases.
+6 Conclusion
+
+In this paper, we explored the theoretical and practical questions of unrolling a sequential Markov
+logic knowledge base into different probabilistic models. The theoretical issues arising in a CRF-
+
+7
+
+(a) α = 0
+
+(b) α = 1
+
+Figure 2: F-score of models trained and tested on different length of data
+
+based MLN unrolling are a warning that unexpected results may occur if the observations are weakly
+correlated with the hidden variables. We gave a qualitative justi ﬁcation why this phenomenon is
+more of a theoretical concern in domains lacking deterministic constraints. We demonstrated that
+the CRF based unrolling can be outperformed by a model that mixes directed and undirected com-
+ponents (the proposed model does not suffer from any of the theoretical weaknesses, nor from the
+label-bias problem).
+From a more practical point of view, we showed that our proposed model provides computational
+savings, when the data has to be processed in a sequential manner. These savings are due to that
+we do not have to unroll a new CRF at every time step, or estimate a partition function which is re-
+sponsible for normalizing the product of clique potentials appearing in two consecutive slices. The
+previously used approximate inference methods in dynamic MLNs either relied on belief propaga-
+tion or assumed that approximating the distribution at every time step by the product of the marginals
+would not cause any error. It is important to note that, although in our paper we focused on marginal
+inference, ﬁnding the most likely state sequence could be do ne using the generated particles. Al-
+though the conditional log-likelihood of the training data in our model may be non-concave so that
+hill climbing based approaches could fail to settle in a global maximum, we proposed a heuristic
+for weight learning and demonstrated that it could train our model so that it performs as well as
+conditional random ﬁelds. Although training the mixed mode l might have a higher computational
+cost than training a conditional random ﬁeld, but this cost i s amortized over time, since in applica-
+tions inference is performed many times, while weight learning only once. Designing more scalable
+weight learning algorithms is among our future goals.
+7 Acknowledgments
+
+We thank Daniel Gildea for his insightful comments.
+This research was supported by grants from ARO (W991NF-08-1-0242), ONR (N00014-11-10417),
+NSF (IIS-1012017), DOD (N00014-12-C-0263), and a gift from Intel.
+References
+[1] Pedro Domingos and Daniel Lowd. Markov Logic: An Interface Layer for Arti ﬁcial Intelli-
+gence. Synthesis Lectures on Arti ﬁcial Intelligence and Machine Learning. Morgan & Clay-
+pool Publishers, 2009.
+[2] Thomas Geier and Susanne Biundo. Approximate online inference for dynamic markov logic
+networks. In Tools with Arti ﬁcial Intelligence (ICTAI), 2011 23rd IEEE I nternational Confer-
+ence on, pages 764–768, 2011.
+[3] Shalini Ghosh, Natarajan Shankar, and Sam Owre. Machine reading using markov logic net-
+works for collective probabilistic inference. In In Proceedings of ECML-CoLISD., 2011.
+[4] Vibhav Gogate and Rina Dechter. Samplesearch: Importance sampling in presence of deter-
+minism. Artif. Intell., 175(2):694–729, 2011.
+[5] Roger A. Horn and Charles R. Johnson. Matrix Analysis. Cambridge University Press, 1990.
+[6] Dominik Jain, Andreas Barthels, and Michael Beetz. Adaptive Markov Logic Networks:
+Learning Statistical Relational Models with Dynamic Parameters.
+In 19th European Con-
+ference on Arti ﬁcial Intelligence (ECAI) , pages 937–942, 2010.
+
+8
+
+[7] K. Kersting, B. Ahmadi, and S. Natarajan. Counting belief propagation. In J. Bilmes A. Ng,
+editor, Proceedings of the 25th Conference on Uncertainty in Arti ﬁc ial Intelligence (UAI –09) ,
+Montreal, Canada, June 18–21 2009.
+[8] D. Koller and N. Friedman. Probabilistic Graphical Models: Principles and Techniques. MIT
+Press, 2009.
+[9] John Lafferty. Conditional random ﬁelds: Probabilisti c models for segmenting and labeling
+sequence data. pages 282–289. Morgan Kaufmann, 2001.
+[10] Steffen Lauritzen and Thomas S. Richardson. Chain graph models and their causal interpreta-
+tions. B, 64:321–361, 2001.
+[11] B. Limketkai, D. Fox, and Lin Liao. CRF-Filters: Discriminative Particle Filters for Sequential
+State Estimation. In Robotics and Automation, 2007 IEEE International Conference on, pages
+3142–3147, 2007.
+[12] Andrew McCallum, Dayne Freitag, and Fernando C. N. Pereira. Maximum entropy markov
+models for information extraction and segmentation. In Proceedings of the Seventeenth In-
+ternational Conference on Machine Learning, ICML ’00, pages 591–598, San Francisco, CA,
+USA, 2000. Morgan Kaufmann Publishers Inc.
+[13] Kevin Patrick Murphy. Dynamic bayesian networks: representation, inference and learning.
+PhD thesis, 2002. AAI3082340.
+[14] Aniruddh Nath and Pedro Domingos. Efﬁcient belief prop agation for utility maximization and
+repeated inference, 2010.
+[15] Hoifung Poon and Pedro Domingos. Sound and efﬁcient inf erence with probabilistic and deter-
+ministic dependencies. In Proceedings of the 21st national conference on Arti ﬁcial in telligence
+- Volume 1, AAAI’06, pages 458–463. AAAI Press, 2006.
+[16] G. Potamianos and J. Goutsias. Stochastic approximation algorithms for partition function
+estimation of Gibbs random ﬁelds.
+IEEE Transactions on Information Theory, 43(6):1948–
+1965, 1997.
+[17] Adam Sadilek and Henry Kautz. Recognizing multi-agent activities from GPS data. In Twenty-
+Fourth AAAI Conference on Arti ﬁcial Intelligence , 2010.
+[18] R. Salakhutdinov. Learning and evaluating Boltzmann machines. Technical Report UTML TR
+2008-002, Department of Computer Science, University of Toronto, June 2008.
+[19] Charles Sutton, Andrew McCallum, and Khashayar Rohanimanesh. Dynamic conditional ran-
+dom ﬁelds: Factorized probabilistic models for labeling an d segmenting sequence data. J.
+Mach. Learn. Res., 8:693–723, May 2007.
+
+9
+
+

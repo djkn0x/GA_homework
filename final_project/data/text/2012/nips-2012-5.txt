@@ -1,0 +1,750 @@
+Active Learning of Model Evidence
+Using Bayesian Quadrature
+
+Michael A. Osborne
+University of Oxford
+mosb@robots.ox.ac.uk
+
+David Duvenaud
+University of Cambridge
+dkd23@cam.ac.uk
+
+Roman Garnett
+Carnegie Mellon University
+rgarnett@cs.cmu.edu
+
+Carl E. Rasmussen
+University of Cambridge
+cer54@cam.ac.uk
+
+Stephen J. Roberts
+University of Oxford
+sjrob@robots.ox.ac.uk
+
+Zoubin Ghahramani
+University of Cambridge
+zoubin@eng.cam.ac.uk
+
+Abstract
+
+Numerical integration is a key component of many problems in scienti ﬁc comput-
+ing, statistical modelling, and machine learning. Bayesian Quadrature is a model-
+based method for numerical integration which, relative to standard Monte Carlo
+methods, offers increased sample efﬁciency and a more robus t estimate of the
+uncertainty in the estimated integral. We propose a novel Bayesian Quadrature
+approach for numerical integration when the integrand is non-negative, such as
+the case of computing the marginal likelihood, predictive distribution, or normal-
+ising constant of a probabilistic model. Our approach approximately marginalises
+the quadrature model’s hyperparameters in closed form, and introduces an ac-
+tive learning scheme to optimally select function evaluations, as opposed to using
+Monte Carlo samples. We demonstrate our method on both a number of synthetic
+benchmarks and a real scienti ﬁc problem from astronomy.
+
+1
+
+Introduction
+
+The ﬁtting of complex models to big data often requires compu tationally intractable integrals to be
+approximated. In particular, machine learning applications often require integrals over probabilities
+Z = hℓi = Z ℓ(x)p(x)dx,
+where ℓ(x) is non-negative. Examples include computing marginal likelihoods, partition functions,
+predictive distributions at test points, and integrating over (latent) variables or parameters in a model.
+While the methods we will describe are applicable to all such problems, we will explicitly con-
+sider computing model evidences, where ℓ(x) is the unnormalised likelihood of some parameters
+x1 , . . . , xD . This is a particular challenge in modelling big data, where evaluating the likelihood
+over the entire dataset is extremely computationally demanding.
+
+(1)
+
+There exist several standard randomised methods for computing model evidence, such as annealed
+importance sampling (A I S) [1], nested sampling [2] and bridge sampling. For a review, see [3].
+These methods estimate Z given the value of the integrand on a set of sample points, whose size is
+limited by the expense of evaluating ℓ(x). It is well known that convergence diagnostics are often
+unreliable for Monte Carlo estimates of partition functions [4, 5, 6]. Most such algorithms also have
+parameters which must be set by hand, such as proposal distributions or annealing schedules.
+
+An alternative, model-based, approach is Bayesian Quadrature (BQ) [7, 8, 9, 10], which speci ﬁes
+a distribution over likelihood functions, using observations of the likelihood to infer a distribution
+
+1
+
+ℓ(x)
+
+ 
+
+ 
+
+Z
+
+samples
+G P mean
+G P mean ± SD
+expected Z
+p(Z |samples)
+draw from G P
+draw from G P
+draw from G P
+
+x
+Figure 1: Model-based integration computes a posterior for the integral Z = R ℓ(x)p(x)dx, condi-
+tioned on sampled values of the function ℓ(x). For this plot, we assume a Gaussian process model
+for ℓ(x) and a broad Gaussian prior p(x). The variously probable integrands permitted under the
+model will give different possible values for Z , with associated differing probabilities.
+
+for Z (see Figure 1). This approach offers improved sample efﬁcie ncy [10], crucial for expensive
+samples computed on big data. We improve upon this existing work in three ways:
+Log-GP: [10] used a G P prior on the likelihood function; this is a poor model in this case, unable to
+express the non-negativity and high dynamic range of most likelihood functions. [11] introduced an
+approximate means of exploiting a G P on the logarithm of a function (henceforth, a log-G P), which
+better captures these properties of likelihood functions. We apply this method to estimate Z , and
+extend it to compute Z ’s posterior variance and expected variance after adding a sample.
+Active Sampling: Previous work on BQ has used randomised or a priori ﬁxed sampling schedules.
+We use active sampling, selecting locations which minimise the expected uncertainty in Z .
+Hyperparameter Marginalisation: Uncertainty in the hyperparameters of the model used for
+quadrature has previously been ignored, leading to overconﬁdence in the estimate of Z . We in-
+troduce a tractable approximate marginalisation of input scale hyperparameters.
+
+From a Bayesian perspective, numerical integration is fundamentally an inference and sequential
+decision making problem: Given a set of function evaluations, what can we infer about the integral,
+and how do we decide where to next evaluate the function. Monte Carlo methods, including MCMC,
+provide simple but generally suboptimal and non-adaptive answers: compute a sample mean, and
+evaluate randomly. Our approach attempts to learn about the integrand as it evaluates the function
+at different points, and decide based on information gain where to evaluate next. We compare
+our approach against standard Monte Carlo techniques and previous Bayesian approaches on both
+simulated and real problems.
+
+2 Bayesian Quadrature
+
+Bayesian quadrature [8, 10] is a means of performing Bayesian inference about the value of a
+potentially nonanalytic integral, hf i := R f (x)p(x)dx. For clarity, we henceforth assume the do-
+main of integration X = R, although all results generalise to Rn . We assume a Gaussian density
+p(x) := N (x; νx , λx ), although other convenient forms, or, if necessary, the use of an importance
+re-weighting trick (q(x) = q(x)/p(x)p(x) for any q(x)), allow any other integral to be approximated.
+Quadrature involves evaluating f (x) at a vector of sample points xs , giving f s := f (xs ). Often this
+evaluation is computationally expensive; the consequent sparsity of samples introduces uncertainty
+about the function f between them, and hence uncertainty about the integral hf i.
+Previous work on BQ chooses a Gaussian process (G P) [12] prior for f , with mean µf and Gaussian
+covariance function
+
+K (x1 , x2 ) := h2 N (x1 ; x2 , w) .
+Here hyperparameter h species the output scale, while hyperparameter w deﬁnes a (squared) input
+scale over x. These scales are typically ﬁtted using type two maximum lik elihood (M L I I); we will
+later introduce an approximate means of marginalising them in Section 4. We’ll use the following
+dense notation for the standard G P expressions for the posterior mean m, covariance C , and variance
+
+(2)
+
+2
+
+)
+x
+(
+ℓ
+
+)
+x
+(
+ℓ
+g
+o
+l
+
+input scale
+
+input scale
+
+x
+x
+Figure 2: A G P ﬁtted to a peaked log-likelihood function is typically a bet
+ter model than G P ﬁt to
+the likelihood function (which is non-negative and has high dynamic range). The former G P also
+usually has the longer input scale, allowing it to generalise better to distant parts of the function.
+
+V , respectively: mf |s (x⋆ ) := m(f⋆ |f s ), Cf |s (x⋆ , x′
+⋆ |f s ) and Vf |s (x⋆ ) := V (f⋆ |f s ).
+⋆ ) := C (f⋆ , f ′
+Note that this notation assumes implicit conditioning on hyperparameters. Where required for dis-
+ambiguation, we’ll make this explicit, as per mf |s,w (x⋆ ) := m(f⋆ |f s , w) and so forth.
+Variables possessing a multivariate Gaussian distribution are jointly Gaussian distributed with any
+afﬁne transformations of those variables. Because integra tion is afﬁne, we can hence use computed
+samples f s to perform analytic Gaussian process inference about the value of integrals over f (x),
+such as hf i. The mean estimate for hf i given f s is
+m(hf i|f s ) = Z Z hf i p(hf i|f ) p(f |f s ) dhf i df
+= Z Z hf i δ(cid:18)hf i − Z f (x) p(x) dx(cid:19) N (cid:0)f ; mf |s , Cf |s (cid:1) dhf i df
+= Z mf |s (x) p(x) dx ,
+which is expressible in closed-form due to standard Gaussian identities [10]. The corresponding
+closed-form expression for the posterior variance of hf i lends itself as a natural convergence diag-
+nostic. Similarly, we can compute the posteriors for integrals over the product of multiple, indepen-
+dent functions. For example, we can calculate the posterior mean m(hf gi|f s , g s ) for an integral
+R f (x)g(x)p(x)dx. In the following three sections, we will expand upon the improvements this
+paper introduces in the use of Bayesian Quadrature for computing model evidences.
+
+(3)
+
+3 Modelling Likelihood Functions
+
+We wish to evaluate the evidence (1), an integral over non-negative likelihoods, ℓ(x). Assigning
+a standard G P prior to ℓ(x) ignores prior information about the range and non-negativity of ℓ(x),
+leading to pathologies such as potentially negative evidences (as observed in [10]). A much better
+prior would be a G P prior on log ℓ(x) (see Figure 2). However, the resulting integral is intractable,
+m(Z |log ℓs ) = Z (cid:16)Z exp(cid:0)log ℓ(x)(cid:1)p(x) dx(cid:17)N (cid:0)log ℓ; mlog ℓ|s , Clog ℓ|s (cid:1) dlog ℓ ,
+as (4) does not possess the afﬁne property exploited in (3). T o progress, we adopt an approximate
+inference method inspired by [11] to tractably integrate under a log-G P prior.1 Speci ﬁcally, we
+linearise the problematic exponential term around some point log ℓ0 (x), as
+(5)
+exp(cid:0)log ℓ(x)(cid:1) ≃ exp(cid:0)log ℓ0 (x)(cid:1) + exp(cid:0)log ℓ0 (x)(cid:1)(cid:0)log ℓ(x) − log ℓ0 (x)(cid:1)
+The integral (4) consists of the product of Z and a G P for log ℓ. The former is ∼ exp log ℓ, the
+latter is ∼ exp(cid:0)−(log ℓ − m)2 (cid:1), effectively permitting only a small range of log ℓ functions. Over
+this narrow region, it is reasonable to assume that Z does not vary too dramatically, and can be
+approximated as linear in log ℓ, as is assumed by (5). Using this approximation, and making the
+deﬁnition ∆log ℓ|s := mlog ℓ|s − log ℓ0 , we arrive at
+m(Z |log ℓs ) ≃ m(Z |log ℓ0 , log ℓs ) := Z ℓ0 (x)p(x) dx + Z ℓ0 (x)∆log ℓ|s (x)p(x) dx .
+1 In practice, we use the transform log (ℓ(x) + 1), allowing us to assume the transformed quantity has zero
+mean. For the sake of simplicity, we omit this detail in the following derivations.
+
+(4)
+
+(6)
+
+3
+
+40
+
+20
+
+0
+
+)
+x
+(
+ℓ
+
+ 
+
+ 
+
+ℓ(xs )
+ℓ(x)
+m(cid:0)ℓ(x)|ℓ(xs )(cid:1)
+ﬁnal approx
+
+)
+x
+(
+ℓ
+g
+o
+l
+
+4
+
+2
+
+0
+
+ 
+
+ 
+
+log ℓ(xs )
+log ℓ(x)
+log m(cid:0)ℓ(x)|ℓ(xs )(cid:1)
+m(cid:0)log ℓ(x)|log ℓ(xs )(cid:1)
+∆c
+m(cid:0)∆log ℓ|s (x)|∆c (cid:1)
+
+x
+Figure 3: Our approximate use of a G P for log ℓ(x) improves upon the use of a G P for ℓ(x) alone.
+Here the ‘ ﬁnal approx’ is mℓ|s (1 + ∆log ℓ|s ), from (5) and (6).
+
+x
+
+We now choose ℓ0 to allow us to resolve the ﬁrst integral in (6). First, we intr oduce a secondary G P
+model for ℓ, the non-log space, and choose ℓ0 := mℓ|s , where mℓ|s is the standard G P conditional
+mean for ℓ given observations ℓ(xs ). For both G Ps2 (over both log and non-log spaces), we take
+zero prior means and Gaussian covariances of the form (2). It is reasonable to use zero prior means:
+ℓ(x) is expected to be negligible except at a small number of peaks. If a quantity is dependent upon
+the G P prior for ℓ, it will be represented as conditional on ℓs ; if dependent upon the former G P prior
+over log ℓ, it will be conditional upon log ℓs . We expect ∆log ℓ|s (x) to be small everywhere relative
+to the magnitude of log ℓ(x) (see Figure 3). Hence log ℓ0 is close to the peaks of the Gaussian over
+log ℓ, rendering our linearisation appropriate. For ℓ0 , the ﬁrst integral in (6) becomes tractable.
+Unfortunately, the second integral in (6) is non-analytic due to the log ℓ0 term within ∆log ℓ|s . As
+such, we perform another stage of Bayesian quadrature by treating ∆log ℓ|s as an unknown function
+of x. For tractability, we assume this prior is independent of the prior for log ℓ. We use another G P
+for ∆log ℓ|s , with zero prior mean and Gaussian covariance (2). A zero prior mean here is reasonable:
+∆log ℓ|s is exactly zero at xs , and tends to zero far away from xs , where both mlog ℓ|s and log ℓ0 are
+given by the compatible prior means for log ℓ and ℓ. We must now choose candidate points xc at
+which to evaluate the ∆log ℓ|s function (note we do not need to evaluate ℓ(xc ) in order to compute
+∆c := ∆log ℓ|s (xc )). xc should ﬁrstly include xs , where we know that ∆log ℓ|s is equal to zero.
+We select the remainder of xc at random on the hyper-ellipses (whose axes are deﬁned by the input
+scales for ℓ) surrounding existing observations; we expect ∆log ℓ|s to be extremised at such xc . We
+limit ourselves to a number of candidates that scales linearly with the dimensionality of the integral
+for all experiments.
+Given these candidates, we can now marginalise (6) over ∆log ℓ|s to give
+(7)
+m(Z |log ℓs ) ≃ m(Z |log ℓ0 , log ℓs , ∆c ) = m(Z |ℓs ) + m(cid:0)hℓ∆log ℓ|s i(cid:12)(cid:12)ℓs , ∆c (cid:1) ,
+where both terms are analytic as per Section 2; m(Z |ℓs ) is of the form (3). The correction factor,
+the second term in (7), is expected to be small, since ∆log ℓ|s is small. We extend the work of [11]
+to additionally calculate the variance in the evidence,
+V (Z |log ℓ0 , log ℓs , ∆c ) = S (Z | log ℓ0 , log ℓs ) − m(Z |log ℓ0 , log ℓs , ∆c )2 ,
+where the second moment is
+S (Z | log ℓ0 , log ℓs ) := m(cid:0)hℓ Clog ℓ|s ℓi(cid:12)(cid:12)log ℓs (cid:1) + m(Z |log ℓ0 , log ℓs , ∆c )2 ,
+and hence
+V (Z |log ℓ0 , log ℓs , ∆c ) = m(cid:0)hℓ Clog ℓ|s ℓi(cid:12)(cid:12)log ℓs (cid:1)
+:= Z Z mℓ|s (x)mℓ|s (x′ )Clog ℓ|s (x, x′ )p(x)p(x′ )dxdx′ ,
+which is expressible in closed form, although space precludes us from doing so. This variance can
+be employed as a convergence diagnostic; it describes our uncertainty in the model evidence Z .
+
+(10)
+
+(8)
+
+(9)
+
+2Note that separately modelling ℓ and log ℓ is not inconsistent: we use the posterior mean of the G P for ℓ
+only as a convenient parameterisation for ℓ0 ; we do not treat this G P as a full probabilistic model. While this
+modelling choice may seem excessive, this approach provides signiﬁca nt advantages in the sampling efﬁciency
+of the overall algorithm by approximately capturing the non-negativity of our integrand and allowing active
+sampling.
+
+4
+
+ 
+
+e
+c
+n
+a
+i
+r
+a
+v
+d
+e
+t
+c
+e
+p
+x
+e
+
+f (x)
+
+ 
+
+data
+mean
+variance
+approx. marginalised length scale
+true marginalised length scale
+
+x
+(a)
+
+10
+
+8
+
+6
+
+sample
+
+x
+
+(b)
+
+Figure 4: a) Integrating hyperparameters increases the marginal posterior variance (in regions whose
+mean varies as the input scales change) to more closely match the true posterior marginal variance.
+b) An example showing the expected uncertainty in the evidence after observing the likelihood
+function at that location. p(x) and l(x) are plotted at the top in green and black respectively, the
+next sample location in red. Note the model discovering a new mode on the right hand side, sampling
+around it, then moving on to other regions of high uncertainty on the left hand side.
+
+In summary, we have described a linearisation approach to exploiting a G P prior over log-likelihoods;
+this permitted the calculation of the analytic posterior mean (7) and variance (10) of Z . Note that our
+approximation will improve with increasing numbers of samples: ∆log ℓ|s will eventually be small
+everywhere, since it is clamped to zero at each observation. The quality of the linearisation can also
+be improved by increasing the number of candidate locations, at the cost of slower computation.
+
+4 Marginalising hyperparameters
+
+We now present a novel means of approximately marginalising the hyperparameters of the G P used
+to model the log-integrand, log ℓ. In previous approaches to Bayesian Quadrature, hyperparameters
+were estimated using M L I I , which approximates the likelihood as a delta function. However, ignor-
+ing the uncertainty in the hyperparameters can lead to pathologies. In particular, the reliability of
+the variance for Z depends crucially upon marginalising over all unknown quantities.
+The hyperparameters of most interest are the input scales w for the G P over the log-likelihood;
+these hyperparameters can have a powerful inﬂuence on the ﬁt
+to a function. We use M L I I to ﬁt all
+hyperparameters other than w . Marginalisation of w is confounded by the complex dependence of
+our predictions upon these input scales. We make the following essential approximations:
+Flat prior: We assume that the prior for w is broad, so that our posterior is the normalised likelihood.
+Laplace approximation: p(log ℓs |w) is taken as Gaussian with mean equal to the M L I I value ˆw and
+with diagonal covariance Cw , diagonal elements ﬁtted using the second derivatives of th e likelihood.
+We represent the posterior mean for log ℓ conditioned on ˆw as ˆm := mlog ℓ|s, ˆw .
+GP mean af ﬁne in w: Given the narrow width of the likelihood for w , p(log ℓ|log ℓs , w) is approx-
+imated as having a G P mean which is afﬁne in w around the M L I I values, and a constant covariance;
+mlog ℓ|s,w ≃ ˆm + ∂ ˆm
+∂w (w − ˆw) and Clog ℓ|s,w ≃ Clog ℓ|s, ˆw .
+The implication of these approximations is that the marginal posterior mean over log ℓ is simply
+˜mlog ℓ|s := mlog ℓ|s, ˆw . The marginal posterior variance is ˜Clog ℓ|s := Clog ℓ|s, ˆw + ∂ ˆm
+∂ ˆm
+∂w Cw
+∂w .
+An example of our approximate posterior is depicted in Figure 4a. Our approximations give the
+marginal posterior mean for Z :
+˜m(Z |log ℓ0 , log ℓs , ∆c ) := m(Z |log ℓ0 , log ℓs , ∆c , ˆw) ,
+of the form (7). The marginal posterior variance
+˜V (Z |log ℓ0 , log ℓs , ∆c ) = Z Z dx dx′mℓ|s (x) mℓ|s (x′ )(cid:18)Clog ℓ|s (x, x′ ) +
+
+∂ ˆm(x)
+∂w
+
+(11)
+
+Cw
+
+∂ ˆm(x′ )
+∂w (cid:19)
+(12)
+
+is possible, although laborious, to express analytically, as with (10).
+
+5
+
+5 Active Sampling
+
+can be chosen by any method, in
+One major beneﬁt of model-based integration is that samples
+contrast to Monte Carlo methods, which typically must sample from a speci ﬁc distribution.
+In
+this section, we describe a scheme to select samples xs sequentially, by minimising the expected
+uncertainty in the evidence that remains after taking each additional sample.3 We take the variance
+in the evidence as our loss function, and proceed according to Bayesian decision theory.
+
+Surprisingly, the posterior variance of a G P model with ﬁxed hyperparameters does not depend
+on the function values at sampled locations at all; only the location of those samples matters. In
+traditional Bayesian quadrature, the evidence is an afﬁne t ransformation of the sampled likelihood
+values, hence its estimate for the variance in the evidence is also independent of likelihood values.
+As such, active learning with ﬁxed hyperparameters is point
+less, and the optimal sampling design
+can be found in advance [13].
+
+In Section 3, we took Z as an afﬁne transform of the log-likelihood, which we model w ith a G P. As
+the afﬁne transformation (5) itself depends on the function values (via the dependence of log ℓ0 ), the
+conclusions of the previous paragraph do not apply, and active learning is desirable. The uncertainty
+over the hyperparameters of the G P further motivates active learning: without assuming a priori
+knowledge of the hyperparameters, we can’t evaluate the G P to precompute a sampling schedule.
+The approximate marginalisation of hyperparameters permits an approach to active sampling that
+acknowledges the inﬂuence new samples may have on the poster ior over hyperparameters.
+Active sampling selects a new sample xa so as to minimise the expected variance in the evidence
+after adding the sample to the model of ℓ. The objective is therefore to choose the xa that minimises
+the expected loss; xa = argminxa (cid:10)V (Z |log ℓ0 , log ℓs,a ) | log ℓ0 , log ℓs (cid:11) (note xa is implicitly
+conditioned on, as usual for function inputs) where the expected loss is
+(cid:10)V (Z |log ℓ0 , log ℓs,a ) | log ℓ0 , log ℓs (cid:11) = S (Z | log ℓ0 , log ℓs ) − Z m(Z |log ℓ0 , log ℓa,s , ∆c )2
+∂ ˆmT
+× N (cid:18)log ℓa ; ˆma , ˆCa +
+∂w (cid:19) dlog ℓa ,
+∂ ˆma
+a
+(13)
+Cw
+∂w
+ˆma := m(log ℓa |log ℓs , ˆw) and ˆCa := V (log ℓa |log ℓs , ˆw). The ﬁrst term in (13),
+and we deﬁne
+the second moment, is independent of the selection of xa and can hence be safely ignored for active
+sampling (true regardless of the model chosen for the likelihood). The second term, the negative
+expected squared mean, can be resolved analytically4 for any trial xa (we omit the laborious details).
+Importantly, we do not have to make a linearisation approximation for this new sample. That is, the
+G P posterior over log ℓa can be fully exploited when performing active sampling.
+In order to minimise the expected variance, the objective in (13) encourages the maximisation of the
+expected squared mean of Z . Due to our log-G P model, one means the method can use to do this
+is to seek points where the log-likelihood is predicted to be large: which we call exploitation. The
+objective in (13) naturally balances exploitation against exploration: the choice of points where our
+current variance in the log-likelihood is signi ﬁcant (see F igure 4b). Note that the variance for log ℓa
+is increased by approximate integration over hyperparameters, encouraging exploration.
+
+6 Experiments
+
+We now present empirical evaluation of our algorithm in a variety of different experiments.
+
+Metrics: We judged our methods according to three metrics, all averages over N similar exper-
+iments indexed by i. Deﬁne Zi as the ground truth evidence for the ith experiment, m(Zi ) as its
+estimated mean and V (Zi ) as its predicted variance. Firstly, we computed the average log error,
+
+3We also expect such samples to be useful not just for estimating the evidence, but also for any other related
+expectations, such as would be required to perform prediction using the model.
+4Here we use the fact that R exp(c y) N (cid:0)y ; m, σ2 (cid:1) dy = exp(c m + 1/2 c2σ2 ). We assume that ∆log ℓ|s
+does not depend on log ℓa , only its location xa : we know ∆(xa ) = 0 and assume ∆log ℓ|s elsewhere remains
+unchanged.
+
+6
+
+N PN
+A L E := 1
+i=1 |log m(Zi ) − log Zi | . Next we computed the negative log-density of the truth,
+assuming experiments are independent, − log p(Z ) = − PN
+i=1 log N (Zi ; m(Zi ), V (Zi )), which
+quanti ﬁes the accuracy of our variance estimates. We also co mputed the calibration C , deﬁned
+as the fraction of experiments in which the ground truth lay within our 50% conﬁdence interval
+(cid:0)m(Zi ) − 0.6745√V (Zi ), m(Zi ) + 0.6745√V (Zi )(cid:1). Ideally, C would be 50%: any higher, and a
+method is under-conﬁdent, any lower and it is over-conﬁdent
+.
+Methods: We ﬁrst compared against simple Monte Carlo ( SMC).
+SMC generates samples
+x1 , . . . , xN from p(x), and estimates Z by ˆZ = 1/N PN
+n=1 ℓ(xn ). An estimate of the variance
+of ˆZ is given by the standard error of ℓ(x). As an alternative Monte Carlo technique, we imple-
+mented Annealed Importance Sampling (A I S) using a Metropolis-Hastings sampler. The inverse
+temperature schedule was linear as in [10], and the proposal width was adjusted to attain approxi-
+mately a 50% acceptance rate. Note that a single A I S chain provides no ready means of determining
+the posterior variance for its estimate of Z . Our ﬁrst model-based method was Bayesian Monte
+Carlo (BMC) – the algorithm used in [10]. Here samples were drawn from th e A I S chain above, and
+a G P was ﬁt to the likelihood samples. For this and other methods, where not otherwise mentioned,
+G P hyperparameters were selected using M L I I .
+
+We then tested four novel methods. Firstly, Bayesian Quadrature (BQ), which employed the lin-
+earisation approach of Section 3 to modeling the log-transformed likelihood values. The samples
+supplied to it were drawn from the same A I S chain as used above, and 400 candidate points were per-
+mitted. BQ* is the same algorithm as BQ but with hyperparameters approximately marginalised, as
+per Section 4. Note that this inﬂuences only the variance of t he estimate; the means for BQ and BQ *
+are identical. The performance of these methods allow us to quantify to what extent our innovations
+improve estimation given a ﬁxed set of samples.
+
+Next, we tested a novel algorithm, Doubly Bayesian Quadrature (BBQ). The method is so named
+for the fact that we use not only Bayesian inference (with a G P over the log-transformed likelihood)
+to compute the posterior for the evidence, but also Bayesian decision theory to select our samples
+actively, as described in Section 5. BBQ* is identical, but with hyperparameters approximately
+marginalised. Both algorithms demonstrate the inﬂuence of active sampling on our performance.
+
+Problems: We used these methods to evaluate evidences given Gaussian priors and a variety of
+likelihood functions. As in [10] and [11], we focus on low numbers of samples; we permitted tested
+methods 150 samples on synthetic integrands, and 300 when using real data. We are motivated by
+real-world, big-data, problems where evaluating likelihood samples is expensive, making it desirable
+to determine the techniques for evidence estimation that can operate best when permitted only a
+small number of samples. Ground truth Z is available for some integrals; for the non-analytic
+integrals, Z was estimated by a run of SMC with 105 samples.
+We considered seven synthetic examples. We ﬁrstly tested us ing single Gaussians, in one, four,
+ten and twenty dimensions. We also tested on mixtures of two Gaussians in one dimension (two
+examples, alternately widely separated and overlapping) and four dimensions (a single example).
+
+We additionally tested methods on a real scienti ﬁc problem: detecting a damped Lyman-α absorber
+(D LA) between the Earth and an observed quasar from spectrographic readings of the quasar. D LAs
+are large objects consisting primarily of neutral hydrogen gas. The statistical properties of D LAs
+inform us about the distribution of neutral hydrogen in the universe, which is of fundamental cos-
+mological importance. We model the quasar spectra using a G P; the presence of a D LA is repre-
+sented as an observation fault with known dynamics [14]. This model has ﬁve hyperparameters to
+be marginalised, to which we assign priors drawn from the large corpus of data obtained from the
+Sloan Digital Sky Survey (SD S S) [15]. We tested over four datasets; the expense of evaluating a G P
+likelihood sample on the large datasets available from the SD S S (140TB of data have been released
+in total) motivates the small sample sizes considered.
+
+Evaluation Table 1 shows combined performance on the synthetic integrands listed above. The
+calibration scores C show that all methods5 are systematically overconﬁdent, although our ap-
+proaches are at least as well calibrated as alternatives. On average, BBQ * provides an estimate
+
+5Because a single A I S chain gives no estimate of uncertainty, it has no likelihood or calibration scores.
+
+7
+
+×10−3
+4
+
+3
+Z
+2
+
+1
+
+10
+
+20
+30
+40
+Number of samples
+(a)
+
+SMC
+BMC
+BBQ*
+True value
+
+ 
+
+)
+Z
+(
+p
+g
+o
+l
+−
+
+2
+
+0
+
+−2
+
+−4
+
+−6
+
+50
+
+ 
+
+50
+
+100
+Number of samples
+(b)
+
+150
+
+Figure 5: a) The posterior distribution over Z for several methods on a one-dimensional example
+as the number of samples increases. Shaded regions denote ±2 SD’s from the mean. The shaded
+regions for SMC and BMC are off the vertical scale of this ﬁgure. b) The log density of
+the true
+evidence for different methods (colours identical to those in a), compared to the true Z (in black).
+The integrand is the same as that in Figure 4b.
+
+Table 1: Combined Synthetic Results
+
+Table 2: Combined Real Results
+
+Method − log p(Z)
+> 1000
+SMC
+N/A
+A I S
+> 1000
+BMC
+> 1000
+BQ
+> 1000
+BQ *
+13.597
+BBQ
+BBQ *
+−11.909
+
+A L E
+
+1.101
+1.695
+2.695
+6.760
+6.760
+0.919
+0.271
+
+C
+0.286
+N/A
+0.143
+0.429
+0.429
+0.286
+0.286
+
+Method − log p(Z)
+5.001
+SMC
+N/A
+A I S
+9.536
+BMC
+37.017
+BQ
+BQ *
+33.040
+3.734
+BBQ
+BBQ *
+74.242
+
+A L E
+
+0.632
+2.146
+1.455
+0.635
+0.635
+0.400
+1.732
+
+C
+0.250
+N/A
+0.500
+0.000
+0.000
+0.000
+0.250
+
+of Z which is closer to the truth than the other methods given the same number of samples, and as-
+signs much higher likelihood to the true value of Z . BBQ * also achieved the lowest error on ﬁve, and
+best likelihood on six, of the seven problems, including the twenty dimensional problem for both
+metrics. Figure 5a shows a case where both SMC and BBQ * are relatively close to the true value,
+however BBQ *’s posterior variance is much smaller. Figure 5b demonstrates the typical behaviour
+of the active sampling of BBQ *, which quickly concentrates the posterior distribution at the true Z .
+The negative likelihoods of BQ * are for every problem slightly lower than for BQ (− log p(Z) is
+on average 0.2 lower), indicating that the approximate marginalisation of hyperparameters grants a
+small improvement in variance estimate.
+
+Table 2 shows results for the various methods on the real integration problems. Here BBQ is clearly
+the best performer; the additional exploration induced by the hyperparameter marginalisation of
+BBQ * may have led to local peaks being incompletely exploited. Exploration in a relatively high
+dimensional, multi-modal space is inherently risky; nonetheless, BBQ * achieved lower error than
+BBQ on two of the problems.
+
+7 Conclusions
+
+In this paper, we have made several advances to the BQ method for evidence estimation. These are:
+approximately imposing a positivity constraint6 , approximately marginalising hyperparameters, and
+using active sampling to select the location of function evaluations. Of these contributions, the active
+learning approach yielded the most signi ﬁcant gains for int egral estimation.
+
+Acknowledgements
+
+M .A .O . was funded by the ORCH ID project (http://www.orchid.ac.uk/).
+
+6Our approximations mean that we cannot guarantee non-negativity, but our approach improves upon alter-
+natives that make no attempt to enforce the non-negativity constraint.
+
+8
+
+References
+[1] R.M. Neal. Annealed importance sampling. Statistics and Computing, 11(2):125–139, 2001.
+[2] J. Skilling. Nested sampling. Bayesian inference and maximum entropy methods in science and engineer-
+ing, 735:395–405, 2004.
+[3] M.H. Chen, Q.M. Shao, and J.G. Ibrahim. Monte Carlo methods in Bayesian computation. Springer,
+2000.
+[4] R. M. Neal. Probabilistic inference using Markov chain Monte Carlo methods. Technical Report CRG-
+TR-93-1, University of Toronto, 1993.
+[5] S.P. Brooks and G.O. Roberts. Convergence assessment techniques for Markov chain Monte Carlo. Statis-
+tics and Computing, 8(4):319–335, 1998.
+[6] M.K. Cowles, G.O. Roberts, and J.S. Rosenthal. Possible biases induced by MCMC convergence diagnos-
+tics. Journal of Statistical Computation and Simulation, 64(1):87, 1999.
+[7] P. Diaconis. Bayesian numerical analysis. In S. Gupta J. Berger, editor, Statistical Decision Theory and
+Related Topics IV, volume 1, pages 163–175. Springer-Verlag, New York, 1988.
+[8] A. O’Hagan. Bayes-Hermite quadrature. Journal of Statistical Planning and Inference, 29:245–260,
+1991.
+[9] M. Kennedy. Bayesian quadrature with non-normal approximating functions. Statistics and Computing,
+8(4):365–375, 1998.
+[10] C. E. Rasmussen and Z. Ghahramani. Bayesian Monte Carlo. In S. Becker and K. Obermayer, editors,
+Advances in Neural Information Processing Systems, volume 15. MIT Press, Cambridge, MA, 2003.
+[11] M.A. Osborne, R. Garnett, S.J. Roberts, C. Hart, S. Aigrain, N.P. Gibson, and S. Aigrain. Bayesian
+quadrature for ratios. In Proceedings of the Fifteenth International Conference on Artiﬁcial Intellige nce
+and Statistics (AISTATS 2012), 2012.
+[12] C. E. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning. MIT Press, 2006.
+[13] T. P. Minka. Deriving quadrature rules from Gaussian processes. Technical report, Statistics Department,
+Carnegie Mellon University, 2000.
+[14] R. Garnett, M.A. Osborne, S. Reece, A. Rogers, and S.J. Roberts. Sequential bayesian prediction in the
+presence of changepoints and faults. The Computer Journal, 53(9):1430, 2010.
+[15] Sloan Digital Sky Survey, 2011. http://www.sdss.org/.
+
+9
+
+

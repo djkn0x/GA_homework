@@ -1,0 +1,845 @@
+Target Neighbor Consistent Feature Weighting
+for Nearest Neighbor Classiﬁcation
+
+Ichiro Takeuchi
+Department of Engineering
+Nagoya Institute of Technology
+takeuchi.ichiro@nitech.ac.jp
+
+Masashi Sugiyama
+Department of Computer Science
+Tokyo Institute of Technology
+sugi@cs.titech.ac.jp
+
+Abstract
+
+We consider feature selection and weighting for nearest neighbor classiﬁers. A
+technical challenge in this scenario is how to cope with discrete update of nearest
+neighbors when the feature space metric is changed during the learning process.
+This issue, called the target neighbor change, was not properly addressed in the
+existing feature weighting and metric learning literature. In this paper, we propose
+a novel feature weighting algorithm that can exactly and efﬁciently keep track of
+the correct target neighbors via sequential quadratic programming. To the best
+of our knowledge, this is the ﬁrst algorithm that guarantees the consistency be-
+tween target neighbors and the feature space metric. We further show that the
+proposed algorithm can be naturally combined with regularization path tracking,
+allowing computationally efﬁcient selection of the regularization parameter. We
+demonstrate the effectiveness of the proposed algorithm through experiments.
+
+1 Introduction
+
+Nearest neighbor (NN) classiﬁers would be one of the classical and perhaps the simplest non-linear
+classiﬁcation algorithms. Nevertheless, they have gathered considerable attention again recently
+since they are demonstrated to be highly useful in state-of-the-art real-world applications [1, 2]. For
+further enhancing the accuracy and interpretability of NN classiﬁers, feature extraction and feature
+selection are highly important. Feature extraction for NN classiﬁers has been addressed by the name
+of metric learning [3–6], while feature selection for NN classiﬁers has been studied by the name of
+feature weighting [7–11].
+One of the fundamental approaches to feature extraction/selection for NN classiﬁers is to learn the
+feature metric/weights so that instance pairs in the same class (‘must-link’) are close and instance
+pairs in other classes (‘cannot-link’) are far apart [12, 13]. Although this approach tends to provide
+simple algorithms, it does not have direct connection to the classiﬁcation loss for NN classiﬁers, and
+thus its validity is not clear.
+However, directly incorporating the NN classiﬁcation loss involves a signiﬁcant technical challenge
+called the target neighbor (TN) change. To explain this, let us consider binary classiﬁcation by a
+3NN classiﬁer (see Figure 1). Since the classiﬁcation result is determined by the majority vote from
+3 nearest instances, the classiﬁcation loss is deﬁned using the distance to the 2nd nearest instance
+in each class (which is referred to as a TN; see Section 2 for details). However, since ‘nearest’
+instances are generally changed when feature metric/weights are updated, TNs must also be updated
+to be kept consistent with the learned feature metric/weights during the learning process.
+Although the TN change is a fundamental requirement in feature extraction/selection for NN classi-
+ﬁers, existing methods did not handle this issue properly. For example, in a seminal feature weight-
+ing method called Relief [7, 8], the ﬁxed TNs determined based on the uniform weights (i.e., the
+Euclidean distance) are used throughout the learning process. Thus, the TN-weight consistency is
+
+1
+
+Left: (a) The Euclidean feature space
+with w1 = w2 = 1=2. The horizontal
+feature 1 and the vertical feature 2 are
+regarded as equally important.
+Right:
+(b) A weighted feature space
+with w1 = 2=3 and w2 = 1=3. The
+horizontal feature 1 is regarded as more
+important than the vertical feature 2.
+Figure 1: Illustration of target neighbors (TNs). An instance 0(cid:13) in the middle is correctly classiﬁed
+in 3NN classiﬁcation if the distance to the 2nd nearest instance in the same class (called 2nd target
+hit and denoted by h2
+0 ) is smaller than the distance to the 2nd nearest instance in different classes
+(called 2nd target miss and denoted by m2
+0 ).
+In the Euclidean feature space (a), the 2nd target
+0 ) = ( 2(cid:13); 6 ). Since d(x0 ; x2 jw) > d(x0 ; x6 jw), the instance 0(cid:13) is
+hit/miss are given by (h2
+0 ; m2
+misclassiﬁed. On the other hand, in the weighted feature space (b), the 2nd target hit/miss are given
+0 ) = ( 1(cid:13); 5 ). Since d(x0 ; x1 jw) < d(x0 ; x5 jw), the instance 0(cid:13) is correctly classiﬁed.
+by (h2
+0 ; m2
+
+not guaranteed (large-margin metric learning [5] also suffers from the same drawback). The Simba
+algorithm [9] is a maximum-margin feature weighting method which adaptively updates TNs in
+the online learning process. However, the TN-weight consistency is not still guaranteed in Simba.
+I-Relief [10, 11] is a feature weighting method which cleverly avoids the TN change problem by
+considering a stochastic variant of NN classiﬁers (neighborhood component analysis [4] also intro-
+duced similar stochastic approximation). However, since the behavior of stochastic NN classiﬁers
+tends to be signiﬁcantly different from the original ones, the obtained feature metric/weights are not
+necessarily useful for the original NN classiﬁers.
+In this paper, we focus on the feature selection (i.e., feature weighting) scenario, and propose a
+novel method that can properly address the TN change problem. More speciﬁcally, we formulate
+feature weighting as a regularized empirical risk minimization problem, and develop an algorithm
+that exactly and efﬁciently keeps track of the correct TNs via sequential quadratic programming.
+To the best of our knowledge, this is the ﬁrst algorithm that systematically handles TN-changes and
+guarantees the TN-weight consistency. We further show that the proposed algorithm can be naturally
+combined with regularization path tracking [14], allowing computationally efﬁcient selection of
+the regularization parameter. Finally, we demonstrate the effectiveness of the proposed algorithm
+through experiments.
+Throughout the paper, the superscript > indicates the transpose of vectors or matrices. We use R
+and R+ to denote the sets of real numbers and non-negative real numbers, respectively, while we
+use Nn := f1; : : : ; ng to denote the set of natural numbers. The notations 0 and 1 indicate vectors
+or matrices with all 0 and 1, respectively. The number of elements in a set S is denoted by jS j.
+
+2 Preliminaries
+
+In this section, we formulate the problem of feature weighting for nearest neighbor (NN) classiﬁca-
+tion, and explain the fundamental concept of target neighbor (TN) change.
+∑
+:=
+Consider a classiﬁcation problem from n training instances with ‘ features.
+Let xi
+[xi1 : : : xi‘ ]> 2 R‘ be the i-th training instance and yi be the corresponding label. The squared
+(xij (cid:0) xi0 j )2 , while the weighted
+∑
+Euclidean distance between two instances xi and xi0 is
+j2N‘
+squared Euclidean distance is written as
+wj (xij (cid:0) xi0 j )2 = "
+d(xi ; xi0 jw) :=
+>
+(1)
+i;i0 w;
+j2N‘
+where w := [w1 : : : w‘ ] 2 [0; 1]‘ is an ‘-dimensional vector of non-negative weights and "i;i0 :=
+[(xi1 (cid:0) xi0 1 )2 : : : (xi‘ (cid:0) xi0 ‘ )2 ]> 2 R‘ , (i; i
+0 ) 2 Nn (cid:2) Nn , is introduced for notational simplicity.
+We develop a feature weighting algorithm within the framework of regularized empirical risk mini-
+mization, i.e., minimizing the linear combination of a loss term and a regularization term. In order to
+formulate the loss term for NN classiﬁcation, let us introduce the notion of target neighbors (TNs):
+
+2
+
+h20m20(cid:18)(cid:19)(cid:20)(cid:21)(cid:23)(cid:24)(cid:25)(cid:26)(cid:22)h20m20(cid:18)(cid:19)(cid:20)(cid:21)(cid:23)(cid:24)(cid:25)(cid:26)(cid:22)Deﬁnition 1 (Target neighbors (TNs)) Deﬁne Hi := fh 2 Nn jyh = yi ; h 6= ig and Mi := fm 2
+Nn jym 6= yi g for i 2 Nn . Given a weight vector w , an instance h 2 Hi is said to be the (cid:20)-th target
+hit of an instance i if it is the (cid:20)-th nearest instance among Hi , and m 2 Mi is said to be the (cid:21)-th
+target miss of an instance i if it is the (cid:21)-th nearest instance among Mi , where the distance between
+instances are measured by the weighted Euclidean distance (1). The (cid:20)-th target hit and (cid:21)-th target
+miss of an instance i 2 Nn are denoted by h(cid:20)
+i and m(cid:21)
+i , respectively. Target hits and misses are
+∑
+collectively called as target neighbors (TNs) 1 .
+Using TNs, the misclassiﬁcation rate of a binary kNN classiﬁer when k is odd is formulated as
+jw)g with (cid:20) = (cid:21) = (k + 1)=2; where I ((cid:1))
+jw) > d(xi ; xm(cid:21)
+I fd(xi ; xh(cid:20)
+(cid:0)1
+LkNN (w) := n
+i2Nn
+i
+i
+is the indicator function with I (z ) = 1 if z is true and I (z ) = 0 otherwise. For example, in binary
+3NN classiﬁcation, an instance is misclassiﬁed if and only if the distance to the 2nd target hit is
+larger than the distance to the 2nd target miss (see Figure 1). The misclassiﬁcation cost of a multi-
+class problem can also be formulated by using TNs similarly, but we omit the details for the sake of
+simplicity.
+Since the indicator function I ((cid:1)) included in the loss function LkNN (w) is hard to directly deal with,
+we introduce the nearest neighbor (NN) margin2 as a surrogate:
+
+Deﬁnition 2 (Nearest neighbor (NN) margin) Given a weight vector w , the ((cid:20); (cid:21))-neighbor mar-
+(
+∑
+jw) for i 2 Nn , (cid:20) 2 NjHi j , and (cid:21) 2 NjMi j .
+jw) (cid:0) d(xi ; xh(cid:20)
+gin is deﬁned as d(xi ; xm(cid:21)
+)
+i
+i
+jw) (cid:0)
+(cid:0)1
+d(xi ; xh(cid:20)
+Based on the NN margin, our loss function is deﬁned as L(w) := n
+i2Nn
+jw)
+i
+d(xi ; xm(cid:21)
+: By minimizing L(w), the average ((cid:20); (cid:21))-neighbor margin over all instances is max-
+i
+imized. This loss function allows us to ﬁnd feature weights such that the distance to the (cid:20)-th target
+hit is as small as possible, while the distance to the (cid:21)-th target miss is as large as possible.
+A regularization term is introduced for incorporating our prior knowledge on the weight vector. Let
+(cid:22)w 2 [0; 1]‘ be our prior weight vector, and we use the regularization term of the form (cid:10)(w) :=
+jjw (cid:0) (cid:22)wjj2
+(cid:0)11, it implies that our baseline choice of the feature
+2 : For example, if we choose (cid:22)w := ‘
+1
+2
+weights is uniform, i.e., the Euclidean distance metric [6].
+∑
+(
+)
+Given the loss term L(w) and the regularization term (cid:10)(w), the feature weighting problem we are
+going to study in this paper is formulated as
+jw) (cid:0) d(xi ; xm(cid:21)
+jjw (cid:0) (cid:22)wjj2
+1
+(cid:0)1
+min
+d(xi ; xh(cid:20)
+2
+2
+i
+i2Nn
+w
+i
+where (cid:18) 2 R+ is a regularization parameter for controlling the balance between the loss term L(w)
+and the regularization term (cid:10)(w). The ﬁrst equality constraint restricts that the sum of the weights
+to be one, while the second constraint indicates that the weights are non-negative. The former is
+introduced for ﬁxing the scale of the distance metric.
+i )gi2Nn are dependent on the weights w because the
+It is important to note that TNs f(h(cid:20)
+i ; m(cid:21)
+weighted Euclidean distance (1) is used in their deﬁnitions. Thus, we need to properly update TNs
+in the optimization process. We refer to this problem as the target neighbor change (TN-change)
+problem. Since TNs change in a discrete fashion with respect to the weights w , the problem (2) has
+a non-smooth and non-convex objective function. In the next section, we introduce an algorithm for
+ﬁnding a local minimum solution of (2). An advantage of the proposed algorithm is that it monoton-
+ically decreases the objective function in (2), while TNs are properly updated so that they are always
+kept consistent with the feature space metric given by the weights w in the following sense:
+
+w = 1; w (cid:21) 0;
+
+jw)
+
+(2)
+
+(cid:18)n
+
++
+
+>
+
+s:t: 1
+
+Deﬁnition 3 (TN-weight Consistency) A weight
+vector w and n pairs
+instances
+of
+f(h(cid:20)
+i )gi2Nn are the TNs when
+i )gi2Nn are said to be TN-weight consistent
+if f(h(cid:20)
+i ; m(cid:21)
+i ; m(cid:21)
+the distance is measured by the weighted Euclidean distance (1) using the weights w .
+
+1The terminologies target hit and miss were ﬁrst used in [7], in which only the 1st target hit and miss were
+considered. We extend them to the (cid:20)-th target hit and (cid:21)-th target miss for general (cid:20) and (cid:21). The terminology
+target neighbors (TNs) was ﬁrst used in [5].
+2The notion of the nearest neighbor margin was ﬁrst introduced in [9], where only the case of (cid:20) = (cid:21) = 1
+was considered. We use an extended deﬁnition with general (cid:20) and (cid:21).
+
+3
+
+Figure 1 illustrates how TNs are deﬁned. In the Euclidean feature space with w1 = w2 = 1=2, the
+2nd target hit and miss of the instance 0(cid:13) are given by (h2
+0 ) = ( 2(cid:13); 6 ). Since d(x0 ; x2 jw) >
+0 ; m2
+d(x0 ; x6 jw), the instance 0(cid:13) is misclassiﬁed in 3NN classiﬁcation. On the other hand, in the
+weighted feature space with (w1 ; w2 ) = (2=3; 1=3), the 2nd target hit and miss of the instance
+0(cid:13) are given by (h2
+0 ) = ( 1(cid:13); 5 ). Since d(x0 ; x1 jw) < d(x0 ; x5 jw) under this weighted metric,
+0 ; m2
+the instance 0(cid:13) is correctly classiﬁed in 3NN classiﬁcation.
+
+3 Algorithm
+
+The problem (2) can be formulated as a convex quadratic program (QP) if TNs are regarded as ﬁxed.
+Based on this fact, our feature weighting algorithm solves a sequence of such QPs, while TNs are
+properly updated to be always consistent.
+
+3.1 Active Set QP Formulation
+
+(cid:0)1
+
+(cid:18)n
+
+s:t:
+
+min
+w2R‘ ;(cid:24)2Rn ;(cid:17)2Rn
+
+First, we study the problem (2) under the condition that TNs remain unchanged. Let us deﬁne the
+following sets of indices:
+i )gi2Nn , deﬁne the following
+Deﬁnition 4 Given a weight vector w and the consistent TNs f(h(cid:20)
+i ; m(cid:21)
+sets of index pairs for ‘(cid:3)’ being ‘<’, ‘=’, and ‘>’:
+H[(cid:3)] := f(i; h) 2 Nn (cid:2) Hi j d(xi ; xh jw) (cid:3) d(xi ; xh(cid:20)
+jw)g;
+i
+jw)g:
+M[(cid:3)] := f(i; m) 2 Nn (cid:2) Mi j d(xi ; xm jw) (cid:3) d(xi ; xm(cid:21)
+i
+They are collectively denoted by (H; M), where H := fH[<] ; H[=] ; H[>]g and M :=
+fM[<] ; M[=] ; M[>] g. Furthermore, for each i 2 Nn , we deﬁne H[(cid:3)]
+:= fhj(i; h) 2 H[(cid:3)]g and
+M[(cid:3)]
+:= fmj(i; m) 2 M[(cid:3)]g.
+i
+i
+i )gi2Nn remain to be TN-weight consistent, the problem (2) is
+Under the condition that f(h(cid:20)
+∑
+i ; m(cid:21)
+written as
+((cid:24)i (cid:0) (cid:17)i ) +
+jjw (cid:0) (cid:22)wjj2
+1
+2
+2
+i2Nn
+w = 1; w (cid:21) 0;
+>
+1
+(3b)
+d(xi ; xh jw) (cid:20) (cid:24)i ; (i; h) 2 H[<] ; d(xi ; xm jw) (cid:20) (cid:17)i ; (i; m) 2 M[<] ;
+(3c)
+d(xi ; xh jw) = (cid:24)i ; (i; h) 2 H[=] ; d(xi ; xm jw) = (cid:17)i ; (i; m) 2 M[=] ;
+(3d)
+d(xi ; xh jw) (cid:21) (cid:24)i ; (i; h) 2 H[>] ; d(xi ; xm jw) (cid:21) (cid:17)i ; (i; m) 2 M[>] :
+(3e)
+In the above, we introduced slack variables (cid:24)i and (cid:17)i for i 2 Nn which represent the weighted
+distances to the target hit and miss, respectively. In (3), TN-weight consistency is represented by a
+set of linear constraints (3c)–(3e)3 .
+Our algorithm handles TN change as a change in the index sets (H; M), and a sequence of convex
+QPs in the form of (3) are (partially) solved every time the index sets (H; M) are updated. We
+implement this approach by using an active set QP algorithm (see Chapter 16 in [15]). Brieﬂy,
+the active set QP algorithm repeats the following two steps: (step1) Estimate the optimal active
+set4 , and (step2) Solve an equality-constrained QP by regarding the constraints in the current active
+set as equality constraints and all the other non-active constraints are temporarily disregarded. An
+advantage of introducing the active set QP algorithm is that TN change can be naturally handled as
+active set change. Speciﬁcally, a change of target hits is interpreted as an exchange of the members
+between H[<] and H[=] or between H[>] and H[=] , while a change of target misses is interpreted as
+an exchange of the members between M[<] and M[=] or between M[>] and M[=] .
+3Note that the constraints for (H[<] ; H[=] ; H[>] ) in (3c)–(3e) restrict that h must remain to be the target
+hit of i for all (i; h) 2 H[=] because those closer than the target hit must remain to be closer and those more
+distant than the target hit must remain to be more distant. Similarly, the constraints for (M[<] ; M[=] ; M[>] )
+in (3c)–(3e) restrict that m must remain to be the target miss of i for all (i; m) 2 M[=] .
+4A constraint satisﬁed with equality is called active and the set of active constraints is called active set.
+
+(3a)
+
+4
+
+3.2 Sequential QP-based Feature Weighting Algorithm
+
+s:t:
+
+min
+(cid:1)w;(cid:1)(cid:24);(cid:1)(cid:17)
+
+Here, we present our feature weighting algorithm. We ﬁrst formulate the equality-constrained QP
+(EQP) of (3). Then we present how to update the EQP by changing the active sets.
+In order to formulate the EQP of (3), we introduce another pair of index sets Z := fj jwj = 0g
+and P := fj jwj > 0g. Suppose that we currently have a solution (w; (cid:24) ; (cid:17)) and the active set
+(H[=] ; M[=] ; Z ). We ﬁrst check whether the solution minimizes the loss function (3a) in the sub-
+∑
+space deﬁned by the active set. If not, we compute a step ((cid:1)w; (cid:1)(cid:24) ; (cid:1)(cid:17)) by solving an EQP:
+jj(w + (cid:1)w) (cid:0) (cid:22)wjj2
+(((cid:24)i + (cid:1)(cid:24)i ) (cid:0) ((cid:17)i + (cid:1)(cid:17)i )) +
+1
+(cid:0)1
+(cid:18)n
+2
+2
+i2Nn
+> (w + (cid:1)w) = 1; wj + (cid:1)wj = 0; j 2 Z ;
+1
+(4)
+i;m (w + (cid:1)w) = (cid:17)i + (cid:1)(cid:17)i ; (i; m) 2 M[=] :
+i;h (w + (cid:1)w) = (cid:24)i + (cid:1)(cid:24)i ; (i; h) 2 H[=] ; "
+>
+>
+"
+The solution of the EQP (4) can be analytically obtained by solving a small linear system (see
+Supplement A).
+Next, we decide how far we can move the solution along this direction. We set w   w + (cid:28) (cid:1)w; (cid:24)  
+(cid:24) + (cid:28) (cid:1)(cid:24) ; (cid:17)   (cid:17) + (cid:28) (cid:1)(cid:17) ; where (cid:28) 2 [0; 1] is the step-length determined by the following lemma.
+(
+Lemma 5 The maximum step length that satisﬁes feasibility and TN-weight consistency is given by
+(cid:0)wj
+(cid:28) := min
+(cid:1)wj
+
+1; min
+j2P ;(cid:1)wj <0
+
+;
+
+min
+(i;h)2H[<] ;"
+>
+i;h(cid:1)w>(cid:1)(cid:24)i
+
+min
+(i;m)2M[<] ;"
+>
+i;m(cid:1)w>(cid:1)(cid:17)i
+
+(cid:0)("
+i;hw (cid:0) (cid:24)i )
+>
+min
+i;h(cid:1)w (cid:0) (cid:1)(cid:24)i
+>
+;
+(i;h)2H[>] ;"
+>
+"
+i;h(cid:1)w<(cid:1)(cid:24)i
+(cid:0)("
+i;mw (cid:0) (cid:17)i )
+>
+i;m(cid:1)w (cid:0) (cid:1)(cid:17)i
+>
+"
+
+min
+(i;m)2M[>] ;"
+>
+i;m(cid:1)w<(cid:1)(cid:17)i
+
+(cid:0)("
+i;hw (cid:0) (cid:24)i )
+>
+i;h(cid:1)w (cid:0) (cid:1)(cid:24)i
+>
+;
+"
+(cid:0)("
+i;mw (cid:0) (cid:17)i )
+>
+i;m(cid:1)w (cid:0) (cid:1)(cid:17)i
+>
+"
+
+;
+
+(5)
+
+)
+
+:
+
+The proof of the lemma is presented in Supplement B.
+If (cid:28) < 1, the constraint for which the minimum in (5) is achieved (called the blocking constraint) is
+added to the active set. For example, if (i; h) 2 H[>] achieved the minimum in (5), (i; h) is moved
+from H[>] to H[=] . We repeat this by adding constraints to the active set until we reach the solution
+(w; (cid:24) ; (cid:17)) that minimizes the objective function over the current active set.
+Next, we need to consider whether the objective function of (2) can be further decreased by removing
+constraints in the active set. Our algorithm and the standard active set QP algorithm are different
+in this operation: in our algorithm, an active constraint is allowed to be inactive only when the (cid:20)-th
+target hit remains to be a member of H[=] and the (cid:21)-th target miss remains to be a member of M[=] .
+Let us introduce the Lagrange multipliers (cid:11) 2 RjZ j , (cid:12) 2 RjH[=] j , and (cid:13) 2 RjM[=] j for the 2nd, the
+3rd, and the 4th constraint in (4), respectively (see Supplement A for details). Then the following
+lemma tells us which active constraint should be removed.
+
+Lemma 6 The objective function in (2) can be further decreased while satisfying feasibility and
+TN-weight consistency by removing one of the constraints in the active set with the following rules5 :
+(cid:15) If (cid:11)j > 0 for j 2 Z , then move fj g to P ;
+(cid:15) If (cid:12)(i;h) < 0, jH[<]
+j (cid:20) (cid:20) (cid:0) 2 and jH[=]
+j (cid:21) 2 for (i; h) 2 H[=] , then move (i; h) to H[<] ;
+i
+i
+(cid:15) If (cid:12)(i;h) > 0, jH[>]
+j < jHi j (cid:0) (cid:20) and jH[=]
+j (cid:21) 2 for (i; h) 2 H[=] , then move (i; h) to H[>] ;
+i
+i
+(cid:15) If (cid:13)(i;m) < 0, jM[<]
+j (cid:20) (cid:21) (cid:0) 2 and jM[=]
+j (cid:21) 2 for (i; m) 2 M[=] , then move (i; m) to M[<] ;
+i
+i
+(cid:15) If (cid:13)(i;m) > 0, jM[>]
+j < jMi j (cid:0) (cid:21) and jM[=]
+j (cid:21) 2 for (i; m) 2 M[=] , then move (i; m) to M[>] .
+i
+i
+
+5 If multiple active constraints are selected by these rules, the one with the largest absolute Lagrange multi-
+plier is removed from the active set.
+
+5
+
+The proof of the lemma is presented in Supplement C.
+The proposed feature weighting algorithm, which we call Sequential QP-based Feature Weighting
+(SQP-FW) algorithm, is summarized in Algorithm 1. The proposed SQP-FW algorithm possesses
+
+Algorithm 1 Sequential QP-based Feature Weighting (SQP-FW) Algorithm
+Inputs: The training instances f(xi ; yi )gi2Nn , the neighborhood parameters ((cid:20); (cid:21)), regularization
+parameter (cid:18) , and initial weight vector (cid:22)w;
+Initialize w   (cid:22)w , ((cid:24) ; (cid:17)) and (H; M; Z ; P );
+for t = 1; 2; : : : do
+Solve (4) to ﬁnd ((cid:1)w; (cid:1)(cid:24) ; (cid:1)(cid:17));
+if ((cid:1)w; (cid:1)(cid:24) ; (cid:1)(cid:17)) = 0 then
+Compute Lagrange multipliers (cid:11), (cid:12) , and (cid:13) ;
+if none of the active constraints satisﬁes the rules in Lemma 6 then
+(cid:3) = w;
+stop with solution w
+else
+Update (H; M; Z ; P ) according to the rule in Lemma 6;
+
+else
+Compute the step size (cid:28) as in Lemma 5;
+if there are blocking constraints then
+Update (H; M; Z ; P ) by adding one of the blocking constraints in Lemma 5;
+(cid:3) .
+Outputs: A local optimal vector of feature weights w
+
+the following useful properties.
+Optimality conditions: We can characterize a local optimal solution of the non-smooth and non-
+convex problem (2) in the following theorem (its proof is presented in Supplement D):
+w = 1 and w (cid:21) 0,
+Theorem 7 (Optimality condition) Consider a weight vector w satisfying 1>
+the consistent TNs f(h(cid:20)
+i )gi2Nn , and the index sets (H; M; Z ; P ). Then, w is a local minimum
+i ; m(cid:21)
+solution of the problem (2) if and only if the EQP (4) has the solution ((cid:1)w; (cid:1)(cid:24) ; (cid:1)(cid:17)) = 0 and there
+are no active constraints that satisfy the rules in Lemma 6.
+
+This theorem is practically useful because it guarantees that the solution cannot be improved in its
+neighborhood even if some of the current TNs are replaced with others. Without such an optimality
+condition, we must check all possible combinations of TN change from the current solution in a trial
+and error manner. The above theorem allows us to avoid such time-consuming procedure.
+Finite termination property: It can be shown that the SQP-FW algorithm converges to a local
+minimum solution characterized by Theorem 7 in a ﬁnite number of iterations based on the similar
+argument as that in pages 477–478 in [15]. See Supplement E for details.
+Computational complexity: When computing the solutions ((cid:1)w; (cid:1)(cid:24) ; (cid:1)(cid:17)) and the Lagrange mul-
+tipliers ((cid:11); (cid:12) ; (cid:13) ) by solving the EQP (4), the main computational cost is only several matrix-vector
+multiplications involving n (cid:2) jP j and n (cid:2) jZ j matrices, which is linear with respect to n (see Sup-
+plement A for details). On the other hand, if the minimum step length (cid:28) is computed naively by
+Lemma 5, it takes O(n2 jP j) computations, which could be a bottleneck of the algorithm. However,
+this bottleneck can be eased by introducing a working set approach: only a ﬁxed number of con-
+straints in the working set are evaluated at each step, while the working set is updated, say, every
+100 steps. In our implementation, we introduced such working sets to H[>] and M[>] . For each
+i 2 Nn , these working sets contain, say, only top 100 nearest instances. This strategy is based on
+a natural idea that those outside of the top 100 nearest instances would not become TNs in the next
+100 steps. Such a working set strategy allows us to reduce the computational complexity to O(njP j)
+for computing the the minimum step length (cid:28) , which is linear with respect to n.
+Regularization path tracking: The SQP-FW algorithm can be naturally combined with regular-
+ization path tracking algorithm for computing a path of the solutions that satisfy the optimality
+condition in Theorem 7 for a range of regularization parameter (cid:18) . Due to the space limitation, we
+only describe the outline here (see Supplement F for details). The algorithm starts from a local
+optimal solution for a ﬁxed regularization parameter (cid:18) . Then, the algorithm continues ﬁnding the
+optimal solutions when (cid:18) is slightly increased. It can be shown that the local optimal solution of (2)
+
+6
+
+is a piecewise-linear function of (cid:18) as long as the TNs remain unchanged. If (cid:18) is further increased,
+we encounter a point at which TNs must be updated. Such TN changes can be easily detected and
+handled because the TN-weight consistency conditions are represented by a set of linear constraints
+(see (3c)–(3e)), and we already have explicit rules (Lemmas 5 and 6) for updating the constraints.
+The regularization path tracking algorithm provides an efﬁcient and insightful approach for model
+selection.
+
+4 Experiments
+
+In this section, we investigate the experimental performance of the proposed algorithm6 .
+
+4.1 Comparison Using UCI Data Sets
+
+First, we compare the proposed SQP-FW algorithm with existing feature weighting algorithms,
+which handle the TN-change problem in different ways.
+(cid:15) Relief [7, 8]: The Relief algorithm is an online feature weighting algorithm. The goal of Relief
+is to maximize the average (1; 1)-neighbor margin over instances. The TNs f(h1
+i )gi2Nn are
+i ; m1
+determined by the initial Euclidean metric and ﬁxed all through the training process.
+(cid:15) Simba [9]: Simba is also an online algorithm aiming to maximize the average (1; 1)-neighbor
+margin. The key difference from Relief is that TNs f(h1
+i )gi2Nn are updated in each step using
+i ; m1
+the current feature-space metric. The TN-change problem is alleviated in Simba by this reassign-
+ment.
+(cid:15) MulRel: To mitigate the TN-weight inconsistency in Relief, we repeat the Relief procedure using
+the TNs deﬁned by the learned weights in the previous loop (see also [5]).
+(cid:15) NCA-D [4]: Neighborhood component analysis with diagonal metric, which is essentially the same
+as I-Relief [10, 11]. Instead of discretely assigning TNs, the probability of an instance being TNs
+is considered. Using these stochastic neighbors, the average margin is formulated as a continuous
+(non-convex) function of the weights, by which the TN change problem is mitigated.
+We compared the NN classiﬁcation performance of these 4 algorithms and the SQP-FW algorithm
+on 10 UCI benchmark data sets summarized in Table 1. In each data set, we randomly divided the
+entire data set into the training, validation, and test sets with equal sizes. The number of neighbors
+k 2 f1; 3; 5g was selected based on the classiﬁcation performance on the validation set.
+In the SQP-FW algorithm, the neighborhood parameter ((cid:20); (cid:21)) and the regularization parameter (cid:18)
+were also determined to maximize the classiﬁcation accuracy on the validation set. The neighbor-
+hood parameter ((cid:20); (cid:21)) were chosen from f(1; 1); (2; 2); (3; 3)g, while (cid:18) was chosen from 100 evenly
+allocated candidates in log-scale between 10(cid:0)3 and 100 . The working set strategy was used when
+n > 1000 with the working set size 100 and the working set update frequency 100.
+All the 4 existing algorithms do not have explicit hyper-parameters. However, since these algorithms
+also have the risk of overﬁtting, we removed features with small weights, following the recommen-
+dation in [7, 11]. We implemented this heuristic for all the 4 existing algorithms by optimizing
+the percentage of eliminating features (chosen from f0%; 1%; 2%; : : : ; 99%g) based on the classi-
+ﬁcation performance on the validation set. Since Simba and NCA are formulated as non-convex
+optimization problems and solutions may be trapped in local minima, we ran these two algorithms
+from ﬁve randomly selected starting points and the solution with the smallest training error was
+adopted. The number of iterations in Relief (and the inner-loop iteration of MulRel as well) and
+Simba was set to 1000, and the outer-loop iteration of MulRel was set to 100.
+The experiments were repeated 10 times with random data splitting, and the average performance
+was reported. To see the statistical signiﬁcance of the difference, paired-sample t-test was con-
+ducted. All the features were standardized to have zero mean and unit variance. Table 1 summarizes
+the results, showing that the SQP-FW algorithm compares favorably with other methods.
+
+6 See also Supplement G for an illustration of the behavior of the proposed algorithm using an artiﬁcial
+dataset.
+
+7
+
+Table 1: Average misclassiﬁcation rate of kNN classiﬁer on 10 UCI benchmark data sets.
+N.C.
+S.S.
+Abbreviated Data Name
+NCA-D
+MulRel
+Simba
+Relief
+SQP-FW
+‘
+0.056
+0.046
+0.047
+*0.040
+Bre. Can. Dia.
+0.058
+2
+30
+569
+0.276
+0.230
+0.227
+*0.221
+Con. Ben.
+0.294
+2
+60
+208
+0.052
+*0.049
+0.049
+Ima. Seg.
+2310
+18
+7
+0.061
+0.065
+*0.097
+0.115
+0.122
+Ionosphere
+0.138
+0.162
+2
+33
+351
+0.044
+*0.044
+0.046
+Pag. Blo. Cla.
+0.053
+0.048
+5
+10
+5473
+0.128
+0.109
+0.117
+*0.102
+Parkinson
+0.123
+2
+22
+195
+0.012
+*0.011
+Pen. Rec. Han. Dig.
+0.029
+0.020
+0.012
+10
+16
+10992
+*0.104
+0.108
+0.110
+Spambase
+4601
+57
+2
+0.117
+0.112
+*0.184
+Wav. Dat. Gen. ver1
+0.195
+0.227
+0.217
+0.202
+3
+21
+5000
+*0.463
+Win. Qua.
+6497
+11
+7
+0.499
+0.471
+0.494
+0.495
+’S.S.’ and ’N.C.’ stand for sample size and the number of classes, respectively. Asterisk ’*’ indicates the best
+among 5 algorithms, while boldface means no statistical difference from the best (p-value (cid:21) 0:05).
+Table 2: Results on Microarray Data Experiments
+Standard 1NN Weighted 1NN with SQP-FW
+N.C.
+S.S.
+Microarray Data Name
+‘
+Med. #(genes)
+Error
+Error
+0.180 (cid:6) 0.059
+0.140 (cid:6) 0.065
+20
+2
+2000
+62
+Colon Cancer [16]
+0.075 (cid:6) 0.043
+0.050 (cid:6) 0.038
+10
+3
+4224
+74
+Kidney Cancer [17]
+0.088 (cid:6) 0.036
+0.108 (cid:6) 0.022
+14
+2
+7129
+72
+Leukemia [18]
+0.230 (cid:6) 0.048
+0.194 (cid:6) 0.052
+Prostate Cancer [19]
+24
+2
+12600
+102
+respectively.
+’Error’ represents the misclassiﬁcation error rate of 1NN classiﬁer, while ’Med. #(genes)’
+indicates the median number of genes selected by SQP-FW algorithm over 10 runs.
+
+4.2 Application to Feature Selection Problem in High-Dimensional Microarray Data
+
+In order to illustrate feature selection performance, we applied the SQP-FW algorithm to microarray
+study, in which simple classiﬁcation algorithms are often preferred because the number of features
+(genes) ‘ is usually much larger than the number of instances (patients) n. Since biologists are inter-
+ested in identifying a set of genes that governs the difference among different biological phenotypes
+(such as cancer subtypes), selecting a subset of genes that yields good NN classiﬁcation performance
+would be practically valuable.
+For each of the four microarray data sets in Table 2, we divided the entire set into the training and
+test sets with size ratio 2:1 [2]. We compared the test set classiﬁcation performance between the
+plain 1NN classiﬁer (without feature weighting) and the weighted 1NN classiﬁer with the weights
+determined by the SQP-FW algorithm. In the latter, the neighborhood parameters were ﬁxed to
+(cid:20) = (cid:21) = 1 and (cid:18) was determined by 10-fold cross validation within the training set. We repeated
+the data splitting 10 times and the average performance was reported.
+Table 2 summarizes the results. The median numbers of selected genes (features with nonzero
+weights) by the SQP-FW algorithm are also reported in the table. Although the improvements of the
+classiﬁcation performances were not statistically signiﬁcant (we could not expect much improve-
+ment by feature weighting because the misclassiﬁcation rates of the plain 1NN classiﬁer are already
+very low), the number of genes used for NN classiﬁcation can be greatly reduced. The results
+illustrate the potential advantage of feature selection using the SQP-FW algorithm.
+
+5 Discussion and Conclusion
+
+TN change is a fundamental problem in feature extraction and selection for NN classiﬁers. Our
+contribution in this paper was to present a feature weighting algorithm that can systematically handle
+TN changes and guarantee the TN-weight consistency. An important future direction is to generalize
+our TN-weight consistent feature weighting scheme to feature extraction (i.e., metric learning).
+
+Acknowledgment
+
+IT was supported by MEXT KAKENHI 21200001 and 23700165, and MS was supported by MEXT
+KAKENHI 23120004.
+
+8
+
+References
+[1] A. S. Das, M. Datar, A. Garg, and S. Rajaram. Google news personalization: Scalable online
+In Proceedings of the 16th International Conference on World Wide
+collaborative ﬁltering.
+Web, pages 271–280. ACM, 2007.
+[2] S. Dudoit, J. Fridlyand, and T. P. Speed. Comparison of discrimination methods for the classi-
+ﬁcation of tumors using gene expression data. Journal of the American Statistical Association,
+97(457):77–87, 2002.
+[3] E. P. Xing, A. Y. Ng, M. I. Jordan, and S. Russell. Distance metric learning with application to
+clustering with side-information. In S. Thrun S. Becker and K. Obermayer, editors, Advances
+in Neural Information Processing Systems 15, pages 505–512. MIT Press, Cambridge MA,
+2003.
+[4] J. Goldberger, S. Roweis, G. Hinton, and R. Salakhutdinov. Neighbourhood components analy-
+sis. In L. K. Saul, Y. Weiss, and L. Bottou, editors, Advances in Neural Information Processing
+Systems 17, pages 513–520. MIT Press, Cambridge, MA, 2005.
+[5] K. Weinberger, J. Blitzer, and L. Saul. Distance metric learning for large margin nearest neigh-
+bor classiﬁcation. In Y. Weiss, B. Sch ¨olkopf, and J. Platt, editors, Advances in Neural Infor-
+mation Processing Systems 18, pages 1473–1480. MIT Press, Cambridge, MA, 2006.
+[6] J. Davis, B. Kulis, P. Jain, S. Sra, and I. Dhillon. Information-theoretic metric learning. In
+Proceedings of the 24th International Conference on Machine Learning, pages 209–216, 2007.
+[7] K. Kira and L. Rendell. A practical approach to feature selection. In Proceedings of the 9-th
+International Conference on Machine Learning, pages 249–256, 1992.
+[8] I. Kononenko. Estimating attributes: analysis and extensions of relief.
+European Conference on Machine Learning, pages 171–182, 1994.
+[9] R. Gilad-Bachrach, A. Navot, and N. Tishby. Margin based feature selection - theory and
+algorithms. In Proceedings of the 21st International Conference on Machine Learning, pages
+43–50, 2004.
+[10] Y. Sun and J. Li. Iterative relief for feature weighting. In Proceedings of the 23-rd International
+Conference on Machhine Learning, pages 913–920, 2006.
+[11] Y. Sun, S. Todorovic, and S. Goodison. Local learning based feature selection for high di-
+mensional data analysis. IEEE Transactions on Pattern Analysis and Machine Intelligence,
+32(9):1610–1626, 2010.
+[12] K. Wagsta, C. Cardie, S. Rogers, and S. Schroedl. Constrained k-means clustering with back-
+ground knowledge. In Proceedings of the Eighteenth International Conference on Machine
+Learning, pages 577–584, 2001.
+[13] M. Sugiyama. Dimensionality reduction of multimodal labeled data by local ﬁsher discrimi-
+nant analysis. Journal of Machine Learning Research, 8:1027–1061, 2007.
+[14] T. Hastie, S. Rosset, R. Tibshirani, and J. Zhu. The entire regularization path for the support
+vector machine. Journal of Machine Learning Research, 5:1391–1415, 2004.
+[15] J. Nocedal and S. J. Wright. Numerical optimization. Springer, 1999.
+[16] U. Alon, N. Barkia, D.A. Notterman, and K. Gish et al. Broad patterns of gene expression
+revealed by clustering analysis of tumor and normal colon tissues probed by oligonucleotide
+arrays. Proc. Natl. Acad. Sci. USA, 96:6745–6750, 1999.
+[17] H. Sueltmann, A. Heydenbreck, W. Huber, and R. Kuner et al. Gene expression in kidney
+cancer is associated with novel tumor subtypes, cytogenetic abnormalities and metastasis for-
+mation. 8:1027–1061, 2007.
+[18] T. R. Golub, D. K. Slonim, P. Tamayo, and C. Huard et al. Molecular classiﬁcation of cancer:
+class discovery and class prediction by gene expression monitoring. Science, 286:531–537,
+1999.
+[19] D. Singh, P. G. Febbo, K. Ross, and D. G. Jackson et al. Gene expression correlates of clinical
+prostate cancer behavior. Cancer Cell, 1:203–209, 2002.
+
+In Proceedings of
+
+9
+
+

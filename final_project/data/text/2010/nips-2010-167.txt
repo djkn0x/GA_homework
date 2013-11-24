@@ -1,0 +1,754 @@
+Block Variable Selection in Multivariate Regression
+and High-dimensional Causal Inference
+
+Aur ´elie C. Lozano, Vikas Sindhwani
+IBM T.J. Watson Research Center,
+1101 Kitchawan Road,
+Yorktown Heights NY 10598,USA
+{aclozano,vsindhw}@us.ibm.com
+
+Abstract
+
+We consider multivariate regression problems involving high-dimensional predic-
+tor and response spaces. To efﬁciently address such problem s, we propose a vari-
+able selection method, Multivariate Group Orthogonal Matching Pursuit, which
+extends the standard Orthogonal Matching Pursuit technique. This extension ac-
+counts for arbitrary sparsity patterns induced by domain-speciﬁc groupings over
+both input and output variables, while also taking advantage of the correlation that
+may exist between the multiple outputs. Within this framework, we then formulate
+the problem of inferring causal relationships over a collection of high-dimensional
+time series variables. When applied to time-evolving social media content, our
+models yield a new family of causality-based in ﬂuence measu res that may be seen
+as an alternative to the classic PageRank algorithm traditionally applied to hyper-
+link graphs. Theoretical guarantees, extensive simulations and empirical studies
+con ﬁrm the generality and value of our framework.
+
+1 Introduction
+
+The broad goal of supervised learning is to effectively learn unknown functional dependencies be-
+tween a set of input variables and a set of output variables, given a ﬁnite collection of training
+examples. This paper is at the intersection of two key topics that arise in this context.
+
+The ﬁrst topic is Multivariate Regression [4, 2, 24] which generalizes basic single-output regression
+to settings involving multiple output variables with potentially signiﬁcant correlations between them.
+Applications of multivariate regression models include chemometrics, econometrics and computa-
+tional biology. Multivariate Regression may be viewed as the classical precursor to many modern
+techniques in machine learning such as multi-task learning [15, 16, 1] and structured output pre-
+diction [18, 10, 22]. These techniques are output-centric in the sense that they attempt to exploit
+dependencies between output variables to learn joint models that generalize better than those that
+treat outputs independently.
+
+The second topic is that of sparsity [3], variable selection and the broader notion of regulariza-
+tion [20]. The view here is input-centric in the following speciﬁc sense. In very high dimensional
+problems where the number of input variables may exceed the number of examples, the only hope
+for avoiding over ﬁtting is via some form of aggressive capac ity control over the family of dependen-
+cies being explored by the learning algorithm. This capacity control may be implemented in various
+ways, e.g., via dimensionality reduction, input variable selection or regularized risk minimization.
+Estimation of sparse models that are supported on a small set of input variables is a highly active
+and very successful strand of research in machine learning. It encompasses l1 regularization (e.g.,
+Lasso [19]) and matching pursuit techniques [13] which come with theoretical guarantees on the
+recovery of the exact support under certain conditions. Particularly pertinent to this paper is the
+
+1
+
+notion of group sparsity. In many problems involving very high-dimensional datasets, it is natural
+to enforce the prior knowledge that the support of the model should be a union over domain-speciﬁc
+groups of features. For instance, Group Lasso [23] extends Lasso, and Group-OMP [12, 9] extends
+matching pursuit techniques to this setting.
+
+In view of these two topics, we consider here very high dimensional problems involving a large
+number of output variables. We address the problem of enforcing sparsity via variable selection
+in multivariate linear models where regularization becomes crucial since the number of parameters
+grows not only with the data dimensionality but also the number of outputs. Our approach is guided
+by the following desiderata: (a) performing variable selection for each output in isolation may be
+highly suboptimal since the input variables which are relevant to (a subset of) the outputs may only
+exhibit weak correlation with each individual output. It is also desirable to leverage information
+on the relatedness between outputs, so as to guide the decision on the relevance of a certain input
+variable to a certain output, using additional evidence based on the relevance to related outputs. (b)
+It is desirable to take into account any grouping structure that may exist between input and output
+variables. In the presence of noisy data, inclusion decisions made at the group level may be more
+robust than those at the level of individual variables.
+
+To efﬁciently satisfy the above desiderata, we propose Multivariate Group Orthogonal Matching
+Pursuit (MGOMP) for enforcing arbitrary block sparsity patterns in multivariate regression coef-
+ﬁcients. These patterns are speciﬁed by groups de ﬁned over b
+oth input and output variables. In
+particular, MGOMP can handle cases where the set of relevant features may differ from one re-
+sponse (group) to another, and is thus more general than simultaneous variable selection procedures
+(e.g. S-OMP of [21]), as simultaneity of the selection in MGOMP is enforced within groups of
+related output variables rather than the entire set of outputs. MGOMP also generalizes the Group-
+OMP algorithm of [12] to the multivariate regression case. We provide theoretical guarantees on the
+quality of the model in terms of correctness of group variable selection and regression coefﬁcient
+estimation. We present empirical results on simulated datasets that illustrate the strength of our
+technique.
+
+We then focus on applying MGOMP to high-dimensional multivariate time series analysis prob-
+lems. Speciﬁcally, we propose a novel application of multiv ariate regression methods with variable
+selection, namely that of inferring key in ﬂuencers in onlin e social communities, a problem of in-
+creasing importance with the rise of planetary scale web 2.0 platforms such as Facebook, Twitter,
+and innumerable discussion forums and blog sites. We rigorously map this problem to that of infer-
+ring causal in ﬂuence relationships. Using special cases of MGOMP, we extend the classical notion
+of Granger Causality [7] which provides an operational notion of causality in time series analysis,
+to apply to a collection of multivariate time series variables representing the evolving textual con-
+tent of a community of bloggers. The sparsity structure of the resulting model induces a weighted
+causal graph that encodes in ﬂuence relationships. While we use blog communities to concretize
+the application of our models, our ideas hold more generally to a wider class of spatio temporal
+causal modeling problems. In particular, our formulation gives rise to a new class of in ﬂuence mea-
+sures that we call GrangerRanks, that may be seen as causality-based alternatives to hyperlink-based
+ranking techniques like the PageRank [17], popularized by Google in the early days of the internet.
+Empirical results on a diverse collection of real-world key in ﬂuencer problems clearly show the
+value of our models.
+
+2 Variable Group Selection in Multivariate Regression
+
+Let us begin by recalling the multivariate regression model, Y = X ¯A + E, where Y ∈ Rn×K
+is the output matrix formed by n training examples on K output variables, X ∈ Rn×p is the data
+matrix whose rows are p-dimensional feature vectors for the n training examples, ¯A is the p × K
+matrix formed by the true regression coefﬁcients one wishes
+to estimate, and E is the n × K error
+matrix. The row vectors of E, are assumed to be independently sampled from N (0, Σ) where Σ is
+the K × K error covariance matrix. For simplicity of notation we assume without loss of generality
+that the columns of X and Y have been centered so we need not deal with intercept terms.
+
+The negative log-likelihood function (up to a constant) corresponding to the aforementioned model
+can be expressed as
+Σ−1 (cid:12)(cid:12) ,
+− l(A, Σ) = tr (cid:0)(Y − XA)T (Y − XA)Σ−1 (cid:1) − n log (cid:12)(cid:12)
+2
+
+(1)
+
+where A is any estimate of ¯A, and | · | denotes the determinant of a matrix. The maximum likelihood
+estimator is the Ordinary Least Squares (OLS) estimator ˆAOLS = (XT X)−1XT Y, namely, the
+concatenation of the OLS estimates for each of the K outputs taken separately, irrespective of Σ.
+This suggests its suboptimality as the relatedness of the responses is disregarded. Also the OLS
+estimator is known to perform poorly in the case of high dimensional predictors and/or when the
+predictors are highly correlated. To alleviate these issues, several methods have been proposed
+that are based on dimension reduction. Among those, variable selection methods are most popular
+as they lead to parsimonious and interpretable models, which is desirable in many applications.
+Clearly, however, variable selection in multiple output regression is particularly challenging in the
+presence of high dimensional feature vectors as well as possibly a large number of responses.
+
+In many applications, including high-dimensional time series analysis and causal modeling set-
+tings showcased later in this paper, it is possible to provide domain speciﬁc guidance for vari-
+able selection by imposing a sparsity structure on A. Let I = {I1 . . . IL } denote the set formed
+by L (possibly overlapping) groups of input variables where Ik ⊂ {1 . . . p}, k = 1, . . . L. Let
+O = {O1 . . . OM } denote the set formed by M (possibly overlapping) groups of output vari-
+ables where Ok ⊂ {1 . . . K }, k = 1, . . . , M . Note that if certain variables do not belong to any
+group, they may be considered to be groups of size 1. These group de ﬁnitions specify a block
+sparsity/support pattern on A. Without loss of generality, we assume that column indices are per-
+muted so that groups go over contiguous indices. We now outline a novel algorithm, Multivariate
+Group Orthogonal Matching Pursuit (MGOMP), that seeks to minimize the negative log-likelihood
+associated with the multivariate regression model subject to the constraint that the support (set of
+non-zeros) of the regression coefﬁcient matrix, A, is a union of blocks formed by input and output
+variable groupings1.
+
+2.1 Multivariate Group Orthogonal Matching Pursuit
+
+(2)
+
+The MGOMP procedure performs greedy pursuit with respect to the loss function
+LC (A) = tr (cid:0)(Y − XA)T (Y − XA)C(cid:1) ,
+where C is an estimate of the precision matrix Σ−1 , given as input. Possible estimates include
+the sample estimate using residual error obtained from running univariate Group-OMP for each
+response individually. In addition to leveraging the grouping information via block sparsity con-
+straints, MGOMP is able to incorporate additional information on the relatedness among output
+variables as implicitly encoded in the error covariance matrix Σ, noting that the latter is also the co-
+variance matrix of the response Y conditioned on the predictor matrix X. Existing variable selection
+methods often ignore this information and deal instead with (regularized versions of) the simpliﬁed
+objective tr (cid:0)(Y − XA)T (Y − XA)(cid:1) , thereby implicitly assuming that Σ = I.
+Before outlining the details of MGOMP, we ﬁrst need to introd uce some notation. For any set of
+output variables O ⊂ {1, . . . , K }, denote by CO the restriction of the K × K precision matrix
+C to columns corresponding to the output variables in O, and by CO,O similar restriction to both
+columns and rows. For any set of input variables I ⊂ {1, . . . , p}, denote by XI the restriction of
+X to columns corresponding to the input variables in I . Furthermore, to simplify the exposition,
+we assume in the remainder of the paper that for each group of input variables Is ∈ I , XIs is
+T XIs = I. Denote by A(m) the estimate of the regression coefﬁcient
+orthonormalized, i.e., XIs
+matrix at iteration m, and by R(m) the corresponding matrix of residuals, i.e. R(m) = Y − XA(m) .
+The MGOMP procedure iterates between two steps : (a) Block Variable Selection and (b) Coefﬁcient
+matrix re-estimation with selected block. We now outline the details of these two steps.
+Block Variable Selection: In this step, each block, (Ir , Os ), is evaluated with respect to how much
+its introduction into Am−1 can reduce residual loss. Namely, at round m, the procedure selects the
+block (Ir , Os ) that minimizes
+
+arg min
+1≤r≤L,1≤s≤M
+
+min
+A:Av,w =0,v 6∈Ir ,w 6∈Os
+
+(LC (A(m−1) + A) − LC (A(m−1) )).
+1We note that we could easily generalize this setting and MGOMP to deal with the more general case where
+there may be a different grouping structure for each output group, namely for each Ok , we could consider a
+different set IOk of input variable groups.
+
+3
+
+(3)
+
+(4)
+
+tr(MT
+1
+
+R(m−1)COs )T (XT
+Ir
+
+R(m−1)COs )(C −1
+Os ,Os
+
+Note that when the minimum attained falls below , the algorithm is stopped. Using standard Linear
+Algebra, the block variable selection criteria simpliﬁes t o
+)(cid:17) .
+tr (cid:16)(XT
+(r(m) , s(m) ) = arg max
+Ir
+r,s
+From the above equation, it is clear that the relatedness between output variables is taken into ac-
+count in the block selection process.
+Coef ﬁcient Re-estimation:
+Let M(m−1) be the set of blocks selected up to iteration m − 1 . The set is now updated to include
+the selected block of variables (Ir(m) , Os(m) ), i.e., M(m) = M(m−1) ∪ {(Ir(m) , Os(m) )}. The
+regression coefﬁcient matrix is then re-estimated as A(m) = ˆAX (M(m) , Y), where
+ˆAX (M(m) , Y) = arg min
+LC (A) subject to supp(A) ⊆ M(m) .
+A∈Rp×K
+Since certain features are only relevant to a subset of responses, here the precision matrix estimate
+C comes into play, and the problem can not be decoupled. However, a closed form solution for (4)
+can be derived by recalling the following matrix identities [8],
+M2M3MT
+4 ) = vec(M1 )T (M4 ⊗ M2 )vec(M3 ),
+(5)
+(6)
+vec(M1M2 ) = (I ⊗ M1 )vec(M2 ),
+where vec denotes the matrix vectorization, ⊗ the Kronecker product, and I the identity matrix.
+From (5), we have
+tr (cid:0)(Y − XA)T (Y − XA)C(cid:1) = (vec(Y − XA))T (C ⊗ In )(vec(Y − XA)).
+(7)
+For a set of selected blocks, say M, denote by O(M) the union of the output groups in M. Let
+˜C = CO(M),O(M) ⊗ In and ˜Y = vec(YO(M) ). For each output group Os in M, let I (Os ) =
+∪(Ir ,Os )∈M Ir . Finally de ﬁne ˜X such that ˜X = diag (cid:8)I|Os | ⊗ XI (Os ) , Os ∈ O(M)(cid:9) . Using (7)
+and (6) one can show that the non-zero entries of vec( ˆAX (M, Y)), namely those corresponding to
+the support induced by M, are given by ˆα = (cid:16) ˜XT ˜C ˜X(cid:17)−1 (cid:16) ˜XT ˜C(cid:17) ˜Y , thus providing a closed-
+form formula for the coefﬁcient re-estimation step.
+To conclude this section, we note that we could also consider preforming alternate optimization of
+the objective in (1) over A and Σ, using MGOMP to optimize over A for a ﬁxed estimate of Σ, and
+using a covariance estimation algorithm (e.g. Graphical Lasso [5]) to estimate Σ with ﬁxed A.
+
+2.2 Theoretical Performance Guarantees for MGOMP
+
+In this section we show that under certain conditions MGOMP can identify the correct blocks of
+variables and provide an upperbound on the maximum absolute difference between the estimated
+and true regression coefﬁcients. We assume that the estimat e of the error precision matrix, C, is in
+agreement with the speciﬁcation of the output groups, namel y that Ci,j = 0 if i and j belong to
+different output groups.
+For each output variable group Ok , denote by Ggood (k) the set formed by the input groups included
+in the true model for the regressions in Ok , and let Gbad (k) be the set formed by all the pairs that are
+not included. Similarly denote by Mgood the set formed by the pairs of input and output variable
+groups included in the true model, and Mbad be the set formed by all the pairs that are not included.
+Before we can state the theorem, we need to de ﬁne the paramete rs that are key in the conditions
+2 : supp(α) ⊆ Ggood (k)(cid:9) ,
+for consistency. Let ρX (Mgood ) = mink∈{1,...,M } inf α (cid:8)kXαk2
+2/kαk2
+namely ρX (Mgood ) is the minimum over the output groups Ok of the smallest eigenvalue of
+XGgood (k) .
+XT
+Ggood (k)
+For each output group Ok , de ﬁne generally for any u = {u1 , . . . , u|Ggood (k)| } and v =
+{v1 , . . . , v|Gbad (k)| },
+(2,1) = PGi∈Ggood (k) r Pj∈Gi
+(2,1) = PGi∈Gbad (k) r Pj∈Gi
+kukgood(k)
+j , and kvkbad(k)
+u2
+
+v2
+j .
+
+4
+
+=
+
+.
+
+For any matrix M ∈ R|Ggood (k)|×|Gbad (k)| , let kMkgood/bad(k)
+(2,1)
+
+(2,1) =1 kMvkgood(k)
+sup
+(2,1)
+kvkbad(k)
+XGbad (k)kgood/bad(k)
+Then we de ﬁne µX (Mgood ) = maxk∈{1,...,M } kX+
+, where X+ de-
+(2,1)
+Ggood (k)
+notes the Moore-Penrose pseudoinverse of X. We are now able to state the consistency theorem.
+Theorem 1. Assume that µX (Mgood ) < 1 and 0 < ρX (Mgood ) ≤ 1. For any
+η ∈ (0, 1/2), with probability at
+least 1 − 2η ,
+if
+the stopping criterion of MGOMP is
+1−µX (Mgood ) p2pK ln(2pK/η) and mink∈{1,...,M },Ij ∈Ggood (k) k ¯AIj ,Ok kF ≥
+1
+such that  >
+√8ρX (Mgood )−1 then when the algorithm stops M(m−1) = Mgood and kA(m−1) − ¯Akmax ≤
+p(2 ln(2|Mgood |/η))/ρX (Mgood ).
+Proof. The multivariate regression model Y = X ¯A + E can be rewritten in an equiva-
+lent univariate form with white noise: ˜Y = (IK ⊗ X) ¯α + η , where ¯α = vec( ¯A), ˜Y =
+In(cid:27)K
+diag (cid:26) 1
+vec(YC1/2 ), and η is formed by i.i.d samples from N (0, 1). We can see that
+C 1/2
+k,k
+k=1
+applying the MGOMP procedure is equivalent to applying the Group-OMP procedure [12] to the
+above vectorized regression model, using as grouping structure that naturally induced by the input-
+output groups originally considered for MGOMP. The theorem then follows from Theorem 3 in [12]
+and translating the univariate conditions for consistency into their multivariate counterparts via
+µX (Mgood ) and ρX (Mgood ). Since C is such that Ci,j = 0 for any i, j belonging to distinct
+groups, the entries in ˜Y do not mix components of Y from different output groups and hence the
+error covariance matrix does not appear in the consistency conditions.
+
+Note that the theorem can also be re-stated with an alternative condition on the amplitude of the true
+regression coefﬁcient: mink∈{1,...,M },Ij ∈Ggood (k) mins∈Ok k ¯AIj ,k k2 ≥ √8ρX (Mgood )−1/p|Ok |
+which suggests that the amplitude of the true regression coefﬁcients is allowed to be smaller in
+MGOMP compared to Group-OMP on individual regressions. Intuitively, through MGOMP we
+are combining information from multiple regressions, thus improving our capability to identify the
+correct groups.
+
+2.3 Simulation Results
+
+We empirically evaluate the performance of our method against representative variable selection
+methods, in terms of accuracy of prediction and variable (group) selection. As a measure of variable
+selection accuracy we use the F1 measure, which is de ﬁned as F1 = 2P R
+P +R , where P denotes the
+precision and R denotes the recall. To compute the variable group F1 of a variable selection method,
+we consider a group to be selected if any of the variables in the group is selected. As a measure of
+prediction accuracy we use the average squared error on a test set. For all the greedy pursuit meth-
+ods, we consider the “holdout validated ” estimates. Namely , we select the iteration number that
+minimizes the average squared error on a validation set. For univariate methods, we consider indi-
+vidual selection of the iteration number for each univariate regression (joint selection of a common
+iteration number across the univariate regressions led to worse results in the setting considered). For
+each setting, we ran 50 runs, each with 50 observations for training, 50 for validation and 50 for
+testing.
+We consider an n × p predictor matrix X, where the rows are generated independently accord-
+ing to Np (0, S), with Si,j = 0.7|i−j | . The n × K error matrix E is generated according to
+NK (0, Σ), with Σi,j = ρ|i−j | , where ρ ∈ {0, 0.5, 0.7, 0/9}. We consider a model with 3rd or-
+der polynomial expansion: [YT1 , . . . , YTM ] = X[A1,T1 , . . . , A1,TM ] + X2 [A2,T1 , . . . , A2,TM ] +
+X3 [A3,T1 , . . . , A3,TM ] + E. Here we abuse notation to denote by Xq the matrix such that Xq
+i,j =
+(Xi,j )q . T1 , . . . , TM are the target groups. For each k , each row of [A1,Tk , . . . , A3,Tk ] is either all
+non-zero or all zero, according to Bernoulli draws with success probability 0.1. Then for each non-
+zero entry of Ai,Tk , independently, we set its value according to N (0, 1). The number of features
+for X is set to 20. Hence we consider 60 variables grouped into 20 groups corresponding the the 3rd
+degree polynomial expansion. The number of regressions is set to 60. We consider 20 regression
+groups (T1 , . . . T20 ), each of size 3.
+
+5
+
+Parallel runs
+K
+K
+1
+1
+1
+M
+
+(p, L)
+(p, p)
+(p, L)
+(p, p)
+(p, L)
+(p, L)
+(p, L)
+
+(K, M)
+(1, 1)
+(1, 1)
+(K, 1)
+(K, M )
+(K, M )
+(M 0 , 1)
+
+Precision matrix estimate
+Not applicable
+Not applicable
+Identity matrix
+Identity matrix
+Estimate from univariate OMP ﬁts
+Identity matrix
+
+Method
+OMP [13]
+Group-OMP [12]
+S-OMP [21]
+MGOMP(Id)
+MGOMP(C)
+MGOMP(Parallel)
+
+Table 1: Various matching pursuit methods and their corresponding parameters.
+
+ρ
+0.9
+0.7
+0.5
+0
+
+ρ
+0.9
+0.7
+0.5
+0
+
+MGOMP (C)
+0.863 ± 0.003
+0.850 ± 0.002
+0.850 ± 0.003
+0.847 ± 0.004
+MGOMP (C)
+3.009 ± 0.234
+3.114 ± 0.252
+3.117 ± 0.234
+3.124 ± 0.256
+
+MGOMP (Id)
+0.818 ± 0.003
+0.806 ± 0.003
+0.802 ± 0.004
+0.848 ± 0.004
+MGOMP (Id)
+3.324 ± 0.273
+3.555 ± 0.287
+3.630 ± 0.281
+3.123 ± 0.262
+
+MGOMP(Parallel)
+0.762 ± 0.003
+0.757 ± 0.003
+0.766 ± 0.004
+0.783 ± 0.004
+MGOMP(Parallel)
+4.086 ± 0.169
+4.461 ± 0.159
+4.499 ± 0.288
+3.852 ± 0.185
+
+Group-OMP
+0.646 ± 0.007
+0.631 ± 0.008
+0.641 ± 0.006
+0.651 ± 0.007
+Group-OMP
+6.165 ± 0.317
+8.170 ± 0.328
+7.305 ± 0.331
+6.137 ± 0.330
+
+OMP
+0.517 ± 0.006
+0.517 ± 0.007
+0.525 ± 0.007
+0.525 ± 0.007
+OMP
+6.978 ± 0.206
+8.14 ± 0.390
+8.098 ± 0.323
+7.414 ± 0.331
+
+Table 2: Average F1 score (top) and average test set squared error (bottom) for the models output
+by variants of MGOMP, Group-OMP and OMP under the settings of Table 1.
+
+A dictionary of various matching pursuit methods and their corresponding parameters is provided in
+Table 1. In the table, note that MGOMP(Parallel) consists in running MGOMP separately for each
+regression group and C set to identity (Using C estimated from univariate OMP ﬁts has negligible
+impact on performance and hence is omitted for conciseness.). The results are presented in Table 2.
+
+Overall, in all the settings considered, MGOMP is superior both in terms of prediction and vari-
+able selection accuracy, and more so when the correlation between responses increases. Note that
+MGOMP is stable with respect to the choice of the precision matrix estimate. Indeed the advantage
+of MGOMP persists under imperfect estimates (Identity and sample estimate from univariate OMP
+ﬁts) and varying degrees of error correlation. In addition, model selection appears to be more robust
+for MGOMP, which has only one stopping point (MGOMP has one path interleaving input variables
+for various regressions, while GOMP and OMP have K paths, one path per univariate regression).
+
+3 Granger Causality with Block Sparsity in Vector Autoregressive Models
+
+3.1 Model Formulation
+
+We begin by motivating our main application. The emergence of the web2.0 phenomenon has set in
+place a planetary-scale infrastructure for rapid proliferation of information and ideas. Social media
+platforms such as blogs, twitter accounts and online discussion sites are large-scale forums where
+every individual can voice a potentially in ﬂuential public opinion. This unprecedented scale of un-
+structured user-generated web content presents new challenges to both consumers and companies
+alike. Which blogs or twitter accounts should a consumer follow in order to get a gist of the com-
+munity opinion as a whole? How can a company identify bloggers whose commentary can change
+brand perceptions across this universe, so that marketing interventions can be effectively strategized?
+The problem of ﬁnding key in ﬂuencers and authorities in onli
+ne communities is central to any vi-
+able information triage solution, and is therefore attracting increasing attention [14, 6]. A traditional
+approach to this problem would treat it no different from the problem of ranking web-pages in a
+hyperlinked environment. Seminal ideas such as the PageRank [17] and Hubs-and-Authorities [11]
+were developed in this context, and in fact even celebrated as bringing a semblance of order to the
+web. However, the mechanics of opinion exchange and adoption makes the problem of inferring
+authority and in ﬂuence in social media settings somewhat di fferent from the problem of ranking
+generic web-pages. Consider the following example that typiﬁes the process of opinion adoption. A
+consumer is looking to buy a laptop. She initiates a web search for the laptop model and browses
+several discussion and blog sites where that model has been reviewed. The reviews bring to her
+attention that among other nice features, the laptop also has excellent speaker quality. Next she buys
+the laptop and in a few days herself blogs about it. Arguably, conditional on being made aware of
+
+6
+
+speaker quality in the reviews she had read, she is more likely to herself comment on that aspect
+without necessarily attempting to ﬁnd those sites again in o rder to link to them in her blog. In other
+words, the actual post content is the only trace that the opinion was implicitly absorbed. Moreover,
+the temporal order of events in this interaction is indicative of the direction of causal in ﬂuence .
+
+We formulate these intuitions rigorously in terms of the notion of Granger Causality [7] and then
+employ MGOMP for its implementation. For scalability, we work with MGOMP (Parallel), see
+table 1. Introduced by the Nobel prize winning economist, Clive Granger, this notion has proven
+useful as an operational notion of causality in time series analysis. It is based on the intuition that
+a cause should necessarily precede its effect, and in particular if a time series variable X causally
+affects another Y , then the past values of X should be helpful in predicting the future values of Y ,
+beyond what can be predicted based on the past values of Y alone.
+Let B1 . . . BG denote a community of G bloggers. With each blogger, we associate content vari-
+ables, which consist of frequencies of words relevant to a topic across time. Speciﬁcally, given a
+dictionary of K words and the time-stamp of each blog post, we record wk,t
+, the frequency of the
+i
+k th word for blogger Bi at time t. Then, the content of blogger Bi at time t can be represented as
+, . . . , wK,t
+i = [w1,t
+Bt
+]. The input to our model is a collection of multivariate time series, {Bt
+i }T
+t=1
+i
+i
+(1 ≤ i ≤ G), where T is the timespan of our analysis. Our key intuition is that authorities and
+in ﬂuencers are causal drivers of future discussions and opinions in the community. This may be
+phrased in the following terms:
+Granger Causality: A collection of bloggers is said to in ﬂuence Blogger Bi if their collective past
+content (blog posts) is predictive of the future content of Blogger Bi , with statistical signiﬁcance,
+and more so than the past content of Blogger Bi alone.
+The in ﬂuence problem can thus be mapped to a variable group se lection problem in
+in multivariate regression with G × K responses
+a vector autoregressive model,
+i.e.,
+j , j = 1, 2 . . . G} in terms of variable groups (cid:8){Bt−l
+l=1 , j = 1, 2 . . . G(cid:9):
+{Bt
+j }d
+[Bt
+1 , . . . , Bt
+G ] =
+[Bt−1
+, . . . , Bt−d
+, . . . , Bt−1
+G , . . . , Bt−d
+G ]A + E. We can then conclude that a certain blogger Bi
+1
+1
+in ﬂuences blogger Bj , if the variable group {Bt−l
+i }l∈{1,...,d} is selected by the variable selection
+method for the responses concerning blogger Bj . For each blogger Bj , this can be viewed as an ap-
+plication of a Granger test on Bj against bloggers B1 , B2 , . . . , BG . This induces a directed weighted
+graph over bloggers, which we call causal graph, where edge weights are derived from the underly-
+ing regression coefﬁcients. We refer to in ﬂuence measures o
+n causal graphs as GrangerRanks. For
+example, GrangerPageRank refers to applying pagerank on the causal graph while GrangerOutDe-
+gree refers to computing out-degrees of nodes as a measure of causal in ﬂuence.
+
+3.2 Application: Causal Inﬂuence in Online Social Communit ies
+
+Proof of concept: Key Inﬂuencers in Theoretical Physics : Drawn from a KDD Cup 2003 task,
+this dataset is publically available at: http://www.cs.cornell.edu/projects/kddcup/datasets.html. It
+consists of the latex sources of all papers in the hep-th portion of the arXiv (http://arxiv.org) In
+consultation with a theoretical physicist we did our analysis at a time granularity of 1 month. In
+total, the data spans 137 months. We created document term matrices using standard text processing
+techniques, over a vocabulary of 463 words chosen by running an unsupervised topic model. For
+each of the 9200 authors, we created a word-time matrix of size 463x137, which is the usage of the
+topic-speciﬁc key words across time. We considered one year , i.e., d = 12 months as maximum
+time lag. Our model produces the causal graph shown in Figure 1 showing in ﬂuence relationships
+amongst high energy physicists. The table on the right side of Figure 1 lists the top 20 authors ac-
+cording to GrangerOutDegree (also marked on the graph), GrangerPagerRank and Citation Count.
+The model correctly identiﬁes several leading ﬁgures such a
+s Edward Witten, Cumrun Vafa as au-
+thorities in theoretical physics. In this domain, number of citations is commonly viewed as a valid
+measure of authority given disciplined scholarly practice of citing prior related work. Thus, we
+consider citation-count based ranking as the “ground truth ”. We also ﬁnd that GrangerPageRank
+and GrangerOutDegree have high positive rank correlation with citation counts (0.728 and 0.384
+respectively). This experiment con ﬁrms that our model agre es with how this community recognizes
+its authorities.
+
+7
+
+ S.Gukov
+
+ R.J.Szabo
+ C.S.Chu
+ Arkady Tseytlin
+ Michael Douglas
+
+ R.Tatar
+
+ I.Antoniadis
+
+ E.Witten
+
+ Per Kraus
+
+ Ian Kogan
+
+ Igor Klebanov
+
+ G.Moore
+ P.K.Townsend
+
+ S.Theisen
+ Jacob Sonnenschein
+
+ C.Vafa
+
+ J.L.F.Barbon
+
+ S.Ferrara
+
+ Alex Kehagias
+ M.Berkooz
+
+GrangerOutdegree
+E.Witten
+C.Vafa
+Alex Kehagias
+Arkady Tseytlin
+P.K.Townsend
+Jacob Sonnenschein
+Igor Klebanov
+R.J.Szabo
+G.Moore
+Michael Douglas
+
+GrangerPageRank
+E.Witten
+C.Vafa
+Alex Kehagias
+Arkady Tseytlin
+P.K.Townsend
+Jacob Sonnenschein
+R.J.Szabo
+G.Moore
+Igor Klebanov
+Ian Kogan
+
+Citation Count
+E.Witten
+N.Seiberg
+C.Vafa
+J.M.Maldacena
+A.A.Sen
+Andrew Strominger
+Igor Klebanov
+Michael Douglas
+Arkady Tseytlin
+L.Susskind
+
+Figure 1: Causal Graph and top authors in High-Energy Physics according to various measures.
+
+(a) Causal Graph
+
+(b) Hyperlink Graph
+
+Figure 2: Causal and hyperlink graphs for the lotus blog dataset.
+Real application: IBM Lotus Bloggers: We crawled blogs pertaining to the IBM Lotus software
+brand. Our crawl process ran in conjunction with a relevance classiﬁer that continuously ﬁltered out
+posts irrelevant to Lotus discussions. Due to lack of space we omit preprocessing details that are
+similar to the previous application. In all, this dataset represents a Lotus blogging community of
+684 bloggers, each associated with multiple time series describing the frequency of 96 words over a
+time period of 376 days. We considered one week i.e., d = 7 days as maximum time lag in this ap-
+plication. Figure 2 shows the causal graph learnt by our models on the left, and the hyperlink graph
+on the right. We notice that the causal graph is sparser than the hyperlink graph. By identifying the
+most signiﬁcant causal relationships between bloggers, ou r causal graphs allow clearer inspection
+of the authorities and also appear to better expose striking sub-community structures in this blog
+community. We also computed the correlation between PageRank and Outdegrees computed over
+our causal graph and the hyperlink graph (0.44 and 0.65 respectively). We observe positive corre-
+lations indicating that measures computed on either graph partially capture related latent rankings,
+but at the same time are also sufﬁciently different from each other. Our results were also validated
+by domain experts.
+
+4 Conclusion and Perspectives
+
+We have provided a framework for learning sparse multivariate regression models, where the sparsity
+structure is induced by groupings de ﬁned over both input and output variables. We have shown that
+extended notions of Granger Causality for causal inference over high-dimensional time series can
+naturally be cast in this framework. This allows us to develop a causality-based perspective on the
+problem of identifying key in ﬂuencers in online communitie s, leading to a new family of in ﬂuence
+measures called GrangerRanks. We list several directions of interest for future work: optimizing
+time-lag selection; considering hierarchical group selection to identify pertinent causal relationships
+not only between bloggers but also between communities of bloggers; incorporating the hyperlink
+graph in the causal modeling; adapting our approach to produce topic speciﬁc rankings; developing
+online learning versions; and conducting further empirical studies on the properties of the causal
+graph in various applications of multivariate regression.
+
+Acknowledgments
+We would like to thank Naoki Abe, Rick Lawrence, Estepan Meliksetian, Prem Melville and Grze-
+gorz Swirszcz for their contributions to this work in a variety of ways.
+
+8
+
+References
+[1] Andreas Argyriou, Theodoros Evgeniou, and Massimiliano Pontil. Convex multi-task feature
+learning. Machine Learning, 73(3):243 –272, 2008.
+[2] Leo Breiman and Jerome H Friedman. Predicting multivariate responses in multiple linear
+regression. Journal of the Royal Statistical Society: Series B, (1):1369 –7412, 1997.
+[3] M. Elad. Sparse and Redundant Representations: From Theory to Applications in Signal and
+Image Processing. Springer,2010
+[4] Ildiko E. Frank and Jerome H. Friedman. A statistical view of some chemometrics regression
+tools. Technometrics, 35(2):109 –135, 1993.
+[5] J. Friedman, T. Hastie, and R. Tibshirani. Sparse inverse covariance estimation with the graph-
+ical lasso. Biostatistics, 9(3):432 –441, July 2008.
+[6] M. Gomez-Rodriguez and J. Leskovec and A. Krause. Inferring Networks of Diffusion and
+In ﬂuence, KDD 2010.
+[7] C. Granger. Testing for causality: A personal viewpoint. Journal of Economic Dynamics and
+Control, 2:329 –352, 1980.
+[8] D. Harville. Matrix Algebra from a Statistician’s Perspective. Springer, 1997.
+[9] J. Huang, T. Zhang, and D. Metaxas D. Learning with structured sparsity, ICML 2009.
+[10] T. Joachims. Structured output prediction with support vector machines. In Joint IAPR In-
+ternational Workshops on Structural and Syntactic Pattern Recognition (SSPR) and Statistical
+Techniques in Pattern Recognition (SPR), pages 1 –7, 2006.
+[11] Jon M. Kleinberg. Authoritative sources in a hyperlinked environment. Journal of the ACM,
+46:668 –677, 1999.
+[12] A.C. Lozano, G. Swirszcz, and N. Abe. Grouped orthogonal matching pursuit for variable
+selection and prediction. Advances in Neural Information Processing Systems 22, 2009.
+[13] S. Mallat and Z. Zhang. Matching pursuits with time-frequency dictionaries. IEEE Transac-
+tions on Signal Processing, 1993.
+[14] P. Melville, K. Subbian, C. Perlich, R. Lawrence and E. Meliksetian. A Predictive Perspective
+on Measures of In ﬂuence in Networks Workshop on Information in Networks (WIN-10), New
+York, September, 2010.
+[15] Charles A. Micchelli and Massimiliano Pontil. Kernels for multi–task learning. In NIPS, 2004.
+[16] G. Obozinski, B. Taskar, and M. Jordan. Multi-task feature selection. Technical report, 2006.
+[17] L. Page, S. Brin, R. Motwani, and T. Winograd. The pagerank citation ranking: Bringing order
+to the web. Technical Report, Stanford Digital Libraries, 1998.
+[18] Elisa Ricci, Tijl De Bie, and Nello Cristianini. Magic moments for structured output prediction.
+Journal of Machine Learning Research, 9:2803 –2846, December 2008.
+[19] R. Tibshirani. Regression shrinkage and selection via the lasso. Journal of the Royal Statistical
+Society, Series B, 58:267 –288, 1994.
+[20] A.N. Tikhonov. Regularization of incorrectly posed problems. Sov. Math. Dokl, 4:16241627,
+1963.
+[21] J.A. Tropp, A.C. Gilbert, and M.J. Strauss. Algorithms for simultaneous sparse approximation:
+part i: Greedy pursuit. Sig. Proc., 86(3):572 –588, 2006.
+[22] I. Tsochantaridis, T. Hofmann, T. Joachims, and Y. Altun. Support vector machine learning for
+interdependent and structured output spaces. In International Conference on Machine Learning
+(ICML), pages 104 –112, 2004.
+[23] M. Yuan and Y. Lin. Model selection and estimation in regression with grouped variables.
+Journal of the Royal Statistical Society, Series B, 68:49 –67, 2006.
+[24] Ming Yuan, Ali Ekici, Zhaosong Lu, and Renato Monteiro. Dimension reduction and coef-
+ﬁcient estimation in multivariate linear regression.
+Journal Of The Royal Statistical Society
+Series B, 69(3):329 –346, 2007.
+
+9
+
+

@@ -1,0 +1,632 @@
+Online Learning of Assignments
+
+Matthew Streeter
+Google, Inc.
+Pittsburgh, PA 15213
+mstreeter@google.com
+
+Daniel Golovin
+Carnegie Mellon University
+Pittsburgh, PA 15213
+dgolovin@cs.cmu.edu
+
+Andreas Krause
+California Institute of Technology
+Pasadena, CA 91125
+krausea@caltech.edu
+
+Abstract
+
+Which ads should we display in sponsored search in order to maximize our revenue?
+How should we dynamically rank information sources to maximize the value of
+the ranking? These applications exhibit strong diminishing returns: Redundancy
+decreases the marginal utility of each ad or information source. We show that
+these and other problems can be formalized as repeatedly selecting an assignment
+of items to positions to maximize a sequence of monotone submodular functions
+that arrive one by one. We present an efﬁcient algorithm for this general problem
+and analyze it in the no-regret model. Our algorithm possesses strong theoretical
+guarantees, such as a performance ratio that converges to the optimal constant
+of 1 − 1/e. We empirically evaluate our algorithm on two real-world online
+optimization problems on the web: ad allocation with submodular utilities, and
+dynamically ranking blogs to detect information cascades.
+
+Introduction
+1
+Consider the problem of repeatedly choosing advertisements to display in sponsored search to
+maximize our revenue. In this problem, there is a small set of positions on the page, and each time
+a query arrives we would like to assign, to each position, one out of a large number of possible
+ads. In this and related problems that we call online assignment learning problems, there is a set
+of positions, a set of items, and a sequence of rounds, and on each round we must assign an item
+to each position. After each round, we obtain some reward depending on the selected assignment,
+and we observe the value of the reward. When there is only one position, this problem becomes
+the well-studied multiarmed bandit problem [2]. When the positions have a linear ordering the
+assignment can be construed as a ranked list of elements, and the problem becomes one of selecting
+lists online. Online assignment learning thus models a central challenge in web search, sponsored
+search, news aggregators, and recommendation systems, among other applications.
+A common assumption made in previous work on these problems is that the quality of an assignment
+is the sum of a function on the (item, position) pairs in the assignment. For example, online advertising
+models with click-through-rates [6] make an assumption of this form. More recently, there have been
+attempts to incorporate the value of diversity in the reward function [16]. Intuitively, even though the
+best K results for the query “turkey” might happen to be about the country, the best list of K results
+is likely to contain some recipes for the bird as well. This will be the case if there are diminishing
+returns on the number of relevant links presented to a user; for example, if it is better to present each
+user with at least one relevant result than to present half of the users with no relevant results and
+half with two relevant results. We incorporate these considerations in a ﬂexible way by providing
+an algorithm that performs well whenever the reward for an assignment is a monotone submodular
+function of its set of (item, position) pairs.
+Our key contributions are: (i) an efﬁcient algorithm, TABU LARGR EEDY , that provides a (1 − 1/e)
+approximation ratio for the problem of optimizing assignments under submodular utility functions, (ii)
+an algorithm for online learning of assignments, TGBAND I T, that has strong performance guarantees
+in the no-regret model, and (iii) an empirical evaluation on two problems of information gathering on
+the web.
+
+1
+
+2 The assignment learning problem
+We consider problems, where we have K positions (e.g., slots for displaying ads), and need to assign
+to each position an item (e.g., an ad) in order to maximize a utility function (e.g., the revenue from
+clicks on the ads). We address both the ofﬂine problem, where the utility function is speciﬁed in
+advance, and the online problem, where a sequence of utility functions arrives over time, and we need
+to repeatedly select a new assignment.
+
+The Ofﬂine Problem.
+In the ofﬂine problem we are given sets P1 , P2 , . . . , PK , where Pk is the
+set of items that may be placed in position k . We assume without loss of generality that these sets
+are disjoint.1 An assignment is a subset S ⊆ V , where V = P1 ∪ P2 ∪ · · · ∪ PK is the set of all
+items. We call an assignment feasible, if at most one item is assigned to each position (i.e., for all k ,
+|S ∩ Pk | ≤ 1). We use P to refer to the set of feasible assignments.
+Our goal is to ﬁnd a feasible assignment maximizing a utility function f : 2V → R≥0 . As we discuss
+later, many important assignment problems satisfy submodularity, a natural diminishing returns
+property: Assigning a new item to a position k increases the utility more if few elements have been
+assigned yet, and less if many items have already been assigned. Formally, a utility function f is
+called submodular, if for all S ⊆ S (cid:48) and s /∈ S (cid:48) it holds that f (S ∪ {s})− f (S ) ≥ f (S (cid:48) ∪ {s})− f (S (cid:48) ).
+We will also assume f is monotone (i.e., for all S ⊆ S (cid:48) , we have f (S ) ≤ f (S (cid:48) )). Our goal is thus,
+for a given non-negative, monotone and submodular utility function f , to ﬁnd a feasible assignment
+S ∗ of maximum utility, S ∗ = arg maxS∈P {f (S )}.
+This optimization problem is NP-hard. In fact, a stronger negative result holds:
+Theorem 1 ([14]). For any  > 0, any algorithm guaranteed to obtain a solution within a factor of
+(1 − 1/e + ) of maxS∈P {f (S )} requires exponentially many evaluations of f in the worst case.
+
+In light of this negative result, we can only hope to efﬁciently obtain a solution that achieves a fraction
+of (1 − 1/e) of the optimal value. In §3.2 we develop such an algorithm.
+The Online Problem. The ofﬂine problem is inappropriate to model dynamic settings, where the
+utility function may change over time, and we need to repeatedly select new assignments, trading
+off exploration (experimenting with ad display to gain information about the utility function), and
+exploitation (displaying ads which we believe will maximize utility). More formally, we face a
+sequential decision problem, where, on each round (which, e.g., corresponds to a user query for a
+particular term), we want to select an assignment St (ads to display). We assume that the sets P1 , P2 ,
+. . . , PK are ﬁxed in advance for all rounds. After we select the assignment we obtain reward ft (St )
+for some non-negative monotone submodular utility function ft . We call the setting where we do
+not get any information about ft beyond the reward the bandit feedback model. In contrast, in the
+The goal is to maximize the total reward we obtain, namely (cid:80)
+full-information feedback model we obtain oracle access to ft (i.e., we can evaluate ft on arbitrary
+feasible assignments). Both models arise in real applications, as we show in §5.
+t ft (St ). Following the multiarmed
+bandit literature, we evaluate our performance after T rounds by comparing our total reward against
+that obtained by a clairvoyant algorithm with knowledge of the sequence of functions (cid:104)f1 , . . . , fT (cid:105),
+but with the restriction that it must select the same assignment on each round. The difference between
+the clairvoyant algorithm’s total reward and ours is called our regret. The goal is then to develop an
+clairvoyant algorithm has to solve an ofﬂine assignment problem with f (S ) = (cid:80)
+algorithm whose expected regret grows sublinearly in the number of rounds; such an algorithm is
+said to have (or be) no-regret. However, since sums of submodular functions remain submodular, the
+t ft (S ). Considering
+Theorem 1, no polynomial-time algorithm can possibly hope to achieve a no-regret guarantee. To
+accommodate this fact, we discount the reward of the clairvoyant algorithm by a factor of (1 − 1/e):
+(cid:35)
+(cid:41)
+(cid:40) T(cid:88)
+(cid:34) T(cid:88)
+We deﬁne the (1 − 1/e)-regret of a random sequence (cid:104)S1 , . . . , ST (cid:105) as
+(cid:18)
+(cid:19)
+1 − 1
+· max
+ft (S )
+S∈P
+e
+t=1
+t=1
+Our goal is then to develop efﬁcient algorithms whose (1 − 1/e)-regret grows sublinearly in T .
+1 If the same item can be placed in multiple positions, simply create multiple distinct copies of it.
+
+ft (St )
+
+− E
+
+.
+
+2
+
+Subsumed Models. Our model generalizes several common models for sponsored search ad
+selection, and web search results. These include models with click-through-rates, in which it is
+assumed that each (ad, position) pair has some probability p(a, k) of being clicked on, and there is
+some monetary reward b(a) that is obtained whenever ad a is clicked on. Often, the click-through-
+of these cases, the (expected) reward of a set S of (ad, position) pairs is (cid:80)
+rates are assumed to be separable, meaning p(a, k) has the functional form α(a) · β (k) for some
+functions α and β . See [7, 12] for more details on sponsored search ad allocation. Note that in both
+(a,k)∈S g(a, k) for some
+nonnegative function g . It is easy to verify that such a reward function is monotone submodular.
+Thus, we can capture this model in our framework by setting Pk = A × {k}, where A is the set of
+ads. Another subsumed model, for web search, appears in [16]; it assumes that each user is interested
+in a particular set of results, and any list of results that intersects this set generates a unit of value;
+all other lists generate no value, and the ordering of results is irrelevant. Again, the reward function
+is monotone submodular. In this setting, it is desirable to display a diverse set of results in order to
+maximize the likelihood that at least one of them will interest the user.
+Our model is ﬂexible in that we can handle position-dependent effects and diversity considerations
+simultaneously. For example, we can handle the case that each user u is interested in a particular
+set Au of ads and looks at a set Iu of positions, and the reward of an assignment S is any monotone-
+increasing concave function g of |S ∩ (Au × Iu )|. If Iu = {1, 2, . . . , k} and g(x) = x, this models
+the case where the quality is the number of relevant result that appear in the ﬁrst k positions. If Iu
+equals all positions and g(x) = min {x, 1} we recover the model of [16].
+3 An approximation algorithm for the ofﬂine problem
+3.1 The locally greedy algorithm
+A simple approach to the assignment problem is the following greedy procedure: the algorithm
+steps through all K positions (according to some ﬁxed, arbitrary ordering). For position k , it simply
+chooses the item that increases the total value as much as possible, i.e., it chooses
+{f ({s1 , . . . , sk−1 } + s)} ,
+sk = arg max
+s∈Pk
+where, for a set S and element e, we write S + e for S ∪ {e}. Perhaps surprisingly, no matter which
+ordering over the positions is chosen, this so-called locally greedy algorithm produces an assignment
+that obtains at least half the optimal value [8]. In fact, the following more general result holds. We
+Lemma 2. Suppose f : 2V → R≥0 is of the form f (S ) = f0 (S ) + (cid:80)K
+will use this lemma in the analysis of our improved ofﬂine algorithm, which uses the locally greedy
+algorithm as a subroutine.
+k=1 fk (S ∩ Pk ) where
+f0 : 2V → R≥0 is monotone submodular, and fk : 2Pk → R≥0 is arbitrary for k ≥ 1. Let L be the
+solution returned by the locally greedy algorithm. Then f (L) + f0 (L) ≥ maxS∈P {f (S )}.
+The proof is given in an extended version of this paper [9]. Observe that in the special case where
+fk ≡ 0 for all k ≥ 1, Lemma 2 says that f (L) ≥ 1
+2 maxS∈P f (S ). In [9] we provide a simple
+example showing that this 1/2 approximation ratio is tight.
+
+3.2 An algorithm with optimal approximation ratio
+We now present an algorithm that achieves the optimal approximation ratio of 1 − 1/e, improving on
+set S ⊆ V × [C ] and vector (cid:126)c = (c1 , . . . , cK ), deﬁne sample(cid:126)c (S ) = (cid:83)K
+the 1
+2 approximation for the locally greedy algorithm. Our algorithm associates with each partition
+Pk a color ck from a palette [C ] of C colors, where we use the notation [n] = {1, 2, . . . , n}. For any
+k=1 {x ∈ Pk : (x, ck ) ∈ S }.
+Given a set S of (item, color) pairs, which we may think of as labeling each item with one or more
+colors, sample(cid:126)c (S ) returns a set containing each item x that is labeled with whatever color (cid:126)c assigns
+to the partition that contains x. Let F (S ) denote the expected value of f (sample(cid:126)c (S )) when each
+color ck is selected uniformly at random from [C ]. Our TABU LARGR EEDY algorithm greedily
+optimizes F , as shown in the following pseudocode.
+Observe that when C = 1, there is only one possible choice for (cid:126)c, and TABULARGR EEDY is
+simply the locally greedy algorithm from §3.1. In the limit as C → ∞, TABULARGR EEDY can
+intuitively be viewed as an algorithm for a continuous extension of the problem followed by a
+
+3
+
+Input: integer C , sets P1 , P2 , . . . , PK , function f : 2V → R≥0 (where V = (cid:83)K
+Algorithm: TABULARGR EEDY
+k=1 Pk )
+set G := ∅.
+for c from 1 to C do
+/* For each color
+*/
+for k from 1 to K do
+/* For each partition */
+set gk,c = arg maxx∈Pk×{c} {F (G + x)}
+/* Greedily pick gk,c
+*/
+set G := G + gk,c ;
+for each k ∈ [K ], choose ck uniformly at random from [C ].
+return sample(cid:126)c (G), where (cid:126)c := (c1 , . . . , cK ).
+
+rounding procedure, in the same spirit as Vondr ´ak’s continuous-greedy algorithm [4]. In our case, the
+continuous extension is to compute a probability distribution Dk for each position k with support in
+Pk (plus a special “select nothing” outcome), such that if we independently sample an element xk
+from Dk , E [f ({x1 , . . . , xK })] is maximized. It turns out that if the positions individually, greedily,
+and in round-robin fashion, add inﬁnitesimal units of probability mass to their distributions so as to
+maximize this objective function, they achieve the same objective function value as if, rather than
+making decisions in a round-robin fashion, they had cooperated and added the combination of K
+inﬁnitesimal probability mass units (one per position) that greedily maximizes the objective function.
+The latter process, in turn, can be shown to be equivalent to a greedy algorithm for maximizing a
+(different) submodular function subject to a cardinality constraint, which implies that it achieves
+a 1 − 1/e approximation ratio [15]. TABULARGR EEDY represents a tradeoff between these two
+extremes; its performance is summarized by the following theorem. For now, we assume that the
+arg max in the inner loop is computed exactly. In the extended version [9], we bound the performance
+C )C − (cid:0)K
+(cid:1)C −1 .
+loss that results from approximating the arg max (e.g., by estimating F by repeated sampling).
+Theorem 3. Suppose f is monotone submodular. Then F (G) ≥ β (K, C ) · maxS∈P {f (S )}, where
+β (K, C ) is deﬁned as 1 − (1 − 1
+2
+It follows that, for any ε > 0, TABU LARGR EEDY achieves a (1 − 1/e − ε) approximation factor
+using a number of colors that is polynomial in K and 1/ε. The theorem will follow immediately
+from the combination of two key lemmas, which we now prove. Informally, Lemma 4 analyzes the
+approximation error due to the outer greedy loop of the algorithm, while Lemma 5 analyzes the
+approximation error due to the inner loop.
+Lemma 4. Let Gc = {g1,c , g2,c , . . . , gK,c}, and let G−
+c = G1 ∪ G2 ∪ . . . ∪ Gc−1 . For each
+c ∪ x)} − Ec where Rc :=
+c ∪ Gc ) ≥ maxx∈Rc {F (G−
+color c, choose Ec ∈ R such that F (G−
+{R : ∀k ∈ [K ] , |R ∩ (Pk × {c})| = 1} is the set of all possible choices for Gc . Then
+S∈P {f (S )} − C(cid:88)
+F (G) ≥ β (C ) · max
+(cid:1)C .
+where β (C ) = 1 − (cid:0)1 − 1
+c=1
+R[C ] := (cid:83)C
+C
+Proof (Sketch). We will refer to an element R of Rc as a row, and to c as the color of the row. Let
+H (R) = F (cid:0)(cid:83)
+R∈R R(cid:1). We will prove the lemma in three steps: (i) H is monotone submodular, (ii)
+c=1 Rc be the set of all rows. Consider the function H : 2R[C ] → R≥0 , deﬁned as
+TABU LARGR EEDY is simply the locally greedy algorithm for ﬁnding a set of C rows that maximizes
+H , where the cth greedy step is performed with additive error Ec , and (iii) TABU LARGR EEDY obtains
+the guarantee (3.1) for maximizing H , and this implies the same ratio for maximizing F .
+To show that H is monotone submodular, it sufﬁces to show that F is monotone submodular.
+Because F (S ) = E(cid:126)c [f (sample(cid:126)c (S ))], and because a convex combination of monotone submodular
+functions is monotone submodular, it sufﬁces to show that for any particular coloring (cid:126)c, the function
+f (sample(cid:126)c (S )) is monotone submodular. This follows from the deﬁnition of sample and the fact
+that f is monotone submodular.
+The second claim is true by inspection. To prove the third claim, we note that the row colors for a set
+of rows R can be interchanged with no effect on H (R). For problems with this special property, it is
+
+(3.1)
+
+Ec .
+
+4
+
+known that the locally greedy algorithm obtains an approximation ratio of β (C ) = 1 − (1 − 1
+C )C [15].
+{H (R)} − C(cid:88)
+Theorem 6 of [17] extends this result to handle additive error, and yields
+F (G) = H ({G1 , G2 , . . . , GC }) ≥ β (C ) ·
+max
+Ec .
+R⊆R[C ] :|R|≤C
+To complete the proof, it sufﬁces to show that maxR⊆R[C ] :|R|≤C {H (R)} ≥ maxS∈P {f (S )}. This
+sample(cid:126)c ((cid:83)
+c=1
+follows from the fact that for any assignment S ∈ P , we can ﬁnd a set R(S ) of C rows such that
+R∈R(S ) R) = S with probability 1, and therefore H (R(S )) = f (S ).
+c ∪ R)} − (cid:0)K
+(cid:1)C −2 f ∗ .
+We now bound the performance of the the inner loop of TABULARGR EEDY.
+Lemma 5. Let f ∗ = maxS∈P {f (S )}, and let Gc , G−
+c , and Rc be deﬁned as in the statement of
+Lemma 4. Then, for any c ∈ [C ], F (G−
+c ∪ Gc ) ≥ maxR∈Rc {F (G−
+2
+Proof (Sketch). Let N denote the number of partitions whose color (assigned by (cid:126)c) is c. For R ∈ Rc ,
+c ∪R)−F (G−
+c ∪R))−f (sample(cid:126)c (G−
+c )), and let Fc (R) := F (G−
+let ∆(cid:126)c (R) := f (sample(cid:126)c (G−
+c ). By
+deﬁnition, Fc (R) = E(cid:126)c [∆(cid:126)c (R)] = P [N = 1] E(cid:126)c [∆(cid:126)c (R)|N = 1] + P [N ≥ 2] E(cid:126)c [∆(cid:126)c (R)|N ≥ 2],
+where we have used the fact that ∆(cid:126)c (R) = 0 when N = 0. The idea of the proof is that
+the ﬁrst of these terms dominates as C → ∞, and that E(cid:126)c [∆(cid:126)c (R)|N = 1] can be optimized
+be seen that E(cid:126)c [∆(cid:126)c (R)|N = 1] = (cid:80)K
+exactly simply by optimizing each element of Pk × {c} independently. Speciﬁcally, it can
+k=1 fk (R ∩ (Pk × {c})) for suitable fk . Additionally,
+f0 (R) = P [N ≥ 2] E(cid:126)c [∆(cid:126)c (R)|N ≥ 2] is a monotone submodular function of a set of (item,
+ﬁces to show P [N ≥ 2] ≤ (cid:0)K
+(cid:1)C −2 and E(cid:126)c [∆(cid:126)c (Gc )|N ≥ 2] ≤ f ∗ . The ﬁrst inequality holds
+color) pairs, for the same reasons F is. Applying Lemma 2 with these {fk : k ≥ 0} yields
+Fc (Gc ) + P [N ≥ 2] E(cid:126)c [∆(cid:126)c (Gc )|N ≥ 2] ≥ maxR∈Rc {Fc (R)}. To complete the proof, it suf-
+P [N ≥ 2] = P [M ≥ 1] ≤ E [M ] = (cid:0)K
+(cid:1)C −2 . The second inequality follows from the fact that for
+2
+because, if we let M be the number of pairs of partitions that are both assigned color c, we have
+any (cid:126)c we have ∆(cid:126)c (Gc ) ≤ f (sample(cid:126)c (G−
+c ∪ Gc )) ≤ f ∗ .
+2
+
+4 An algorithm for online learning of assignments
+We now transform the ofﬂine algorithm of §3.2 into an online algorithm. The high-level idea behind
+this transformation is to replace each greedy decision made by the ofﬂine algorithm with a no-regret
+online algorithm. A similar approach was used in [16] and [18] to obtain an online algorithm for
+different (simpler) online problems.
+
+Algorithm: TGBAND I T (described in the full-information feedback model)
+Input: integer C , sets P1 , P2 , . . . , PK
+for each k ∈ [K ] and c ∈ [C ], let Ek,c be a no-regret algorithm with action set Pk × {c}.
+for t from 1 to T do
+k,c ∈ Pk × {c} be the action selected by Ek,c
+for each k ∈ [K ] and c ∈ [C ], let g t
+(cid:16)(cid:110)
+(cid:111)(cid:17)
+for each k ∈ [K ], choose ck uniformly at random from [C ]. Deﬁne (cid:126)c = (c1 , . . . , cK ).
+k,c : k ∈ [K ] , c ∈ [C ]
+select the set Gt = sample(cid:126)c
+g t
+(cid:111)
+(cid:111) ∪ (cid:110)
+k,c ≡ (cid:110)
+observe ft , and let ¯Ft (S ) := ft (sample(cid:126)c (S ))
+for each k ∈ [K ], c ∈ [C ] do
+k(cid:48) ,c(cid:48) : k (cid:48) ∈ [K ] , c(cid:48) < c
+deﬁne Gt−
+k(cid:48) ,c : k (cid:48) < k
+g t
+g t
+k,c + x) to Ek,c as the reward for choosing x
+for each x ∈ Pk × {c}, feed back ¯Ft (Gt−
+Theorem 6. Let rk,c be the regret of Ek,c , and let β (K, C ) = 1 − (cid:0)1 − 1
+(cid:1)C − (cid:0)K
+(cid:1)C −1 . Then
+The following theorem summarizes the performance of TGBAND I T.
+(cid:40) T(cid:88)
+(cid:34) T(cid:88)
+(cid:35)
+(cid:35)
+(cid:41)
+(cid:34) K(cid:88)
+C(cid:88)
+2
+C
+− E
+≥ β (K, C ) · max
+E
+ft (S )
+ft (Gt )
+.
+rk,c
+S∈P
+c=1
+t=1
+t=1
+k=1
+
+5
+
+ft (S )
+
+.
+
+− O
+
+Observe that Theorem 6 is similar to Theorem 3, with the addition of the E [rk,c ] terms. The idea
+of the proof is to view TGBAND I T as a version of TABU LARGR EEDY that, instead of greedily
+selecting single (element,color) pairs gk,c ∈ Pk × {c}, greedily selects (element vector, color) pairs
+(cid:126)gk,c ∈ P T
+k × {c} (here, P T
+k is the T th power of the set Pk ). We allow for the case that the greedy
+decision is made imperfectly, with additive error rk,c ; this is the source of the extra terms. Once this
+correspondence is established, the theorem follows along the lines of Theorem 3. For a proof, see the
+extended version [9].
+(cid:32)
+(cid:41)
+(cid:35)
+(cid:34) T(cid:88)
+(cid:40) T(cid:88)
+(cid:33)
+Corollary 7. If TGBAND I T is run with randomized weighted majority [5] as the subroutine, then
+K(cid:88)
+(cid:112)T log |Pk |
+≥ β (K, C ) · max
+E
+ft (Gt )
+C
+(cid:1)C − (cid:0)K
+(cid:1)C −1 .
+where β (K, C ) = 1 − (cid:0)1 − 1
+S∈P
+t=1
+t=1
+k=1
+2
+C
+(cid:110)(cid:80)T
+(cid:111)
+Optimizing for C in Corollary 7 yields (1 − 1
+e )-regret ˜Θ(K 3/2T 1/4
+OPT) ignoring logarithmic
+factors, where OPT := maxS∈P
+t=1 ft (S )
+is the value of the static optimum.
+Dealing with bandit feedback. TGBAND I T can be modiﬁed to work in the bandit feedback model.
+The idea behind this modiﬁcation is that on each round we “explore” with some small probability, in
+such a way that on each round we obtain an unbiased estimate of the desired feedback values ¯Ft (Gt−
+(cid:16)
+(cid:17)
+k,c +
+x) for each k ∈ [K ], c ∈ [C ], and x ∈ Pk . This technique can be used to achieve a bound similar to
+3 (log |V |) 1
+(T |V | CK ) 2
+the one stated in Corollary 7, but with an additive regret term of O
+.
+3
+Stronger notions of regret. By substituting in different algorithms for the subroutines Ek,c , we can
+obtain additional guarantees. For example, Blum and Mansour [3] consider online problems in which
+we are given time-selection functions I1 , I2 , . . . , IM . Each time-selection function I : [T ] → [0, 1]
+associates a weight with each round, and deﬁnes a corresponding weighted notion of regret in the
+natural way. Blum and Mansour’s algorithm guarantees low weighted regret with respect to all
+M time selection functions simultaneously. This can be used to obtain low regret with respect to
+different (possibly overlapping) windows of time simultaneously, or to obtain low regret with respect
+to subsets of rounds that have particular features. By using their algorithm as a subroutine within
+TGBAND I T, we get similar guarantees, both in the full information and bandit feedback models.
+
+√
+
+5 Evaluation
+We evaluate TGBAND I T experimentally on two applications: Learning to rank blogs that are effective
+in detecting cascades of information, and allocating advertisements to maximize revenue.
+
+5.1 Online learning of diverse blog rankings
+
+We consider the problem of ranking a set of blogs and news sources on the web. Our approach is
+based on the following idea: A blogger writes a posting, and, after some time, other postings link to
+it, forming cascades of information propagating through the network of blogs.
+More formally, an information cascade is a directed acyclic graph of vertices (each vertex corresponds
+to a posting at some blog), where edges are annotated by the time difference between the postings.
+Based on this notion of an information cascade, we would like to select blogs that detect big
+cascades (containing many nodes) as early as possible (i.e., we want to learn about an important
+event before most other readers). In [13] it is shown how one can formalize this notion of utility
+using a monotone submodular function that measures the informativeness of a subset of blogs.
+Optimizing the submodular function yields a small set of blogs that “covers” most cascades. This
+utility function prefers diverse sets of blogs, minimizing the overlap of the detected cascades, and
+therefore minimizing redundancy.
+The work by [13] leaves two major shortcomings: Firstly, they select a set of blogs rather than a
+ranking, which is of practical importance for the presentation on a web service. Secondly, they do
+not address the problem of sequential prediction, where the set of blogs must be updated dynamically
+over time. In this paper, we address these shortcomings.
+
+6
+
+(a) Blogs: Ofﬂine results
+
+(b) Blogs: Online results
+
+(c) Ad display: Online results
+
+Figure 1: (a,b) Results for discounted blog ranking (γ = 0.8), in ofﬂine (a) and online (b) setting. (c)
+Performance of TGBAND I T with C = 1, 2, and 4 colors for the sponsored search ad selection problem (each
+round is a query). Note that C = 1 corresponds to the online algorithm of [16, 18].
+
+Results on ofﬂine blog ranking.
+In order to model the blog ranking problem, we adopt the
+assumption that different users have different attention spans: Each user will only consider blogs
+appearing in a particular subset of positions. In our experiments, we assume that the probability that
+a user is willing to look at position k is proportional to γ k , for some discount factor 0 < γ < 1.
+More formally, let g be the monotone submodular function measuring the informativeness of any set
+of blogs, deﬁned as in [13]. Let Pk = B × {k}, where B is the set of blogs. Given an assignment
+k=1 γ k (cid:0)g(S [k] ) − g(S [k−1] )(cid:1) . It
+We deﬁne the discounted value of the assignment S as f (S ) = (cid:80)K
+S ∈ P , let S [k] = S ∩ {P1 ∪ P2 ∪ . . . ∪ Pk } be the assignment of blogs to positions 1 through k .
+can be seen that f : 2V → R≥0 is monotone submodular.
+For our experiments, we use the data set of [13], consisting of 45,192 blogs, 16,551 cascades, and
+2 million postings collected during 12 months of 2006. We use the population affected objective
+of [13], and use a discount factor of γ = 0.8. Based on this data, we run our TABU LARGR EEDY
+algorithm with varying numbers of colors C on the blog data set. Fig. 1(a) presents the results of this
+experiment. For each value of C , we generate 200 rankings, and report both the average performance
+and the maximum performance over the 200 trials. Increasing C leads to an improved performance
+over the locally greedy algorithm (C = 1).
+Results on online learning of blog rankings. We now consider the online problem where on
+each round t we want to output a ranking St . After we select the ranking, a new set of cascades
+occurs, modeled using a separate submodular function ft , and we obtain a reward of ft (St ). In
+our experiments, we choose one assignment per day, and deﬁne ft as the utility associated with the
+cascades occurring on that day. Note that ft allows us to evaluate the performance of any possible
+ranking St , hence we can apply TGBAND I T in the full-information feedback model.
+We compare the performance of our online algorithm using C = 1 and C = 4. Fig. 1(b) presents the
+average cumulative reward gained over time by both algorithms. We normalize the average reward by
+the utility achieved by the TABULARGR EEDY algorithm (with C = 1) applied to the entire data set.
+Fig. 1(b) shows that the performance of both algorithms rapidly (within the ﬁrst 47 rounds) converges
+to the performance of the ofﬂine algorithm. The TGBAND I T algorithm with C = 4 levels out at an
+approximately 4% higher reward than the algorithm with C = 1.
+
+5.2 Online ad display
+We evaluate TGBAND I T for the sponsored search ad selection problem in a simple Markovian model
+incorporating the value of diverse results and complex position-dependence among clicks. In this
+model, each user u is deﬁned by two sets of probabilities: pclick (a) for each ad a ∈ A, and pabandon (k)
+for each position k ∈ [K ]. When presented an assignment of ads {a1 , a2 , . . . , aK }, where ak
+occupies position k , the user scans the positions in increasing order. For each position k , the user
+clicks on ak with probability pclick (ak ), leaving the results page forever. Otherwise, with probability
+(1 − pclick (ak )) · pabandon (k), the user loses interest and abandons the results without clicking on
+anything. Finally, with probability (1 − pclick (ak )) · (1 − pabandon (k)), the user proceeds to look at
+position k + 1. The reward function ft is the number of clicks, which is either zero or one. We only
+receive information about ft (St ) (i.e., bandit feedback).
+
+7
+
+12466.577.58x 104Number of colorsPerformance  AverageMaximum010020030000.20.40.60.81Number of rounds (days)Avg. normalized performance1 color4 colors1021041061031051060.680.690.70.710.720.730.740.75Number of rounds Average Payoff4 colors2 colors1 colorIn our evaluation, there are 5 positions, 20 available ads, and two (equally frequent) types of users:
+type 1 users interested in all positions (pabandon ≡ 0), and type 2 users that quickly lose interest
+(pabandon ≡ 0.5). There are also two types of ads, half of type 1 and half of type 2, and users are
+probabilistically more interested in ads of their own type than those of the opposite type. Speciﬁcally,
+for both types of users we set pclick (a) = 0.5 if a has the same type as the user, and pclick (a) = 0.2
+otherwise. In Fig. 1(c) we compare the performance of TGBAND I T with C = 4 to the online
+algorithm of [16, 18], based on the average of 100 experiments. The latter algorithm is equivalent
+to running TGBAND I T with C = 1. They perform similarly in the ﬁrst 104 rounds; thereafter the
+former algorithm dominates.
+It can be shown that with several different types of users with distinct pclick (·) functions the ofﬂine
+problem of ﬁnding an assignment within 1 − 1
+e + ε of optimal is NP-hard. This is in contrast to the
+case in which pclick and pabandon are the same for all users; in this case the ofﬂine problem simply
+requires ﬁnding an optimal policy for a Markov decision process, which can be done efﬁciently using
+well-known algorithms. A slightly different Markov model of user behavior which is efﬁciently
+solvable was considered in [1]. In that model, pclick and pabandon are the same for all users, and pabandon
+is a function of the ad in the slot currently being scanned rather than its index.
+6 Related Work
+For a general introduction to the literature on submodular function maximization, see [19]. For
+applications of submodularity to machine learning and AI see [11].
+Our ofﬂine problem is known as maximizing a monotone submodular function subject to a (simple)
+partition matroid constraint in the operations research and theoretical computer science communities.
+The study of this problem culminated in the elegant (1−1/e) approximation algorithm of Vondr ´ak [20]
+and a matching unconditional lower bound of Mirrokni et al. [14]. Vondr ´ak’s algorithm, called
+the continuous-greedy algorithm, has also been extended to handle arbitrary matroid constraints [4].
+The continuous-greedy algorithm, however, cannot be applied to our problem directly, because it
+requires the ability to sample f (·) on infeasible sets S /∈ P . In our context, this means it must have
+the ability to ask (for example) what the revenue will be if ads a1 and a2 are placed in position #1
+simultaneously. We do not know how to answer such questions in a way that leads to meaningful
+performance guarantees.
+In the online setting, the most closely related work is that of Streeter and Golovin [18]. Like us, they
+consider sequences of monotone submodular reward functions that arrive online, and develop an
+online algorithm that uses multi-armed bandit algorithms as subroutines. The key difference from our
+work is that, as in [16], they are concerned with selecting a set of K items rather than the more general
+problem of selecting an assignment of items to positions addressed in this paper. Kakade et al. [10]
+considered the general problem of using α-approximation algorithms to construct no α-regret online
+algorithms, and essentially proved it could be done for the class of linear optimization problems in
+which the cost function has the form c(S, w) for a solution S and weight vector w , and c(S, w) is
+linear in w . However, their result is orthogonal to ours, because our objective function is submodular
+and not linear2 .
+7 Conclusions
+In this paper, we showed that important problems, such as ad display in sponsored search and
+computing diverse rankings of information sources on the web, require optimizing assignments
+under submodular utility functions. We developed an efﬁcient algorithm, TABULARGR EEDY, which
+obtains the optimal approximation ratio of (1 − 1/e) for this NP-hard optimization problem. We
+also developed an online algorithm, TGBAND I T, that asymptotically achieves no (1 − 1/e)-regret
+for the problem of repeatedly selecting informative assignments, under the full-information and
+bandit-feedback settings. Finally, we demonstrated that our algorithm outperforms previous work on
+two real world problems, namely online ranking of informative blogs and ad allocation.
+Acknowledgments. This work was supported in part by Microsoft Corporation through a gift as well as
+through the Center for Computational Thinking at Carnegie Mellon, by NSF ITR grant CCR-0122581 (The
+Aladdin Center), and by ONR grant N00014-09-1-1044.
+2 One may linearize a submodular function by using a separate dimension for every possible function
+argument, but this leads to exponentially worse convergence time and regret bounds for the algorithms in [10]
+relative to TGBAND I T.
+
+8
+
+References
+[1] Gagan Aggarwal, Jon Feldman, S. Muthukrishnan, and Martin P ´al. Sponsored search auctions with
+markovian users. In WINE, pages 621–628, 2008.
+[2] Peter Auer, Nicol `o Cesa-Bianchi, Yoav Freund, and Robert E. Schapire. The nonstochastic multiarmed
+bandit problem. SIAM Journal on Computing, 32(1):48–77, 2002.
+[3] Avrim Blum and Yishay Mansour. From external to internal regret. Journal of Machine Learning Research,
+8:1307–1324, 2007.
+[4] Gruia Calinescu, Chandra Chekuri, Martin P ´al, and Jan Vondr ´ak. Maximizing a submodular set function
+subject to a matroid constraint. SIAM Journal on Computing. To appear.
+[5] Nicol `o Cesa-Bianchi, Yoav Freund, David Haussler, David P. Helmbold, Robert E. Schapire, and Manfred K.
+Warmuth. How to use expert advice. J. ACM, 44(3):427–485, 1997.
+[6] Benjamin Edelman, Michael Ostrovsky, and Michael Schwarz. Internet advertising and the generalized
+second price auction: Selling billions of dollars worth of keywords. American Economic Review, 97(1):242–
+259, 2007.
+[7] Jon Feldman and S. Muthukrishnan. Algorithmic methods for sponsored search advertising. In Zhen Liu
+and Cathy H. Xia, editors, Performance Modeling and Engineering. 2008.
+[8] Marshall L. Fisher, George L. Nemhauser, and Laurence A. Wolsey. An analysis of approximations for
+maximizing submodular set functions - II. Mathematical Programming Study, (8):73–87, 1978.
+[9] Daniel Golovin, Andreas Krause, and Matthew Streeter. Online learning of assignments that maximize
+submodular functions. CoRR, abs/0908.0772, 2009.
+[10] Sham M. Kakade, Adam Tauman Kalai, and Katrina Ligett. Playing games with approximation algorithms.
+In STOC, pages 546–555, 2007.
+[11] Andreas Krause and Carlos Guestrin. Beyond convexity: Submodularity in machine learning. Tutorial at
+ICML 2008. http://www.select.cs.cmu.edu/tutorials/icml08submodularity.html.
+[12] S ´ebastien Lahaie, David M. Pennock, Amin Saberi, and Rakesh V. Vohra. Sponsored search auctions. In
+Noam Nisan, Tim Roughgarden, Eva Tardos, and Vijay V. Vazirani, editors, Algorithmic Game Theory.
+Cambridge University Press, New York, NY, USA, 2007.
+[13] Jure Leskovec, Andreas Krause, Carlos Guestrin, Christos Faloutsos, Jeanne VanBriesen, and Natalie
+Glance. Cost-effective outbreak detection in networks. In KDD, pages 420–429, 2007.
+[14] Vahab Mirrokni, Michael Schapira, and Jan Vondr ´ak. Tight information-theoretic lower bounds for welfare
+maximization in combinatorial auctions. In EC, pages 70–77, 2008.
+[15] George L. Nemhauser, Laurence A. Wolsey, and Marshall L. Fisher. An analysis of approximations for
+maximizing submodular set functions - I. Mathematical Programming, 14(1):265–294, 1978.
+[16] Filip Radlinski, Robert Kleinberg, and Thorsten Joachims. Learning diverse rankings with multi-armed
+bandits. In ICML, pages 784–791, 2008.
+[17] Matthew Streeter and Daniel Golovin. An online algorithm for maximizing submodular functions. Technical
+Report CMU-CS-07-171, Carnegie Mellon University, 2007.
+[18] Matthew Streeter and Daniel Golovin. An online algorithm for maximizing submodular functions. In
+NIPS, pages 1577–1584, 2008.
+[19] Jan Vondr ´ak. Submodularity in Combinatorial Optimization. PhD thesis, Charles University, Prague,
+Czech Republic, 2007.
+[20] Jan Vondr ´ak. Optimal approximation for the submodular welfare problem in the value oracle model. In
+STOC, pages 67–74, 2008.
+
+9
+
+

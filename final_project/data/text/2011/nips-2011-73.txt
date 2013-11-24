@@ -1,0 +1,615 @@
+Efﬁcient Inference in Fully Connected CRFs with
+Gaussian Edge Potentials
+
+Philipp Kr ¨ahenb ¨uhl
+Computer Science Department
+Stanford University
+philkr@cs.stanford.edu
+
+Vladlen Koltun
+Computer Science Department
+Stanford University
+vladlen@cs.stanford.edu
+
+Abstract
+
+Most state-of-the-art techniques for multi-class image segmentation and labeling
+use conditional random ﬁelds deﬁned over pixels or image regions. While region-
+level models often feature dense pairwise connectivity, pixel-level models are con-
+siderably larger and have only permitted sparse graph structures. In this paper, we
+consider fully connected CRF models deﬁned on the complete set of pixels in an
+image. The resulting graphs have billions of edges, making traditional inference
+algorithms impractical. Our main contribution is a highly efﬁcient approximate
+inference algorithm for fully connected CRF models in which the pairwise edge
+potentials are deﬁned by a linear combination of Gaussian kernels. Our experi-
+ments demonstrate that dense connectivity at the pixel level substantially improves
+segmentation and labeling accuracy.
+
+1
+
+Introduction
+
+Multi-class image segmentation and labeling is one of the most challenging and actively studied
+problems in computer vision. The goal is to label every pixel in the image with one of several prede-
+termined object categories, thus concurrently performing recognition and segmentation of multiple
+object classes. A common approach is to pose this problem as maximum a posteriori (MAP) infer-
+ence in a conditional random ﬁeld (CRF) deﬁned over pixels or image patches [8, 12, 18, 19, 9].
+The CRF potentials incorporate smoothness terms that maximize label agreement between similar
+pixels, and can integrate more elaborate terms that model contextual relationships between object
+classes.
+Basic CRF models are composed of unary potentials on individual pixels or image patches and pair-
+wise potentials on neighboring pixels or patches [19, 23, 7, 5]. The resulting adjacency CRF struc-
+ture is limited in its ability to model long-range connections within the image and generally results
+in excessive smoothing of object boundaries. In order to improve segmentation and labeling accu-
+racy, researchers have expanded the basic CRF framework to incorporate hierarchical connectivity
+and higher-order potentials deﬁned on image regions [8, 12, 9, 13]. However, the accuracy of these
+approaches is necessarily restricted by the accuracy of unsupervised image segmentation, which is
+used to compute the regions on which the model operates. This limits the ability of region-based
+approaches to produce accurate label assignments around complex object boundaries, although sig-
+niﬁcant progress has been made [9, 13, 14].
+In this paper, we explore a different model structure for accurate semantic segmentation and labeling.
+We use a fully connected CRF that establishes pairwise potentials on all pairs of pixels in the image.
+Fully connected CRFs have been used for semantic image labeling in the past [18, 22, 6, 17], but the
+complexity of inference in fully connected models has restricted their application to sets of hundreds
+of image regions or fewer. The segmentation accuracy achieved by these approaches is again limited
+by the unsupervised segmentation that produces the regions. In contrast, our model connects all
+
+1
+
+(a) Image
+
+(b) Unary classiﬁers
+
+(c) Robust P n CRF (d) Fully connected CRF,
+MCMC inference, 36 hrs
+
+(e) Fully connected CRF,
+our approach, 0.2 seconds
+
+Figure 1: Pixel-level classiﬁcation with a fully connected CRF. (a) Input image from the MSRC-21 dataset. (b)
+The response of unary classiﬁers used by our models. (c) Classiﬁcation produced by the Robust P n CRF [9].
+(d) Classiﬁcation produced by MCMC inference [17] in a fully connected pixel-level CRF model; the algorithm
+was run for 36 hours and only partially converged for the bottom image. (e) Classiﬁcation produced by our
+inference algorithm in the fully connected model in 0.2 seconds.
+
+pairs of individual pixels in the image, enabling greatly reﬁned segmentation and labeling. The
+main challenge is the size of the model, which has tens of thousands of nodes and billions of edges
+even on low-resolution images.
+Our main contribution is a highly efﬁcient inference algorithm for fully connected CRF models in
+which the pairwise edge potentials are deﬁned by a linear combination of Gaussian kernels in an ar-
+bitrary feature space. The algorithm is based on a mean ﬁeld approximation to the CRF distribution.
+This approximation is iteratively optimized through a series of message passing steps, each of which
+updates a single variable by aggregating information from all other variables. We show that a mean
+ﬁeld update of all variables in a fully connected CRF can be performed using Gaussian ﬁltering
+in feature space. This allows us to reduce the computational complexity of message passing from
+quadratic to linear in the number of variables by employing efﬁcient approximate high-dimensional
+ﬁltering [16, 2, 1]. The resulting approximate inference algorithm is sublinear in the number of
+edges in the model.
+Figure 1 demonstrates the beneﬁts of the presented algorithm on two images from the MSRC-21
+dataset for multi-class image segmentation and labeling. Figure 1(d) shows the results of approxi-
+mate MCMC inference in fully connected CRFs on these images [17]. The MCMC procedure was
+run for 36 hours and only partially converged for the bottom image. We have also experimented with
+graph cut inference in the fully connected models [11], but it did not converge within 72 hours. In
+contrast, a single-threaded implementation of our algorithm produces a detailed pixel-level labeling
+in 0.2 seconds, as shown in Figure 1(e). A quantitative evaluation on the MSRC-21 and the PAS-
+CAL VOC 2010 datasets is provided in Section 6. To the best of our knowledge, we are the ﬁrst to
+demonstrate efﬁcient inference in fully connected CRF models at the pixel level.
+
+2 The Fully Connected CRF Model
+Consider a random ﬁeld X deﬁned over a set of variables {X1 , . . . , XN }. The domain of each
+variable is a set of labels L = {l1 , l2 , . . . , lk }. Consider also a random ﬁeld I deﬁned over variables
+{I1 , . . . , IN }. In our setting, I ranges over possible input images of size N and X ranges over
+possible pixel-level image labelings. Ij is the color vector of pixel j and Xj is the label assigned to
+Z (I) exp(− (cid:80)
+pixel j .
+random ﬁeld
+A conditional
+distribution
+a Gibbs
+by
+characterized
+is
+(I, X)
+c∈CG φc (Xc |I)), where G = (V , E ) is a graph on X and each clique c
+P (X|I) = 1
+
+2
+
+skytreegrassbenchtreeroadgrass(1)
+
+is E (x|I) = (cid:80)
+in a set of cliques CG in G induces a potential φc [15]. The Gibbs energy of a labeling x ∈ LN
+c∈CG φc (xc |I). The maximum a posteriori (MAP) labeling of the random ﬁeld is
+x∗ = arg maxx∈LN P (x|I). For notational convenience we will omit the conditioning in the rest of
+the paper and use ψc (xc ) to denote φc (xc |I).
+In the fully connected pairwise CRF model, G is the complete graph on X and CG is the set of all
+(cid:88)
+(cid:88)
+unary and pairwise cliques. The corresponding Gibbs energy is
+ψp (xi , xj ),
+ψu (xi ) +
+E (x) =
+i<j
+i
+where i and j range from 1 to N . The unary potential ψu (xi ) is computed independently for each
+pixel by a classiﬁer that produces a distribution over the label assignment xi given image features.
+The unary potential used in our implementation incorporates shape, texture, location, and color
+descriptors and is described in Section 5. Since the output of the unary classiﬁer for each pixel
+is produced independently from the outputs of the classiﬁers for other pixels, the MAP labeling
+produced by the unary classiﬁers alone is generally noisy and inconsistent, as shown in Figure 1(b).
+ψp (xi , xj ) = µ(xi , xj ) (cid:80)K
+The pairwise potentials in our model have the form
+(cid:124)
+(cid:123)(cid:122)
+(cid:125)
+m=1 w(m)k (m) (fi , fj )
+k(fi ,fj )
+where each k (m) is a Gaussian kernel k (m) (fi , fj ) = exp(− 1
+2 (fi − fj )TΛ(m) (fi − fj )), the vectors fi
+and fj are feature vectors for pixels i and j in an arbitrary feature space, w(m) are linear combination
+weights, and µ is a label compatibility function. Each kernel k (m) is characterized by a symmetric,
+positive-deﬁnite precision matrix Λ(m) , which deﬁnes its shape.
+(cid:33)
+(cid:32)
+(cid:18)
+(cid:19)
+For multi-class image segmentation and labeling we use contrast-sensitive two-kernel potentials,
+deﬁned in terms of the color vectors Ii and Ij and positions pi and pj :
+− |pi − pj |2
+− |Ii − Ij |2
+− |pi − pj |2
+(cid:123)(cid:122)
+(cid:124)
+(cid:125)
+(cid:124)
+(cid:123)(cid:122)
+(cid:125)
++w(2) exp
+k(fi , fj ) = w(1) exp
+2θ2
+2θ2
+2θ2
+γ
+α
+β
+smoothness kernel
+appearance kernel
+The appearance kernel is inspired by the observation that nearby pixels with similar color are likely
+to be in the same class. The degrees of nearness and similarity are controlled by parameters θα and
+θβ . The smoothness kernel removes small isolated regions [19]. The parameters are learned from
+data, as described in Section 4.
+A simple label compatibility function µ is given by the Potts model, µ(xi , xj ) = [xi (cid:54)= xj ]. It
+introduces a penalty for nearby similar pixels that are assigned different labels. While this simple
+model works well in practice, it is insensitive to compatibility between labels. For example, it
+penalizes a pair of nearby pixels labeled “sky” and “bird” to the same extent as pixels labeled “sky”
+and “cat”. We can instead learn a general symmetric compatibility function µ(xi , xj ) that takes
+interactions between labels into account, as described in Section 4.
+
+(2)
+
+,
+
+.
+
+(3)
+
+3 Efﬁcient Inference in Fully Connected CRFs
+
+Our algorithm is based on a mean ﬁeld approximation to the CRF distribution. This approxima-
+tion yields an iterative message passing algorithm for approximate inference. Our key observation
+is that message passing in the presented model can be performed using Gaussian ﬁltering in fea-
+ture space. This enables us to utilize highly efﬁcient approximations for high-dimensional ﬁltering,
+which reduce the complexity of message passing from quadratic to linear, resulting in an approxi-
+mate inference algorithm for fully connected CRFs that is linear in the number of variables N and
+sublinear in the number of edges in the model.
+
+3.1 Mean Field Approximation
+expressed as a product of independent marginals, Q(X) = (cid:81)
+Instead of computing the exact distribution P (X), the mean ﬁeld approximation computes a dis-
+tribution Q(X) that minimizes the KL-divergence D(Q(cid:107)P ) among all distributions Q that can be
+i Qi (Xi ) [10].
+3
+
+1
+Zi
+
+exp
+
+(4)
+
+µ(l, l(cid:48) )
+
+Qi (xi = l) =
+
+ .
+−ψu (xi ) − (cid:88)
+Minimizing the KL-divergence, while constraining Q(X) and Qi (Xi ) to be valid distributions,
+w(m) (cid:88)
+K(cid:88)
+yields the following iterative update equation:
+k (m) (fi , fj )Qj (l(cid:48) )
+j (cid:54)=i
+l(cid:48)∈L
+m=1
+A detailed derivation of Equation 4 is given in the supplementary material. This update equation
+leads to the following inference algorithm:
+Algorithm 1 Mean ﬁeld in fully connected CRFs
+(l) ← (cid:80)
+Initialize Q
+while not converged do
+ˆQi (xi ) ← (cid:80)
+l∈L µ(m) (xi , l) (cid:80)
+˜Q(m)
+j (cid:54)=i k (m) (fi , fj )Qj (l) for all m
+i
+m w(m) ˜Q(m)
+(l)
+i
+Qi (xi ) ← exp{−ψu (xi ) − ˆQi (xi )}
+normalize Qi (xi )
+end while
+
+exp{−φu (xi )}
+(cid:46) Qi (xi ) ← 1
+Zi
+(cid:46) See Section 6 for convergence analysis
+(cid:46) Message passing from all Xj to all Xi
+(cid:46) Compatibility transform
+(cid:46) Local update
+
+Each iteration of Algorithm 1 performs a message passing step, a compatibility transform, and a
+local update. Both the compatibility transform and the local update run in linear time and are highly
+efﬁcient. The computational bottleneck is message passing. For each variable, this step requires
+evaluating a sum over all other variables. A naive implementation thus has quadratic complexity in
+the number of variables N . Next, we show how approximate high-dimensional ﬁltering can be used
+to reduce the computational cost of message passing to linear.
+
+3.2 Efﬁcient Message Passing Using High-Dimensional Filtering
+(l) = (cid:80)
+From a signal processing standpoint, the message passing step can be expressed as a convolution
+with a Gaussian kernel GΛ(m) in feature space:
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+(cid:125)
+(cid:123)(cid:122)
+(cid:124)
+= [GΛ(m) ⊗ Q(l)] (fi )
+j∈V k (m) (fi , fj )Qj (l) − Qi (l)
+˜Q(m)
+i
+message passing
+Q(m)
+(l)
+i
+(m)
+We subtract Qi (l) from the convolved function Q
+(l) because the convolution sums over all vari-
+i
+ables, while message passing does not sum over Qi .
+
+−Qi (l).
+
+(5)
+
+(m)
+This convolution performs a low-pass ﬁlter, essentially band-limiting Q
+(l). By the sampling
+i
+theorem, this function can be reconstructed from a set of samples whose spacing is proportional
+to the standard deviation of the ﬁlter [20]. We can thus perform the convolution by downsampling
+(l) = (cid:80)
+Q(l), convolving the samples with GΛ(m) , and upsampling the result at the feature points [16].
+(m)
+Algorithm 2 Efﬁcient message passing: Q
+j∈V k (m) (fi , fj )Qj (l)
+↓i (l) ← (cid:80)
+i
+Q↓ (l) ← downsample(Q(l))
+∀i∈V↓ Q
+(m)
+j∈V↓ k (m) (f↓i , f↓j )Q↓j (l)
+(l) ← upsample(Q
+(m)
+(m)
+↓
+Q
+(l))
+
+(cid:46) Downsample
+(cid:46) Convolution on samples f↓
+(cid:46) Upsample
+
+A common approximation to the Gaussian kernel is a truncated Gaussian, where all values beyond
+two standard deviations are set to zero. Since the spacing of the samples is proportional to the stan-
+dard deviation, the support of the truncated kernel contains only a constant number of sample points.
+Thus the convolution can be approximately computed at each sample by aggregating values from
+only a constant number of neighboring samples. This implies that approximate message passing can
+be performed in O(N ) time [16].
+High-dimensional ﬁltering algorithms that follow this approach can still have computational com-
+plexity exponential in d. However, a clever ﬁltering scheme can reduce the complexity of the con-
+volution operation to O(N d). We use the permutohedral lattice, a highly efﬁcient convolution data
+
+4
+
+structure that tiles the feature space with simplices arranged along d + 1 axes [1]. The permutohedral
+lattice exploits the separability of unit variance Gaussian kernels. Thus we need to apply a whitening
+transform ˜f = U f to the feature space in order to use it. The whitening transformation is found us-
+ing the Cholesky decomposition of Λ(m) into U U T . In the transformed space, the high-dimensional
+convolution can be separated into a sequence of one-dimensional convolutions along the axes of the
+lattice. The resulting approximate message passing procedure is highly efﬁcient even with a fully
+sequential implementation that does not make use of parallelism or the streaming capabilities of
+graphics hardware, which can provide further acceleration if desired.
+
+4 Learning
+
+We learn the parameters of the model by piecewise training. First, the boosted unary classiﬁers are
+trained using the JointBoost algorithm [21], using the features described in Section 5. Next we learn
+the appearance kernel parameters w(1) , θα , and θβ for the Potts model. w(1) can be found efﬁciently
+by a combination of expectation maximization and high-dimensional ﬁltering. Unfortunately, the
+kernel widths θα and θβ cannot be computed effectively with this approach, since their gradient
+involves a sum of non-Gaussian kernels, which are not amenable to the same acceleration techniques.
+We found it to be more efﬁcient to use grid search on a holdout validation set for all three kernel
+parameters w(1) , θα and θβ .
+The smoothness kernel parameters w(2) and θγ do not signiﬁcantly affect classiﬁcation accuracy,
+but yield a small visual improvement. We found w(2) = θγ = 1 to work well in practice.
+The compatibility parameters µ(a, b) = µ(b, a) are learned using L-BFGS to maximize the log-
+likelihood (cid:96)(µ : I , T ) of the model for a validation set of images I with corresponding ground
+truth labelings T . L-BFGS requires the computation of the gradient of (cid:96), which is intractable to
+estimate exactly, since it requires computing the gradient of the partition function Z . Instead, we
+use the mean ﬁeld approximation described in Section 3 to estimate the gradient of Z . This leads to
+(cid:96)(µ : I (n) , T (n) ) ≈ − (cid:88)
+(cid:88)
+(cid:88)
+(cid:88)
+a simple approximation of the gradient for each training image:
+k(fi , fj )T (n)
+T (n)
+i
+j
+j (cid:54)=i
+j (cid:54)=i
+i
+i
+
+∂
+∂µ(a, b)
+
+(b) +
+
+(6)
+where (I (n) , T (n) ) is a single training image with its ground truth labeling and T (n) (a) is a binary
+image in which the ith pixel T (n)
+(a) has value 1 if the ground truth label at the ith pixel of T (n) is
+The sums (cid:80)
+j (cid:54)=i k(fi , fj )Tj (b) and (cid:80)
+i
+a and 0 otherwise. A detailed derivation of Equation 6 is given in the supplementary material.
+j (cid:54)=i k(fi , fj )Qi (b) are both computationally expensive to eval-
+uate directly. As in Section 3.2, we use high-dimensional ﬁltering to compute both sums efﬁciently.
+The runtime of the ﬁnal learning algorithm is linear in the number of variables N .
+
+(a)
+
+Qi (a)
+
+k(fi , fj )Qi (b),
+
+5
+
+Implementation
+
+The unary potentials used in our implementation are derived from TextonBoost [19, 13]. We use
+the 17-dimensional ﬁlter bank suggested by Shotton et al. [19], and follow Ladick ´y et al. [13] by
+adding color, histogram of oriented gradients (HOG), and pixel location features. Our evaluation
+on the MSRC-21 dataset uses this extended version of TextonBoost for the unary potentials. For
+the VOC 2010 dataset we include the response of bounding box object detectors [4] for each object
+class as 20 additional features. This increases the performance of the unary classiﬁers on the VOC
+2010 from 13% to 22%. We gain an additional 5% by training a logistic regression classiﬁer on the
+responses of the boosted classiﬁer.
+For efﬁcient high-dimensional ﬁltering, we use a publicly available implementation of the permu-
+tohedral lattice [1]. We found a downsampling rate of one standard deviation to work best for
+all our experiments. Sampling-based ﬁltering algorithms underestimate the edge strength k(fi , fj )
+for very similar feature points. Proper normalization can cancel out most of this error. The per-
+mutohedral lattice allows for two types of normalizations. A global normalization by the average
+
+5
+
+(cid:80)
+ˆki = (cid:80)
+kernel strength ˆk = 1
+i,j k(fi , fj ) can correct for constant error. A pixelwise normalization by
+N
+j k(fi , fj ) handles regional errors as well, but slightly violates the CRF symmetry assump-
+tion ψp (xi , xj ) = ψp (xj , xi ). We found the pixelwise normalization to work better in practice.
+
+6 Evaluation
+
+We evaluate the presented algorithm on two standard benchmarks for multi-class image segmen-
+tation and labeling. The ﬁrst is the MSRC-21 dataset, which consists of 591 color images of size
+320 × 213 with corresponding ground truth labelings of 21 object classes [19]. The second is the
+PASCAL VOC 2010 dataset, which contains 1928 color images of size approximately 500 × 400,
+with a total of 20 object classes and one background class [3]. The presented approach was evalu-
+ated alongside the adjacency (grid) CRF of Shotton et al. [19] and the Robust P n CRF of Kohli et
+al. [9], using publicly available reference implementations. To ensure a fair comparison, all models
+used the unary potentials described in Section 5. All experiments were conducted on an Intel i7-930
+processor clocked at 2.80GHz. Eight CPU cores were used for training; all other experiments were
+performed on a single core. The inference algorithm was implemented in a single CPU thread.
+
+Convergence. We ﬁrst evaluate the convergence of the mean ﬁeld approximation by analyzing
+the KL-divergence between Q and P . Figure 2 shows the KL-divergence between Q and P over
+successive iterations of the inference algorithm. The KL-divergence was estimated up to a constant
+as described in supplementary material. Results are shown for different standard deviations θα and
+θβ of the kernels. The graphs were aligned at 20 iterations for visual comparison. The number of
+iterations was set to 10 in all subsequent experiments.
+
+MSRC-21 dataset. We use the standard split of the dataset into 45% training, 10% validation and
+45% test images [19]. The unary potentials were learned on the training set, while the parameters of
+all CRF models were learned using holdout validation. The total CRF training time was 40 minutes.
+The learned label compatibility function performed on par with the Potts model on this dataset.
+Figure 3 provides qualitative and quantitative results on the dataset. We report the standard measures
+of multi-class segmentation accuracy: “global” denotes the overall percentage of correctly classiﬁed
+image pixels and “average” is the unweighted average of per-category classiﬁcation accuracy [19, 9].
+The presented inference algorithm on the fully connected CRF signiﬁcantly outperforms the other
+models, evaluated against the standard ground truth data provided with the dataset.
+The ground truth labelings provided with the MSRC-21 dataset are quite imprecise. In particular,
+regions around object boundaries are often left unlabeled. This makes it difﬁcult to quantitatively
+evaluate the performance of algorithms that strive for pixel-level accuracy. Following Kohli et al. [9],
+we manually produced accurate segmentations and labelings for a set of images from the MSRC-21
+dataset. Each image was fully annotated at the pixel level, with careful labeling around complex
+boundaries. This labeling was performed by hand for 94 representative images from the MSRC-
+21 dataset. Labeling a single image took 30 minutes on average. A number of images from this
+“accurate ground truth” set are shown in Figure 3. Figure 3 reports segmentation accuracy against
+this ground truth data alongside the evaluation against the standard ground truth. The results were
+obtained using 5-fold cross validation, where 4
+5 of the 94 images were used to train the CRF pa-
+
+(a) KL-divergence
+(b) Distributions Q(Xi = “bird”) (top) and Q(Xi = “sky”) (bottom)
+Figure 2: Convergence analysis. (a) KL-divergence of the mean ﬁeld approximation during successive itera-
+tions of the inference algorithm, averaged across 94 images from the MSRC-21 dataset. (b) Visualization of
+convergence on distributions for two class labels over an image from the dataset.
+
+6
+
+ 0 5 10 15 20KL-divergenceNumber of iterations  θα=θβ=10  θα=θβ=30  θα=θβ=50  θα=θβ=70  θα=θβ=90ImageQ(sky)Q(bird)0 iterations1 iteration2 iterations10 iterationsAccurate ground truth
+Runtime
+Standard ground truth
+Global
+Average
+Average
+Global
+83.2 ± 1.5
+80.6 ± 2.3
+−
+Unary classiﬁers
+84.0
+76.6
+82.4 ± 1.8
+84.8 ± 1.5
+Grid CRF
+1s
+77.2
+84.6
+86.5 ± 1.0
+83.1 ± 1.5
+Robust P n CRF
+30s
+77.5
+84.9
+88.2 ± 0.7
+84.7 ± 0.7
+Fully connected CRF
+0.2s
+86.0
+78.3
+Figure 3: Qualitative and quantitative results on the MSRC-21 dataset.
+rameters. The unary potentials were learned on a separate training set that did not include the 94
+accurately annotated images.
+We also adopt the methodology proposed by Kohli et al. [9] for evaluating segmentation accuracy
+around boundaries. Speciﬁcally, we count the relative number of misclassiﬁed pixels within a nar-
+row band (“trimap”) surrounding actual object boundaries, obtained from the accurate ground truth
+images. As shown in Figure 4, our algorithm outperforms previous work across all trimap widths.
+
+PASCAL VOC 2010. Due to the lack of a publicly available ground truth labeling for the test
+set in the PASCAL VOC 2010, we use the training and validation data for all our experiments. We
+randomly partitioned the images into 3 groups: 40% training, 15% validation, and 45% test set. Seg-
+mentation accuracy was measured using the standard VOC measure [3]. The unary potentials were
+learned on the training set and yielded an average classiﬁcation accuracy of 27.6%. The parameters
+for the Potts potentials in the fully connected CRF model were learned on the validation set. The
+
+(b) Segmentation accuracy within trimap
+(a) Trimaps of different widths
+Figure 4: Segmentation accuracy around object boundaries. (a) Visualization of the “trimap” measure. (b)
+Percent of misclassiﬁed pixels within trimaps of different widths.
+
+7
+
+ImageGrid CRFRobust Pn CRFOur approachAccurate ground truthbirdwaterroadcarskytreebuildinggrasscowskytreegrassgrasswaterbirdImageGround truthTrimap (4px)Trimap (8px) 20 30 40 50 0 4 8 12 16 20Pixelwise Classifiaction Error [%]Trimap Width [Pixels]Unary classifiersGrid CRFRobust Pn CRFFully connected CRFFigure 5: Qualitative results on the PASCAL VOC 2010 dataset. Average segmentation accuracy was 30.2%.
+
+fully connected model with Potts potentials yielded an average classiﬁcation accuracy of 29.1%.
+The label compatibility function, learned on the validation set, further increased the classiﬁcation
+accuracy to 30.2%. For comparison, the grid CRF achieves 28.3%. Training time was 2.5 hours and
+inference time is 0.5 seconds. Qualitative results are provided in Figure 5.
+
+Long-range connections. We have examined the value of long-range connections in our model by
+varying the spatial and color ranges θα and θβ of the appearance kernel and analyzing the resulting
+classiﬁcation accuracy. For this experiment, w(1) was held constant and w(2) was set to 0. The
+results are shown in Figure 6. Accuracy steadily increases as longer-range connections are added,
+peaking at spatial standard deviation of θα = 61 pixels and color standard deviation θβ = 11. At this
+setting, more than 50% of the pairwise potential energy in the model was assigned to edges of length
+35 pixels or higher. However, long-range connections can also propagate misleading information,
+as shown in Figure 7.
+
+(a) Quantitative
+(b) Qualitative
+Figure 6: Inﬂuence of long-range connections on classiﬁcation accuracy. (a) Global classiﬁcation accuracy on
+the 94 MSRC images with accurate ground truth, as a function of kernel parameters θα and θβ . (b) Results for
+one image across two slices in parameter space, shown as black lines in (a).
+
+Discussion. We have presented a highly efﬁcient approximate inference algorithm for fully con-
+nected CRF models. Our results demonstrate that dense pixel-level connectivity leads to signif-
+icantly more accurate pixel-level classiﬁcation performance. Our single-threaded implementation
+processes benchmark images in a fraction of a second and the algorithm can be parallelized for
+further performance gains.
+
+Acknowledgements. We thank Daphne Koller for helpful discussions. Philipp Kr ¨ahenb ¨uhl was
+supported in part by a Stanford Graduate Fellowship.
+
+Figure 7: Failure cases on images from the PASCAL VOC 2010 (left) and the MSRC-21 (right). Long-range
+connections propagated misleading information, eroding the bird wing in the left image and corrupting the legs
+of the cat on the right.
+
+8
+
+ImageGround truthcatbackgroundOur approachGround truthboatbackgroundsheepbackgroundOur approachImage0100200θα2550θβ82%84%86%88%θα1.0121.0θβ1.041.0ImageOur approachGround truthImageOur approachGround truthbirdbackgroundvoidroadcatReferences
+[1] A. Adams, J. Baek, and M. A. Davis. Fast high-dimensional ﬁltering using the permutohedral lattice.
+Computer Graphics Forum, 29(2), 2010. 2, 5
+[2] A. Adams, N. Gelfand, J. Dolson, and M. Levoy. Gaussian kd-trees for fast high-dimensional ﬁltering.
+ACM Transactions on Graphics, 28(3), 2009. 2
+[3] M. Everingham, L. Van Gool, C. K. I. Williams, J. Winn, and A. Zisserman. The PASCAL Visual Object
+Classes (VOC) challenge. IJCV, 88(2), 2010. 6, 7
+[4] P. F. Felzenszwalb, R. B. Girshick, and D. A. McAllester. Cascade object detection with deformable part
+models. In Proc. CVPR, 2010. 5
+[5] B. Fulkerson, A. Vedaldi, and S. Soatto. Class segmentation and object localization with superpixel
+neighborhoods. In Proc. ICCV, 2009. 1
+[6] C. Galleguillos, A. Rabinovich, and S. Belongie. Object categorization using co-occurrence, location and
+appearance. In Proc. CVPR, 2008. 1
+[7] S. Gould, J. Rodgers, D. Cohen, G. Elidan, and D. Koller. Multi-class segmentation with relative location
+prior. IJCV, 80(3), 2008. 1
+[8] X. He, R. S. Zemel, and M. A. Carreira-Perpinan. Multiscale conditional random ﬁelds for image labeling.
+In Proc. CVPR, 2004. 1
+[9] P. Kohli, L. Ladick ´y, and P. H. S. Torr. Robust higher order potentials for enforcing label consistency.
+IJCV, 82(3), 2009. 1, 2, 6, 7
+[10] D. Koller and N. Friedman. Probabilistic Graphical Models: Principles and Techniques. MIT Press,
+2009. 3
+[11] V. Kolmogorov and R. Zabih. What energy functions can be minimized via graph cuts? PAMI, 26(2),
+2004. 2
+[12] S. Kumar and M. Hebert. A hierarchical ﬁeld framework for uniﬁed context-based classiﬁcation. In Proc.
+ICCV, 2005. 1
+[13] L. Ladick ´y, C. Russell, P. Kohli, and P. H. S. Torr. Associative hierarchical crfs for object class image
+segmentation. In Proc. ICCV, 2009. 1, 5
+[14] L. Ladick ´y, C. Russell, P. Kohli, and P. H. S. Torr. Graph cut based inference with co-occurrence statistics.
+In Proc. ECCV, 2010. 1
+[15] J. D. Lafferty, A. McCallum, and F. C. N. Pereira. Conditional random ﬁelds: Probabilistic models for
+segmenting and labeling sequence data. In Proc. ICML, 2001. 3
+[16] S. Paris and F. Durand. A fast approximation of the bilateral ﬁlter using a signal processing approach.
+IJCV, 81(1), 2009. 2, 4
+[17] N. Payet and S. Todorovic. (RF)2 – random forest random ﬁeld. In Proc. NIPS. 2010. 1, 2
+[18] A. Rabinovich, A. Vedaldi, C. Galleguillos, E. Wiewiora, and S. Belongie. Objects in context. In Proc.
+ICCV, 2007. 1
+[19] J. Shotton, J. M. Winn, C. Rother, and A. Criminisi. Textonboost for image understanding: Multi-class
+object recognition and segmentation by jointly modeling texture, layout, and context. IJCV, 81(1), 2009.
+1, 3, 5, 6
+[20] S. W. Smith. The scientist and engineer’s guide to digital signal processing. California Technical Pub-
+lishing, 1997. 4
+[21] A. Torralba, K. P. Murphy, and W. T. Freeman. Sharing visual features for multiclass and multiview object
+detection. PAMI, 29(5), 2007. 5
+[22] T. Toyoda and O. Hasegawa. Random ﬁeld model for integration of local information and global infor-
+mation. PAMI, 30, 2008. 1
+[23] J. J. Verbeek and B. Triggs. Scene segmentation with crfs learned from partially labeled images. In Proc.
+NIPS, 2007. 1
+
+9
+
+

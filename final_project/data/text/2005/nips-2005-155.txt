@@ -1,0 +1,584 @@
+Fast Gaussian Process Regression
+using KD-Trees
+
+Matthias Seeger
+Computer Science Div.
+UC Berkeley
+Berkeley, CA 94720
+
+Yirong Shen
+Electrical Engineering Dept.
+Stanford University
+Stanford, CA 94305
+
+Andrew Y. Ng
+Computer Science Dept.
+Stanford University
+Stanford, CA 94305
+Abstract
+The computation required for Gaussian process regression with n train-
+ing examples is about O(n3 ) during training and O(n) for each predic-
+tion. This makes Gaussian process regression too slow for large datasets.
+In this paper, we present a fast approximation method, based on kd-trees,
+that signi(cid:2)cantly reduces both the prediction and the training times of
+Gaussian process regression.
+1 Introduction
+We consider (regression) estimation of a function x 7! u(x ) from noisy observations. If
+the data-generating process is not well understood, simple parametric learning algorithms,
+for example ones from the generalized linear model (GLM) family, may be hard to apply
+because of the dif(cid:2)culty of choosing good features. In contrast, the nonparametric Gaus-
+sian process (GP) model [19] offers a (cid:3)exible and powerful alternative. However, a major
+drawback of GP models is that the computational cost of learning is about O(n3 ), and the
+cost of making a single prediction is O(n), where n is the number of training examples.
+This high computational complexity severely limits its scalability to large problems, and
+we believe has proved a signi(cid:2)cant barrier to the wider adoption of the GP model.
+In this paper, we address the scaling issue by recognizing that learning and predictions with
+a GP regression (GPR) model can be implemented using the matrix-vector multiplication
+(MVM) primitive z 7! K z . Here, K 2 Rn;n is the kernel matrix, and z 2 Rn is an
+arbitrary vector. For the wide class of so-called isotropic kernels, MVM can be approxi-
+mated ef(cid:2)ciently by arranging the dataset in a tree-type multiresolution data structure such
+as kd-trees [13], ball trees [11], or cover trees [1]. This approximation can sometimes be
+made orders of magnitude faster than the direct computation, without sacri(cid:2)cing much in
+terms of accuracy.
+Further, the storage requirements for the tree is O(n), while a direct storage of the kernel
+matrix would require O(n2 ) spare. We demonstrate the ef(cid:2)ciency of the tree approach on
+several large datasets.
+In the sequel, for the sake of simplicity we will focus on kd-trees (even though it is known
+that kd-trees do not scale well to high dimensional data). However, it is also completely
+straightforward to apply the ideas in this paper to other tree-type data structures, for exam-
+ple ball trees and cover trees, which typically scale signi(cid:2)cantly better to high dimensional
+data.
+2 The Gaussian Process Regression Model
+Suppose that we observe some data D = f(xi ; yi ) j i = 1; : : : ; ng; xi 2 X ; yi 2 R,
+sampled independently and identically distributed (i.i.d.) from some unknown distribution.
+
+Our goal is to predict the response y(cid:3) on future test points x(cid:3) with small mean-squared
+error under the data distribution. Our model consists of a latent (unobserved) function
+x 7! u so that yi = ui + "i , where ui = u(xi ), and the "i are independent Gaussian noise
+variables with zero mean and variance (cid:27) 2 > 0. Following the Bayesian paradigm, we place
+a prior distribution P (u((cid:1))) on the function u((cid:1)) and use the posterior distribution
+P (u((cid:1))jD) / N (y ju ; (cid:27) 2I )P (u((cid:1)))
+in order to predict y(cid:3) on new points x(cid:3) . Here, y = [y1 ; : : : ; yn ]T and u = [u1 ; : : : ; un ]T
+are vectors in Rn , and N ((cid:1)j(cid:22); (cid:6)) is the density of a Gaussian with mean (cid:22) and covariance
+(cid:6). For a GPR model, the prior distribution is a (zero-mean) Gaussian process de(cid:2)ned
+in terms of a positive de(cid:2)nite kernel (or covariance) function K : X 2 ! R. For the
+purposes of this paper, a GP can be thought of as a mapping from arbitrary (cid:2)nite subsets
+f ~x i g (cid:26) X of points, to corresponding zero-mean Gaussian distributions with covariance
+matrix ~K = (K ( ~x i ; ~x j ))i;j . (This notation indicates that ~K is a matrix whose (i; j )-
+element is K ( ~x i ; ~x j ).) In this paper, we focus on the problem of speeding up GPR under
+the assumption that the kernel is monotonic isotropic. A kernel function K (x ; x 0 ) is called
+isotropic if it depends only on the Euclidean distance r = kx (cid:0) x0 k2 between the points,
+and it is monotonic isotropic if it can be written as a monotonic function of r.
+3 Fast GPR predictions
+Since u(x1 ); u(x2 ); : : : ; u(xn ) and u(x(cid:3) ) are jointly Gaussian, it is easy to see that the
+predictive (posterior) distribution P (u(cid:3) jD); u(cid:3) = u(x(cid:3) ) is given by
+(cid:3) M (cid:0)1k(cid:3)(cid:17) ;
+P (u(cid:3) jD) = N (cid:16)u(cid:3) j kT
+(1)
+(cid:3) M (cid:0)1 y ; K (x(cid:3) ; x(cid:3) ) (cid:0) kT
+where k(cid:3) = [K (x(cid:3) ; x1 ); : : : ; K (x(cid:3) ; xn )]T 2 Rn , and M = K + (cid:27) 2 I ; K =
+(K (xi ; xj ))i;j . Therefore, if p = M (cid:0)1y , the optimal prediction under the model is
+(cid:3) p , and the predictive variance (of P (u(cid:3) jD)) can be used to quantify our uncer-
+^u(cid:3) = kT
+tainty in the prediction. Details can be found in [19]. ([16] also provides a tutorial on
+GPs.)
+Once p is determined, making a prediction now requires that we compute
+n
+n
+X
+X
+i=1
+i=1
+which is O(n) since it requires scanning through the entire training set and computing
+K (x(cid:3) ; xi ) for each xi in the training set. When the training set is very large, this becomes
+prohibitively slow. In such situations, it is desirable to use a fast approximation instead of
+the exact direct implementation.
+3.1 Weighted Sum Approximation
+The computations in Equation 2 can be thought of as a weighted sum, where w i =
+K (x(cid:3) ; xi ) is the weight on the i-th summand pi . We observe that if the dataset is di-
+vided into groups where all data points in a group have similar weights, then it is possible
+to compute a fast approximation to the above weighted sum. For example, let G be a set of
+data points that all have weights near some value w. The contribution to the weighted sum
+by points in G is
+pi + X
+(wi (cid:0) w)pi = w X
+wpi + X
+wi pi = X
+X
+(cid:15)i pi
+i:xi2G
+i:xi2G
+i:xi2G
+i:xi 2G
+i:xi2G
+Where (cid:15)i = wi (cid:0) w. Assuming that Pi:xi2G pi is known in advance, w Pi:xi2G pi
+can then be computed in constant time and used as an approximation to Pi:xi2G wi pi
+if Pi:xi 2G (cid:15)ipi is small.
+We note that for a continuous isotropic kernel function, the weights w i = K (x(cid:3) ; xi ) and
+wj = K (x(cid:3) ; xj ) will be similar if xi and xj are close to each other. In addition, if the
+
+K (x(cid:3) ; xi )pi =
+
+(2)
+
+kT
+(cid:3) p =
+
+wi pi
+
+Figure 1: Example of bounding rectangles for nodes in the (cid:2)rst three levels of a kd-tree.
+
+kernel function monotonically decreases to zero with increasing jjx i (cid:0) xj jj, then points
+that are far away from the query point x(cid:3) will all have weights near zero.
+Given a new query, we would like to automatically group points together that have similar
+weights. But the weights are dependent on the query point and hence the best grouping
+of the data will also be dependent on the query point. Thus, the problem we now face is,
+given query point, how to quickly divide the dataset into groups such that data points in the
+same group have similar weights. Our solution to this problem takes inspiration and ideas
+from [9], and uses an enhanced kd-tree data structure.
+3.2 The kd-tree algorithm
+A kd-tree [13] is a binary tree that recursively partitions a set of data points. Each node
+in the kd-tree contains a subset of the data, and records the bounding hyper-rectangle for
+this subset. The root node contains the entire dataset. Any node that contains more than 1
+data point has two child nodes, and the data points contained by the parent node are split
+among the children by cutting the parent node’s bounding hyper-rectangle in the middle of
+its widest dimension.1 An example with inputs of dimension 2 is illustrated in Figure 1.
+For our algorithm, we will enhance the kd-tree with additional cached information at each
+node. At a node ND whose set of data points is XND , in addition to the bounding box we
+also store
+1. NND = jXND j: the number of data points contained by ND.
+= Pxi 2XND pi : the unweighted sum corresponding to the data con-
+2. S Unweighted
+ND
+tained by ND.
+
+SWeighted
+ND
+
+(3)
+
+Now, let
+
+K (x(cid:3) ; xi )pi
+
+= X
+i:xi2XND
+be the weighted sum corresponding to node ND. One way to calculate S Weighted
+is to
+ND
+Right(ND) (where
+Left(ND) and SWeighted
+simply have the 2 children of ND recursively compute S Weighted
+1There are numerous other possible kd-tree splitting criteria. Our criteria is the same as the one
+used in [9] and [5]
+
+Left(ND) and Right(ND) are the 2 children of ND) and then sum the two results. This
+takes O(n) time(cid:151)same as the direct computation(cid:151)since all O(n) nodes need to be pro-
+cessed. However, if we only want an approximate result for the weighted sum, then we can
+cut off the recursion at nodes whose data points have nearly identical weights for the given
+query point.
+Since each node maintains a bounding box of the data points that it owns, we can easily
+bound the maximum weight variation of the data points owned by a node (as in [9]). The
+nearest and farthest points in the bounding box to the query point can be computed in
+O(input dimension) operations, and since the kernel function is isotropic monotonic, these
+points give us the maximum and minimum possible weights wmax and wmin of any data
+point in the bounding box.
+Now, whenever the difference between wmax and wmin is small, we can cutoff the recursion
+and approximate the weighted sum in Equation 3 by w (cid:3) S Unweighted
+where w = 1
+2 (wmin +
+ND
+wmax ). The speed and accuracy of the approximation is highly dependent on the cutoff
+criteria. Moore et al. used the following cutoff rule in [9]:
+wmax (cid:0) wmin (cid:20) 2(cid:15)(WSoFar + NNDwmin):
+Here, WSoFar is the weight accumulated so far in the computation and WSoFar + NNDwmin
+serves as a lower bound on the total sum of weights involved in the regression. In our
+experiments, we found that although the above cutoff rule ensures the error incurred at
+any particular data point in ND is small, the total error incurred by all the data points in
+ND can still be high if NND is very large. In our experiments (not reported here), their
+method gave poor performance on the GPR task, in many cases incurring signi(cid:2)cant errors
+in the predictions (or, alternatively running no faster than exact computation, if suf(cid:2)ciently
+small (cid:15) is chosen to prevent the large accumulation of errors). Hence, we chose instead the
+following cutoff rule:
+NND (wmax (cid:0) wmin ) (cid:20) 2(cid:15)(WSoFar + NNDwmin );
+which also takes into account the total number of points contained in a node.
+From the forumla above, we see that the decision of whether to cutoff computation at a
+node depends on the value of WSoFar (the total weight of all the points that have been
+added to the summation so far). Thus it is desirable to quickly accumulate weights at the
+beginning of the computations, so that more of the later recursions can be cut off. This can
+be accomplished by going into the child node that’s nearer to the query point (cid:2)rst when we
+recurse into the children of a node that doesn’t meet the cutoff criteria. (In contrast, [9] al-
+ways visits the children in left-right order, which in our experiments also gave signi(cid:2)cantly
+worse performance than our version.) Our overall algorithm is summarized below:
+WeightedSum(x(cid:3) ; ND; WSoFar ; (cid:15))
+
+compute wmax and wmin for the given query point x(cid:3)
+SWeighted
+= 0
+ND
+if (wmax (cid:0) wmin ) (cid:20) 2(cid:15)(WSoFar + NNDwmin)
+then
+SWeighted
+2 (wmin + wmax )S Unweighted
+= 1
+ND
+ND
+WSoFar = WSoFar + wminNND
+return SWeighted
+ND
+else
+determine which child is nearer to the query point x(cid:3)
+Nearer = WeightedSum(x(cid:3) ; Nearer child of ND; WSoFar ; (cid:15))
+SWeighted
+Farther = WeightedSum(x(cid:3) ; Farther child of ND; WSoFar ; (cid:15))
+SWeighted
+SWeighted
+Nearer + SWeighted
+= SWeighted
+Farther
+ND
+return SWeighted
+ND
+
+4 Fast Training
+Training (or (cid:2)rst-level inference) in the GPR model requires solving the positive de(cid:2)nite
+linear system
+
+(4)
+M p = y ; M = K + (cid:27) 2 I
+for the vector p , which in the previous section we assumed had already been pre-computed.
+Directly calculating p by inverting the matrix M costs about O(n3 ) in general. However,
+in practice there are many ways to quickly obtain approximate solutions to linear systems.
+Since the system matrix is symmetric positive de(cid:2)nite, the conjugate gradient (CG) algo-
+rithm can be applied. CG is an iterative method which searches for p by maximizing the
+quadratic function
+
+kT
+i v =
+
+1
+z T M z :
+q(z ) = y T z (cid:0)
+2
+Brie(cid:3)y, CG ensures that z after iteration k is a maximizer of q over a (Krylow) subspace
+of dimension k . For details about CG and many other approximate linear solvers, see
+[15]. Thus, z (cid:147)converges(cid:148) to p (the unconstrained maximizer of q ) after n steps, but
+intermediate z can be used as approximate solutions. The speed of convergence depends
+on the eigenstructure of M . In our case, M typically has only a few large eigenvalues, and
+most of the spectrum is close to the lower bound (cid:27) 2 ; under these conditions CG is known
+to produce good approximations after only a few iterations. Crucially, the only operation
+on M performed in each iteration of CG is a matrix-vector multiplication (MVM) with
+M .
+Since M = K + (cid:27) 2I , speeding up MVM with M is critically dependent on our ability to
+perform fast MVM with the kernel matrix K . We can apply the algorithm from Section 3
+to perform fast MVM.
+Speci(cid:2)cally, observe that the i-th row of K is given by k i = [K (xi ; x1 ); : : : ; K (xi ; xn )]T .
+Thus, ki has the same form as that of the vector k (cid:3) used in the prediction step. Hence to
+compute the matrix-vector product K v , we simply need to compute the inner products
+n
+X
+j=1
+for i = 1; : : : ; n. Following exactly the method presented in Section 3, we can do this
+ef(cid:2)ciently using a kd-tree, where here v now plays the role of p in Equation 2.
+Two additional optimizations are possible. First, in different iterations of conjugate gra-
+i v for different i and different
+dient, we can use the same kd-tree structure to compute kT
+v . Indeed, given a dataset, we need only ever (cid:2)nd a single kd-tree structure for it, and the
+same kd-tree structure can then be used to make multiple predictions or multiple MVM
+operations. Further, given (cid:2)xed v , to compute k T
+i v for different i = 1; : : : ; n (to obtain
+the vector resulting from one MVM operation), we can also share the same pre-computed
+partial unweighted sums in the internal nodes of the tree. Only when v (or p ) changes do
+we need to change the partial unweighted sums (discussed in Section 3.2) of v stored in
+the internal nodes (an O(n) operation).
+5 Performance Evaluation
+We evaluate our kd-tree implementation of GPR and an implementation that uses direct
+computation for the inner products. Our experiments were performed on the nine regression
+datasets in Table 1. 2
+2Data for the Helicopter experiments come from an autonomous helicopter (cid:3)ight project, [10]
+and the three tasks were to model three subdynamics of the helicopter, namely its yaw rate, forward
+velocity, and lateral velocity one timestep later as a function of the helicopter’s current state. The
+temperature and humidity experiments use data from a sensornet comprising a network of simple
+sensor motes, [2] and the goal here is to predict the conditions at a mote from the measurements
+
+K (xi ; xj )vj
+
+Data set name
+Helicopter yaw rate
+Helicopter x-velocity
+Helicopter y -velocity
+Mote 10 temperature
+Mote 47 temperature
+Mote 47 humidity
+Housing income
+Housing value
+Housing age
+
+Input dimension Training set size Test set size
+4000
+40000
+3
+4000
+40000
+2
+4000
+40000
+2
+5000
+20000
+2
+3
+20000
+5000
+5000
+20000
+3
+2000
+18000
+2
+2000
+18000
+2
+2
+18000
+2000
+Table 1: Datasets used in our experiments.
+Speedup Exact error Tree error
+Exact cost Tree cost
+14.95
+0.31
+47.8
+0.336
+0.336
+0.595
+0.594
+30.3
+0.41
+12.37
+0.614
+0.612
+27.3
+0.41
+11.25
+0.258
+0.278
+6.6
+0.69
+4.54
+0.433
+0.385
+3.9
+1.11
+4.34
+3.87
+0.82
+4.7
+1.189
+1.273
+0.478
+0.478
+3.6
+0.76
+2.75
+0.496
+0.496
+8.8
+0.51
+4.47
+3.21
+1.15
+2.8
+0.787
+0.785
+
+Helicopter yaw rate
+Helicopter x-velocity
+Helicopter y-velocity
+Mote 10 temperature
+Mote 47 temperature
+Mote 47 humidity
+Housing income
+Housing value
+Housing age
+
+Table 2: Prediction performance on 9 regression problems. Exact uses exact computation
+of Equation 2. Tree is the kd-tree based implementation described in Section 3.2. Cost is
+the computation time measured in milliseconds per prediction. The error reported is the
+mean absolute prediction error.
+
+For all experiments, we used the Gaussian RBF kernel
+kx (cid:0) x0k2
+K (x ; x0 ) = exp (cid:0)
+;
+2d2
+which is monotonic isotropic, with d and (cid:27) chosen to be reasonable values for each problem
+(via cross validation). The (cid:15) parameter used in the cutoff rule was set to be 0:001 for all
+experiments.
+5.1 Prediction performance
+Our (cid:2)rst set of experiments compare the prediction time of the kd-tree algorithm with exact
+computation, given a precomputed p. Our average prediction times are given in Table 2.
+These numbers include the cost of building the kd-tree (but remain small since the cost is
+then amortized over all the examples in the test set). As we see, our algorithm runs 2.8-
+47.8 times faster than exact computation. Further, it incurs only a very small amount of
+additional error compared to the exact algorithm.
+5.2 Learning performance
+Our second set of experiments examine the running times for learning (i.e., solving the
+system of Equations 4,) using our kd-tree algorithm for the MVM operation, compared to
+exact computation. For both approximate and exact MVM, conjugate gradient was used
+
+of nearby motes. The housing experiments make use of data collected from the 1990 Census in
+California. [12] The median income of a block group is predicted from the median house value and
+average number of rooms per person; the median house value is predicted using median housing
+age and median income; the median housing age is predicted using median house value and average
+number of rooms per household.
+
+Helicopter yaw rate
+Helicopter x-velocity
+Helicopter y-velocity
+Mote 10 temperature
+Mote 47 temperature
+Mote 47 humidity
+Housing income
+Housing value
+Housing age
+
+Exact cost Tree cost
+279
+22885
+619
+23412
+443
+14341
+253
+2071
+2531
+487
+398
+2121
+581
+1922
+138
+997
+1496
+338
+
+Speedup Exact error Tree error
+0.336
+0.336
+82.0
+0.595
+0.594
+37.9
+0.614
+0.612
+32.4
+0.258
+0.278
+8.2
+5.2
+0.385
+0.433
+1.273
+1.189
+5.3
+0.478
+0.478
+3.3
+0.496
+0.496
+7.2
+4.4
+0.787
+0.785
+
+Table 3: Training time on the 9 regression problems. Cost is the computation time measured
+in seconds.
+
+(with the same number of iterations). Here, we see that our algorithm performs 3.3-82
+times faster than exact computation.3
+6 Discussion
+6.1 Related Work
+Multiresolution tree data structures have been used to speed up the computation of a wide
+variety of machine learning algorithms [9, 5, 7, 14]. GP regression was introduced to
+the machine learning community by Rasmussen and Williams [19]. The use of CG for
+ef(cid:2)cient (cid:2)rst-level inference is described by Gibbs and MacKay [6]. The stability of Krylov
+subspace iterative solvers (such as CG) with approximate matrix-vector multiplication is
+discussed in [4].
+Sparse approximations to GP inference provide a different way of overcoming the O(n 3 )
+scaling [18, 3, 8], by selecting a representative subset of D of size d (cid:28) n. Sparse methods
+can typically be trained in O(n d2 ) (including the active forward selection of the subset)
+and require O(d) prediction time only. In contrast, in our work here we make use of all of
+the data for prediction, achieving better scaling by exploiting cluster structure in the data
+through a kd-tree representation.
+More closely related to our work is [20], where the MVM primitive is also approximated
+using a special data structure for D. Their approach, called the improved fast Gauss trans-
+form (IFGT), partitions the space with a k -centers clustering of D and uses a Taylor expan-
+sion of the RBF kernel in order to cache repeated computations. The IFGT is limited to the
+RBF kernel, while our method can be used with all monotonic isotropic kernels. As a topic
+for future work, we believe it may be possible to apply IFGT’s Taylor expansions at each
+node of the kd-tree’s query-dependent multiresolution clustering, to obtain an algorithm
+that enjoys the best properties of both.
+6.2 Isotropic Kernels
+Recall that an isotropic kernel K (x ; x0 ) can be written as a function of the Euclidean
+distance r = kx (cid:0) x0 k. While the RBF kernel of the form exp((cid:0)r 2 ) is the most frequently
+used isotropic kernel in machine learning, there are many other isotropic kernels to which
+our method here can be applied without many changes (since the kd-tree cutoff criteria
+depends on the pairwise Euclidean distances only). An interesting class of kernels is the
+Mat ·ern model (see [17], Sect. 2.10) K (r) / ((cid:11)r)(cid:23) K(cid:23) ((cid:11)r); (cid:11) = 2(cid:23) 1=2 , where K(cid:23) is the
+modi(cid:2)ed Bessel function of the second kind. The parameter (cid:23) controls the roughness of
+functions sampled from the process, in that they are b(cid:23) c times mean-square differentiable.
+3The errors reported in this table are identical to Table 2, since for the kd-tree results we always
+trained and made predictions both using the fast approximate method. This gives a more reasonable
+test of the (cid:147)end-to-end(cid:148) use of kd-trees.
+
+For (cid:23) = 1=2 we have the (cid:147)random walk(cid:148) Ornstein-Uhlenbeck kernel of the form e(cid:0)(cid:11)r , and
+the RBF kernel is obtained in the limit (cid:23) ! 1. The RBF kernel forces u((cid:1)) to be very
+smooth, which can lead to bad predictions for training data with partly rough behaviour, and
+its uncritical usage is therefore discouraged in Geostatistics (where the use of GP models
+was pioneered). Here, other Mat ·ern kernels are sometimes preferred. We believe that our
+kd-trees approach holds rich promise for speeding up GPR with other isotropic kernels
+such the Mat ·ern and Ornstein-Uhlenbeck kernels.
+References
+[1] Alina Beygelzimer, Sham Kakade, and John Langford. Cover trees for nearest neighbor. (Un-
+published manuscript), 2005.
+[2] Phil Buonadonna, David Gay, Joseph M. Hellerstein, Wei Hong, and Samuel Madden. Task:
+Sensor network in a box. In Proceedings of European Workshop on Sensor Networks, 2005.
+[3] Lehel Csat ·o and Manfred Opper. Sparse on-line Gaussian processes. Neural Computation,
+14:641(cid:150)668, 2002.
+[4] Nando de Freitas, Yang Wang, Maryam Mahdaviani, and Dustin Lang. Fast krylov methods for
+n-body learning. In Advances in NIPS 18, 2006.
+[5] Kan Deng and Andrew Moore. Multiresolution instance-based learning. In Proceedings of the
+Twelfth International Joint Conference on Arti(cid:2)cial Intellingence, pages 1233(cid:150)1239. Morgan
+Kaufmann, 1995.
+[6] Mark N. Gibbs. Bayesian Gaussian Processes for Regression and Classi(cid:2)cation. PhD thesis,
+University of Cambridge, 1997.
+[7] Alexander Gray and Andrew Moore. N-body problems in statistical learning. In Advances in
+NIPS 13, 2001.
+[8] N. D. Lawrence, M. Seeger, and R. Herbrich. Fast sparse Gaussian process methods: The
+informative vector machine. In Advances in NIPS 15, pages 609(cid:150)616, 2003.
+[9] Andrew Moore, Jeff Schneider, and Kan Deng. Ef(cid:2)cient locally weighted polynomial regres-
+sion predictions. In Proceedings of the Fourteenth International Conference on Machine Learn-
+ing, pages 236(cid:150)244. Morgan Kaufmann, 1997.
+[10] Andrew Y. Ng, Adam Coates, Mark Diel, Varun Ganapathi, Jamie Schulte, Ben Tse, Eric
+Berger, and Eric Liang. Inverted autonomous helicopter (cid:3)ight via reinforcement learning. In
+International Symposium on Experimental Robotics, 2004.
+[11] Stephen M. Omohundro. Five balltree construction algorithms. Technical Report TR-89-063,
+International Computer Science Institute, 1989.
+[12] R. Kelley Pace and Ronald Barry. Sparse spatial autoregressions. Statistics and Probability
+Letters, 33(3):291(cid:150)297, May 5 1997.
+[13] F.P. Preparata and M. Shamos. Computational Geometry. Springer-Verlag, 1985.
+[14] Nathan Ratliff and J. Andrew Bagnell. Kernel conjugate gradient. Technical Report CMU-RI-
+TR-05-30, Robotics Institute, Carnegie Mellon University, June 2005.
+[15] Y. Saad. Iterative Methods for Sparse Linear Systems. International Thomson Publishing, 1st
+edition, 1996.
+[16] M. Seeger. Gaussian processes for machine learning. International Journal of Neural Systems,
+14(2):69(cid:150)106, 2004.
+[17] M. Stein. Interpolation of Spatial Data: Some Theory for Kriging. Springer, 1999.
+[18] Michael Tipping. Sparse Bayesian learning and the relevance vector machine. Journal of
+Machine Learning Research, 1:211(cid:150)244, 2001.
+[19] C. Williams and C. Rasmussen. Gaussian processes for regression. In Advances in NIPS 8,
+1996.
+[20] C. Yang, R. Duraiswami, and L. Davis. Ef(cid:2)cient kernel machines using the improved fast Gauss
+transform. In Advances in NIPS 17, pages 1561(cid:150)1568, 2005.
+
+

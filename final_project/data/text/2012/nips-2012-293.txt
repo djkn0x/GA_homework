@@ -1,0 +1,670 @@
+A quasi-Newton proximal splitting method
+
+S. Becker∗
+
+M.J. Fadili†
+
+Abstract
+
+A new result in convex analysis on the calculation of proximity operators in cer-
+tain scaled norms is derived. We describe efﬁcient implementations of the prox-
+imity calculation for a useful class of functions; the implementations exploit the
+piece-wise linear nature of the dual problem. The second part of the paper applies
+the previous result to acceleration of convex minimization problems, and leads
+to an elegant quasi-Newton method. The optimization method compares favor-
+ably against state-of-the-art alternatives. The algorithm has extensive applications
+including signal processing, sparse recovery and machine learning and classiﬁca-
+tion.
+
+1
+
+Introduction
+
+Convex optimization has proved to be extremely useful to all quantitative disciplines of science. A
+common trend in modern science is the increase in size of datasets, which drives the need for more
+efﬁcient optimization schemes. For large-scale unconstrained smooth convex problems, two classes
+of methods have seen the most success:
+limited memory quasi-Newton methods and non-linear
+conjugate gradient (CG) methods. Both of these methods generally outperform simpler methods,
+such as gradient descent.
+For problems with non-smooth terms and/or constraints, it is possible to generalize gradient descent
+with proximal gradient descent (which includes projected gradient descent as a sub-cases), which is
+just the application of the forward-backward algorithm [1].
+Unlike gradient descent, it is not easy to adapt quasi-Newton and CG methods to problems involv-
+ing constraints and non-smooth terms. Much work has been written on the topic, and approaches
+generally follow an active-set methodology. In the limit, as the active-set is correctly identiﬁed, the
+methods behave similar to their unconstrained counterparts. These methods have seen success, but
+are not as efﬁcient or as elegant as the unconstrained versions. In particular, a sub-problem on the
+active-set must be solved, and the accuracy of this sub-iteration must be tuned with heuristics in
+order to obtain competitive results.
+Let H = (RN , (cid:104)·, ·(cid:105)) equipped with the usual Euclidean scalar product (cid:104)x, y(cid:105) = (cid:80)N
+1.1 Problem statement
+associated norm (cid:107)x(cid:107) = (cid:112)(cid:104)x, x(cid:105). For a matrix V ∈ RN ×N in the symmetric positive-deﬁnite (SDP)
+i=1 xi yi and
+cone S++ (N ), we deﬁne HV = (RN , (cid:104)·, ·(cid:105)V ) with the scalar product (cid:104)x, y(cid:105)V = (cid:104)x, V y(cid:105) and norm
+(cid:107)x(cid:107)V corresponding to the metric induced by V . The dual space of HV , under (cid:104)·, ·(cid:105), is HV −1 . We
+denote IH the identity operator on H.
+A real-valued function f : H → R ∪ {+∞} is (0)-coercive if lim(cid:107)x(cid:107)→+∞ f (x) = +∞. The
+domain of f is deﬁned by dom f = {x ∈ H : f (x) < +∞} and f is proper if dom f (cid:54)= ∅. We
+say that a real-valued function f is lower semi-continuous (lsc) if lim inf x→x0 f (x) ≥ f (x0 ). The
+∗LJLL, CNRS-UPMC, Paris France (stephen.becker@upmc.fr).
+†GREYC, CNRS-ENSICAEN-Univ. of Caen, Caen France (Jalal.Fadili@greyc.ensicaen.fr).
+
+1
+
+class of all proper lsc convex functions from H to R ∪ {+∞} is denoted by Γ0 (H). The conjugate
+or Legendre-Fenchel transform of f on H is denoted f ∗ .
+Our goal is the generic minimization of functions of the form
+x∈H {F (x) (cid:44) f (x) + h(x)} ,
+min
+(P)
+where f , h ∈ Γ0 (H). We also assume the set of minimizers is nonempty (e.g. F is coercive) and that
+a standard domain qualiﬁcation holds. We take f ∈ C 1 (RN ) with L-Lipschitz continuous gradient,
+and we assume h is separable. Write x(cid:63) to denote an element of Argmin F (x).
+The class we consider covers non-smooth convex optimization problems, including those with con-
+vex constraints. Here are some examples in regression, machine learning and classiﬁcation.
+Example 1 (LASSO).
+
+1
+(cid:107)Ax − b(cid:107)2
+2 + λ(cid:107)x(cid:107)1 .
+min
+x∈H
+2
+Example 2 (Non-negative least-squares (NNLS)).
+1
+(cid:107)Ax − b(cid:107)2
+min
+x∈H
+2
+2
+Example 3 (Sparse Support Vector Machines). One would like to ﬁnd a linear decision function
+m(cid:88)
+which minimizes the objective
+1
+min
+x∈H
+m
+i=1
+where for i = 1, · · · , m, (zi , yi ) ∈ RN × {±1} is the training set, and L is a smooth loss function
+with Lipschitz-continuous gradient such as the squared hinge loss L( ˆyi , yi ) = max(0, 1 − ˆyi yi )2 or
+the logistic loss L( ˆyi , yi ) = log(1 + e− ˆyi yi ).
+
+L((cid:104)x, zi (cid:105) + b, yi ) + λ(cid:107)x(cid:107)1
+
+subject to x (cid:62) 0 .
+
+(1)
+
+(2)
+
+(3)
+
+1.2 Contributions
+
+This paper introduces a class of scaled norms for which we can compute a proximity operator; these
+results themselves are signiﬁcant, for previous results only cover diagonal scaling (the diagonal
+scaling result is trivial). Then, motivated by the discrepancy between constrained and unconstrained
+performance, we deﬁne a class of limited-memory quasi-Newton methods to solve (P) and that
+extends naturally and elegantly from the unconstrained to the constrained case. Most well-known
+quasi-Newton methods for constrained problems, such as L-BFGS-B [2], are only applicable to box
+constraints l ≤ x ≤ u. The power of our approach is that it applies to a wide-variety of useful
+non-smooth functionals (see §3.1.4 for a list) and that it does not rely on an active-set strategy. The
+approach uses the zero-memory SR1 algorithm, and we provide evidence that the non-diagonal term
+provides signiﬁcant improvements over diagonal Hessians.
+
+2 Quasi-Newton forward-backward splitting
+
+2.1 The algorithm
+
+In the following, deﬁne the quadratic approximation
+k (x) = f (xk ) + (cid:104)∇f (xk ), x − xk (cid:105) +
+QB
+
+(cid:107)x − xk (cid:107)2
+B ,
+
+(4)
+
+1
+2
+
+where B ∈ S++ (N ).
+The standard (non relaxed) version of the forward-backward splitting algorithm (also known as
+proximal or projected gradient descent) to solve (P) updates to a new iterate xk+1 according to
+k (x) + h(x) = proxtk h (xk − tk∇f (xk ))
+xk+1 = argmin
+QBk
+x
+k IH , tk ∈]0, 2/L[ (typically tk = 1/L unless a line search is used).
+with Bk = t−1
+
+(5)
+
+2
+
+Note that this specializes to the gradient descent when h = 0. Therefore, if f is a strictly convex
+quadratic function and one takes Bk = ∇2 f (xk ), then we obtain the Newton method. Let’s get back
+to h (cid:54)= 0. It is now well known that ﬁxed B = LIH is usually a poor choice. Since f is smooth and
+can be approximated by a quadratic, and inspired by quasi-Newton methods, this suggest picking
+Bk as an approximation of the Hessian. Here we propose a diagonal+rank 1 approximation.
+Our diagonal+rank 1 quasi-Newton forward-backward splitting algorithm is listed in Algorithm 1
+(with details for the quasi-Newton update in Algorithm 2, see §4 for details). These algorithms
+are listed as simply as possible to emphasize their important components; the actual software
+used for numerical tests is open-source and available at http://www.greyc.ensicaen.fr/
+˜jfadili/software.html.
+
+Algorithm 1: Zero-memory Symmetric Rank 1 (0SR1) algorithm to solve min f + h
+Require: x0 ∈ dom(f + h), Lipschitz constant estimate L of ∇f , stopping criterion 
+1: for k = 1, 2, 3, . . . do
+sk ← xk − xk−1
+2:
+yk ← ∇f (xk ) − ∇f (xk−1 )
+3:
+Compute Hk via Algorithm 2, and deﬁne Bk = H −1
+k .
+4:
+Compute the rank-1 proximity operator (see §3)
+5:
+ˆxk+1 ← proxBk
+h (xk − Hk∇f (xk ))
+pk ← ˆxk+1 − xk and terminate if (cid:107)pk (cid:107) < 
+6:
+Line-search along the ray xk + tpk to determine xk+1 , or choose t = 1.
+7:
+8: end for
+
+(6)
+
+2.2 Relation to prior work
+
+First-order methods The algorithm in (5) is variously known as proximal descent or iterated
+shrinkage/thresholding algorithm (IST or ISTA). It has a grounded convergence theory, and also
+admits over-relaxation factors α ∈ (0, 1) [3].
+The spectral projected gradient (SPG) [4] method was designed as an extension of the Barzilai-
+Borwein spectral step-length method to constrained problems. In [5], it was extended to non-smooth
+problems by allowing general proximity operators; The Barzilai-Borwein method [6] uses a speciﬁc
+choice of step-length tk motivated by quasi-Newton methods. Numerical evidence suggests the
+SPG/SpaRSA method is highly effective, although convergence results are not as strong as for ISTA.
+FISTA [7] is a multi-step accelerated version of ISTA inspired by the work of Nesterov. The stepsize
+t is chosen in a similar way to ISTA; in our implementation, we tweak the original approach by using
+a Barzilai-Borwein step size, a standard line search, and restart[8], since this led to improved per-
+formance. Nesterov acceleration can be viewed as an over-relaxed version of ISTA with a speciﬁc,
+non-constant over-relaxation parameter αk .
+The above approaches assume Bk is a constant diagonal. The general diagonal case was considered
+in several papers in the 1980s as a simple quasi-Newton method, but never widely adapted. More
+recent attempts include a static choice Bk ≡ B for a primal-dual method [9]. A convergence rate
+analysis of forward-backward splitting with static and variable Bk where one of the operators is
+maximal strongly monotone is given in [10].
+
+Active set approaches Active set methods take a simple step, such as gradient projection, to iden-
+tify active variables, and then uses a more advanced quadratic model to solve for the free variables. A
+well-known such method is L-BFGS-B [2, 11] which handles general box-constrained problems; we
+test an updated version [12]. A recent bound-constrained solver is ASA [13] which uses a conjugate
+gradient (CG) solver on the free variables, and shows good results compared to L-BFGS-B, SPG,
+GENCAN and TRON. We also compare to several active set approaches specialized for (cid:96)1 penalties:
+“Orthant-wise Learning” (OWL) [14], “Projected Scaled Sub-gradient + Active Set” (PSSas) [15],
+“Fixed-point continuation + Active Set” (FPC AS) [16], and “CG + IST” (CGIST) [17].
+
+3
+
+Other approaches By transforming the problem into a standard conic programming problem, the
+generic problem is amenable to interior-point methods (IPM). IPM requires solving a Newton-step
+equation, so ﬁrst-order like “Hessian-free” variants of IPM solve the Newton-step approximately,
+either by approximately solving the equation or by subsampling the Hessian. The main issues are
+speed and robust stopping criteria for the approximations.
+Yet another approach is to include the non-smooth h term in the quadratic approximation. Yu et
+al. [18] propose a non-smooth modiﬁcation of BFGS and L-BFGS, and test on problems where h is
+typically a hinge-loss or related function.
+The projected quasi-Newton (PQN) algorithm [19, 20] is perhaps the most elegant and logical ex-
+tension of quasi-Newton methods, but it involves solving a sub-iteration. PQN proposes the SPG [4]
+algorithm for the subproblems, and ﬁnds that this is an efﬁcient tradeoff whenever the cost func-
+tion (which is not involved in the sub-iteration) is relatively much more expensive to evaluate than
+projecting onto the constraints. Again, the cost of the sub-problem solver (and a suitable stopping
+criteria for this inner solve) are issues. As discussed in [21], it is possible to generalize PQN to gen-
+eral non-smooth problems whenever the proximity operator is known (since, as mentioned above, it
+is possible to extend SPG to this case).
+
+3 Proximity operators and proximal calculus
+
+For space limitation reasons, we only recall essential deﬁnitions. More notions, results from convex
+analysis as well as proofs can be found in the supplementary material.
+Deﬁnition 4 (Proximity operator [22]). Let h ∈ Γ0 (H). Then, for every x ∈ H, the function
+z (cid:55)→ 1
+2 (cid:107)x − z(cid:107)2 + h(z ) achieves its inﬁmum at a unique point denoted by proxh x. The uniquely-
+valued operator proxh : H → H thus deﬁned is the proximity operator or proximal mapping of
+h.
+3.1 Proximal calculus in HV
+h = (IHV + V −1∂h)−1 , where ∂h is the subdifferential of h, the
+Throughout, we denote proxV
+the norm endowing HV for some V ∈ S++ (N ). Note that since
+proximity operator of h w.r.t.
+V ∈ S++ (N ), the proximity operator proxV
+h is well-deﬁned.
+Lemma 5 (Moreau identity in HV ). Let h ∈ Γ0 (H), then for any x ∈ H
+ρh∗ (x) + ρV −1 ◦ proxV −1
+h/ρ ◦V (x/ρ) = x, ∀ 0 < ρ < +∞ .
+proxV
+
+(7)
+
+Corollary 6.
+
+(8)
+
+h (x) = x − V −1 ◦ proxV −1
+h∗ ◦V (x) .
+proxV
+3.1.1 Diagonal+rank-1: General case
+Theorem 7 (Proximity operator in HV ). Let h ∈ Γ0 (H) and V = D + uuT , where D is diagonal
+with (strictly) positive diagonal elements di , and u ∈ RN . Then,
+h (x) = D−1/2 ◦ proxh◦D−1/2 (D1/2x − v) ,
+proxV
+(cid:69)
+(cid:68)
+where v = αD−1/2u and α is the unique root of
+u, x − D−1/2 ◦ proxh◦D−1/2 ◦D1/2 (x − αD−1u)
++ α ,
+p(α) =
+(10)
+(cid:80)
+which is a Lipschitz continuous and strictly increasing function on R with Lipschitz constant 1 +
+i /di .
+i u2
+Remark 8.
+• Computing proxV
+h amounts to solving a scalar optimization problem that involves the com-
+putation of proxh◦D−1/2 . The latter can be much simpler to compute as D is diagonal
+(beyond the obvious separable case that we will consider shortly). This is typically the
+case when h is the indicator of the (cid:96)1 -ball or the canonical simple. The corresponding pro-
+jector can be obtained in expected complexity O(N log N ) by simple sorting the absolute
+values
+
+(9)
+
+4
+
+• It is of course straightforward to compute proxV
+h∗ from proxV
+h either using Theorem 7, or
+using this theorem together with Corollary 6 and the Sherman-Morrison inversion lemma.
+3.1.2 Diagonal+rank-1: Separable case
+Corollary 9. Assume that h ∈ Γ0 (H) is separable, i.e. h(x) = (cid:80)N
+The following corollary is key to our novel optimization algorithm.
+(cid:17)
+(cid:16)
+i=1 hi (xi ), and V = D + uuT ,
+where D is diagonal with (strictly) positive diagonal elements di , and u ∈ RN . Then,
+proxhi /di (xi − vi /di )
+proxV
+h (x) =
+,
+(cid:17)
+(cid:69)
+(cid:68)
+u, x − (cid:16)
+i
+where v = αu and α is the unique root of
+proxhi /di (xi − αui /di )
++ α ,
+p(α) =
+i
+which is a Lipschitz continuous and strictly increasing function on R.
+
+(11)
+
+(12)
+
+h
+
+∈
+S++ (N )
+Proof:
+As
+is
+separable
+and
+D
+is
+diagonal,
+applying
+Theorem
+7
+yields
+the
+desired
+result.
+Proposition 10. Assume that for 1 (cid:54) i (cid:54) N , proxhi is piecewise afﬁne on R with ki ≥ 1 segments,
+Let k = (cid:80)N
+i.e.
+tj (cid:54) xi (cid:54) tj+1 , j ∈ {1, . . . , ki } .
+(cid:16) di
+(cid:17)
+proxhi (xi ) = aj xi + bj ,
+h (x) can be obtained exactly by sorting at most the k real values
+i=1 ki . Then proxV
+(xi − tj )
+.
+(i,j )∈{1,...,N }×{1,...,ki }
+ui
+(cid:17)
+(cid:16) di
+Proof: Recall that (10) has a unique solution. When proxhi is piecewise afﬁne with ki
+segments, it is easy to see that p(α) in (12) is also piecewise afﬁne with slopes and intercepts
+(xi − tj )
+. To get α(cid:63) , it is suf-
+changing at the k transition points
+(i,j )∈{1,...,N }×{1,...,ki }
+ui
+ﬁcient to isolate the unique segment that intersects the abscissa axis. This can be achieved
+by sorting the values of the transition points which can cost in average complexity O(k log k).
+
+Remark 11.
+• The above computational cost can be reduced in many situations by exploiting e.g. symme-
+try of the h(cid:48)
+i s, identical functions, etc. This turns out to be the case for many functions of
+interest, e.g. (cid:96)1 -norm, indicator of the (cid:96)∞ -ball or the positive orthant, and many others;
+see examples hereafter.
+• Corollary 9 can be extended to the “block” separable (i.e. separable in subsets of coordi-
+nates) when D is piecewise constant along the same block indices.
+
+3.1.3 Semi-smooth Newton method
+
+In many situations (see examples below), the root of p(α) can be found exactly in polynomial
+complexity.
+If no closed-form is available, one can appeal to some efﬁcient iterative method to
+solve (10) (or (12)). As p is Lipschitz-continuous, hence so-called Newton (slantly) differentiable,
+semi-smooth Newton are good such solvers, with the proviso that one can design a simple slanting
+function which can be algorithmically exploited.
+The semi-smooth Newton method for the solution of (10) can be stated as the iteration
+αt+1 = αt − g(αt )−1p(αt ) ,
+where g is a generalized derivative of p.
+(cid:68)
+(cid:69)
+Proposition 12 (Generalized derivative of p). If proxh◦D−1/2 is Newton differentiable with gener-
+alized derivative G, then so is the mapping p with a generalized derivative
+u, D−1/2 ◦ G(D1/2x − αD−1/2u) ◦ D−1/2u
+g(α) = 1 +
+Furthermore, g is nonsingular with a uniformly bounded inverse on R.
+
+(13)
+
+.
+
+5
+
+Function h
+(cid:96)1 -norm
+Hinge
+(cid:96)∞ -ball
+Box constraint
+Positivity constraint
+(cid:96)1 -ball
+(cid:96)∞ -norm
+Canonical simplex
+max function
+
+Algorithm
+Separable: exact in O(N log N )
+Separable: exact in O(N log N )
+Separable: exact in O(N log N ) from (cid:96)1 -norm by Moreau-identity
+Separable: exact in O(N log N )
+Separable: exact in O(N log N )
+Nonseparable: semismooth Newton and proxh◦D−1/2 costs O(N log N )
+Nonseparable: from projector on the (cid:96)1 -ball by Moreau-identity
+Nonseparable: semismooth Newton and proxh◦D−1/2 costs O(N log N )
+Nonseparable: from projector on the simplex by Moreau-identity
+
+Table 1: Summary of functions which have efﬁciently computable rank-1 proximity operators
+
+Proof:
+ond statement
+
+This follows from linearity and the chain rule [23, Lemma 3.5]. The sec-
+follows strict
+increasing monotonicity of p as established in Theorem 7.
+
+Thus, as p is Newton differentiable with nonsingular generalized derivative whose inverse is also
+bounded, the general semi-smooth Newton convergence theorem implies that (13) converges super-
+linearly to the unique root of (10).
+
+3.1.4 Examples
+
+Many functions can be handled very efﬁciently using our results above. For instance, Table 1 sum-
+marizes a few of them where we can obtain either an exact answer by sorting when possible, or else
+by minimizing w.r.t. to a scalar variable (i.e. ﬁnding the unique root of (10)).
+
+4 A primal rank 1 SR1 algorithm
+
+Following the conventional quasi-Newton notation, we let B denote an approximation to the Hessian
+of f and H denote an approximation to the inverse Hessian. All quasi-Newton methods update an
+approximation to the (inverse) Hessian that satisﬁes the secant condition:
+yk = ∇f (xk ) − ∇f (xk−1 ),
+sk = xk − xk−1
+Hk yk = sk ,
+Algorithm 1 follows the SR1 method [24], which uses a rank-1 update to the inverse Hessian ap-
+proximation at every step. The SR1 method is perhaps less well-known than BFGS, but it has the
+crucial property that updates are rank-1, rather than rank-2, and it is described “[SR1] has now taken
+its place alongside the BFGS method as the pre-eminent updating formula.” [25].
+We propose two important modiﬁcations to SR1. The ﬁrst is to use limited-memory, as is commonly
+done with BFGS. In particular, we use zero-memory, which means that at every iteration, a new
+diagonal plus rank-one matrix is formed. The other modiﬁcation is to extend the SR1 method to
+the general setting of minimizing f + h where f is smooth but h need not be smooth; this further
+generalizes the case when h is an indicator function of a convex set. Every step of the algorithm
+replaces f with a quadratic approximation, and keeps h unchanged. Because h is left unchanged,
+the subgradient of h is used in an implicit manner, in comparison to methods such as [18] that use
+an approximation to h as well and therefore take an explicit subgradient step.
+
+(14)
+
+Choosing H0
+step length
+
+In our experience, the choice of H0 is best if scaled with a Barzilai-Borwein spectral
+τBB2 = (cid:104)sk , yk (cid:105) / (cid:104)yk , yk (cid:105)
+(15)
+from the other Barzilai-Borwein step size τBB1 =
+(we call
+it τBB2 to distinguish it
+(cid:104)sk , sk (cid:105) / (cid:104)sk , yk (cid:105) (cid:62) τBB2 ).
+In SR1 methods, the quantity (cid:104)sk − H0 yk , yk (cid:105) must be positive in order to have a well-deﬁned
+uk = (sk − H0 yk )/(cid:112)(cid:104)sk − H0 yk , yk (cid:105).
+update for uk . The update is:
+Hk = H0 + uk uT
+k ,
+6
+
+(16)
+
+Algorithm 2: Sub-routine to compute the approximate inverse Hessian Hk
+Require: k , sk , yk , 0 < γ < 1, 0 < τmin < τmax
+1: if k = 1 then
+2: H0 ← τ IH where τ > 0 is arbitrary
+uk ← 0
+3:
+4: else
+τBB2 ← (cid:104)sk ,yk (cid:105)
+5:
+(cid:107)yk (cid:107)2
+Project τBB2 onto [τmin , τmax ]
+6:
+7: H0 ← γ τBB2 IH
+if (cid:104)sk − H0 yk , yk (cid:105) ≤ 10−8 (cid:107)yk (cid:107)2(cid:107)sk − H0 yk (cid:107)2 then
+8:
+uk ← (sk − H0 yk )/(cid:112)(cid:104)sk − H0 yk , yk (cid:105)).
+uk ← 0
+9:
+else
+10:
+11:
+end if
+12:
+13: end if
+k {Bk = H −1
+can be computed via the Sherman-Morrison formula}
+14: return Hk = H0 + uk uT
+k
+
+{Skip the quasi-Newton update}
+
+{Barzilai-Borwein step length}
+
+For this reason, we choose H0 = γ τBB2 IH with 0 < γ < 1, and thus 0 ≤ (cid:104)sk − H0 yk , yk (cid:105) =
+(1 − γ ) (cid:104)sk , yk (cid:105).
+If (cid:104)sk , yk (cid:105) = 0, then there is no symmetric rank-one update that satisﬁes the
+secant condition. The inequality (cid:104)sk , yk (cid:105) > 0 is the curvature condition, and it is guaranteed for
+all strictly convex objectives. Following the recommendation in [26], we skip updates whenever
+(cid:104)sk , yk (cid:105) cannot be guaranteed to be non-zero given standard ﬂoating-point precision.
+A value of γ = 0.8 works well in most situations. We have tested picking γ adaptively, as well as
+trying H0 to be non-constant on the diagonal, but found no consistent improvements.
+
+5 Numerical experiments and comparisons
+
+(a)
+
+(b)
+
+Figure 1: (a) is ﬁrst LASSO test, (b) is second LASSO test
+
+Consider the unconstrained LASSO problem (1). Many codes, such as [27] and L-BFGS-B [2],
+handle only non-negativity or box-constraints. Using the standard change of variables by introducing
+the positive and negative parts of x, the LASSO can be recast as
+1
+(cid:107)Ax+ − Ax− − b(cid:107)2 + λ1T (x+ + x− )
+min
+x+ ,x−(cid:62)0
+2
+and then x is recovered via x = x+ − x− . With such a formulation solvers such as L-BFGS-B are
+applicable. However, this constrained problem has twice the number of variables, and the Hessian of
+
+7
+
+010203040506070809010011010−810−610−410−2100102104time in secondsobjective value error  0−mem SR1FISTA w/ BBSPG/SpaRSAL−BFGS−BASAPSSasOWLCGISTFPC−AS00.511.522.510−810−610−410−2100102104106108time in secondsobjective value error  0−mem SR1FISTA w/ BBSPG/SpaRSAL−BFGS−BASAPSSasOWLCGISTFPC−AS(cid:19)
+
+which necessarily has (at least)
+
+(cid:18) AT A −AT A
+the quadratic part changes from AT A to ˜A =
+−AT A AT A
+n degenerate 0 eigenvalues and adversely affects solvers.
+A similar situation occurs with the hinge-loss function. Consider the shifted and reversed hinge loss
+function h(x) = max(0, x). Then one can split x = x+ − x− , add constraints x+ (cid:62) 0, x− (cid:62) 0,
+and replace h(x) with 1T (x+ ). As before, the Hessian gains n degenerate eigenvalues.
+We compared our proposed algorithm on the LASSO problem. The ﬁrst example, in Fig. 1a, is a
+typical example from compressed sensing that takes A ∈ Rm×n to have iid N (0, 1) entries with
+m = 1500 and n = 3000. We set λ = 0.1. L-BFGS-B does very well, followed closely by
+our proposed SR1 algorithm and PSSas. Note that L-BFGS-B and ASA are in Fortran and C,
+respectively (the other algorithms are in Matlab).
+Our second example uses a square operator A with dimensions n = 133 = 2197 chosen as a
+3D discrete differential operator. This example stems from a numerical analysis problem to solve a
+discretized PDE as suggested by [28]. For this example, we set λ = 1. For all the solvers, we use the
+same parameters as in the previous example. Unlike the previous example, Fig. 1b now shows that
+L-BFGS-B is very slow on this problem. The FPC-AS method, very slow on the earlier test, is now
+the fastest. However, just as before, our SR1 method is nearly as good as the best algorithm. This
+robustness is one beneﬁt of our approach, since the method does not rely on active-set identifying
+parameters and inner iteration tolerances.
+
+6 Conclusions
+
+In this paper, we proposed a novel variable metric (quasi-Newton) forward-backward splitting algo-
+rithm, designed to efﬁciently solve non-smooth convex problems structured as the sum of a smooth
+term and a non-smooth one. We introduced a class of weighted norms induced by a diagonal+rank
+1 symmetric positive deﬁnite matrices, and proposed a whole framework to compute a proximity
+operator in the weighted norm. The latter result is distinctly new and is of independent interest.
+We also provided clear evidence that the non-diagonal term provides signiﬁcant acceleration over
+diagonal matrices.
+The proposed method can be extended in several ways. Although we focused on forward-backward
+splitting, our approach can be easily extended to the new generalized forward-backward algorithm
+of [29]. However, if we switch to a primal-dual setting, which is desirable because it can handle
+more complicated objective functionals, updating Bk is non-obvious. Though one can think of
+non-diagonal pre-conditioning methods.
+Another improvement would be to derive efﬁcient calculation for rank-2 proximity terms, thus al-
+lowing a 0-memory BFGS method. We are able to extend (result not presented here) Theorem 7
+to diagonal+rank r matrices. However, in general, one must solve an r-dimensional inner problem
+using the semismooth Newton method.
+A ﬁnal possible extension is to take Bk to be diagonal plus rank-1 on diagonal blocks, since if
+h is separable, this is still can be solved by our algorithm (see Remark 10). The challenge here
+is adapting this to a robust quasi-Newton update. For some matrices that are well-approximated
+by low-rank blocks, such as H-matrices [30], it may be possible to choose Bk ≡ B to be a ﬁxed
+preconditioner.
+
+Acknowledgments
+
+SB would like to acknowledge the Fondation Sciences Math ´ematiques de Paris for his fellowship.
+
+References
+
+[1] H. H. Bauschke and P. L. Combettes. Convex Analysis and Monotone Operator Theory in Hilbert Spaces.
+Springer-Verlag, New York, 2011.
+[2] R. H. Byrd, P. Lu, J. Nocedal, and C. Zhu. A limited memory algorithm for bound constrained optimiza-
+tion. SIAM J. Sci. Computing, 16(5):1190–1208, 1995.
+
+8
+
+IEEE
+
+Preprint:
+
+[3] P. L. Combettes and J. C. Pesquet. Proximal splitting methods in signal processing. In H. H. Bauschke,
+R. S. Burachik, P. L. Combettes, V. Elser, D. R. Luke, and H. Wolkowicz, editors, Fixed-Point Algorithms
+for Inverse Problems in Science and Engineering, pages 185–212. Springer-Verlag, New York, 2011.
+[4] E. G. Birgin, J. M. Mart´ınez, and M. Raydan. Nonmonotone spectral projected gradient methods on
+convex sets. SIAM J. Optim., 10(4):1196–1211, 2000.
+[5] S. Wright, R. Nowak, and M. Figueiredo. Sparse reconstruction by separable approximation.
+Transactions on Signal Processing, 57, 2009. 2479–2493.
+[6] J. Barzilai and J. Borwein. Two point step size gradient method. IMA J. Numer. Anal., 8:141–148, 1988.
+[7] A. Beck and M. Teboulle. A fast iterative shrinkage-thresholding algorithm for linear inverse problems.
+SIAM J. on Imaging Sci., 2(1):183–202, 2009.
+[8] B. O’Donoghue and E. Cand `es. Adaptive restart for accelerated gradient schemes.
+arXiv:1204.3982, 2012.
+[9] T. Pock and A. Chambolle. Diagonal preconditioning for ﬁrst order primal-dual algorithms in convex
+optimization. In ICCV, 2011.
+[10] G. H.-G. Chen and R. T. Rockafellar. Convergence rates in forward–backward splitting. SIAM Journal
+on Optimization, 7(2):421–444, 1997.
+[11] C. Zhu, R. H. Byrd, P. Lu, and J. Nocedal. Algorithm 778: L-BFGS-B: Fortran subroutines for large-scale
+bound-constrained optimization. ACM Trans. Math. Software, 23(4):550–560, 1997.
+[12] Jos ´e Luis Morales and Jorge Nocedal. Remark on ¨algorithm 778: L-BFGS-B: Fortran subroutines for
+large-scale bound constrained optimization¨. ACM Trans. Math. Softw., 38(1):7:1–7:4, 2011.
+[13] W. W. Hager and H. Zhang. A new active set algorithm for box constrained optimization. SIAM J. Optim.,
+17:526–557, 2006.
+[14] A. Andrew and J. Gao. Scalable training of l1 -regularized log-linear models. In ICML, 2007.
+[15] M. Schmidt, G. Fung, and R. Rosales. Fast optimization methods for l1 regularization: A comparative
+study and two new approaches. In European Conference on Machine Learning, 2007.
+[16] Z. Wen, W. Yin, D. Goldfarb, and Y. Zhang. A fast algorithm for sparse reconstruction based on shrinkage,
+subspace optimization and continuation. SIAM J. Sci. Comput., 32(4):1832–1857, 2010.
+[17] T. Goldstein and S. Setzer. High-order methods for basis pursuit. Technical report, CAM-UCLA, 2011.
+[18] J. Yu, S.V.N. Vishwanathan, S. Guenter, and N. Schraudolph. A quasi-Newton approach to nonsmooth
+convex optimization problems in machine learning. J. Machine Learning Research, 11:1145–1200, 2010.
+[19] M. Schmidt, E. van den Berg, M. Friedlander, and K. Murphy. Optimizing costly functions with simple
+constraints: A limited-memory projected quasi-Newton algorithm. In AISTATS, 2009.
+[20] M. Schmidt, D. Kim, and S. Sra. Projected Newton-type methods in machine learning.
+S. Nowozin, and S.Wright, editors, Optimization for Machine Learning. MIT Press, 2011.
+[21] J. D. Lee, Y. Sun, and M. A. Saunders. Proximal Newton-type methods for minimizing convex objective
+functions in composite form. Preprint: arXiv:1206.1623, 2012.
+[22] J.-J. Moreau. Fonctions convexes duales et points proximaux dans un espace hilbertien. CRAS S ´er. A
+Math., 255:2897–2899, 1962.
+[23] R. Griesse and D. A. Lorenz. A semismooth Newton method for Tikhonov functionals with sparsity
+constraints. Inverse Problems, 24(3):035007, 2008.
+[24] C. Broyden. Quasi-Newton methods and their application to function minimization. Math. Comp.,
+21:577–593, 1967.
+[25] N. Gould. Seminal papers in nonlinear optimization. In An introduction to algorithms for continuous
+optimization. Oxford University Computing Laboratory, 2006. http://www.numerical.rl.ac.
+uk/nimg/course/lectures/paper/paper.pdf.
+[26] J. Nocedal and S. Wright. Numerical Optimization. Springer, 2nd edition, 2006.
+[27] I. Dhillon, D. Kim, and S. Sra. Tackling box-constrained optimization via a new projected quasi-Newton
+approach. SIAM J. Sci. Comput., 32(6):3548–3563, 2010.
+[28] Roger Fletcher. On the Barzilai-Borwein method.
+In Liqun Qi, Koklay Teo, Xiaoqi Yang, Panos M.
+Pardalos, and Donald W. Hearn, editors, Optimization and Control with Applications, volume 96 of Ap-
+plied Optimization, pages 235–256. Springer US, 2005.
+[29] H. Raguet, J. Fadili, and G. Peyr ´e. Generalized forward-backward splitting. Technical report, Preprint
+Hal-00613637, 2011.
+[30] W. Hackbusch. A sparse matrix arithmetic based on H-matrices. Part I: Introduction to H-matrices. Com-
+puting, 62:89–108, 1999.
+[31] R. T. Rockafellar. Convex Analysis. Princeton University Press, 1970.
+
+In S. Sra,
+
+9
+
+

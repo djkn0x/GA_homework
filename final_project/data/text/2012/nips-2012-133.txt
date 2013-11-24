@@ -1,0 +1,707 @@
+A Marginalized Particle Gaussian Process Regression
+
+Yali Wang
+and Brahim Chaib-draa
+Department of Computer Science
+Laval University
+Quebec, Quebec G1V0A6
+{wang,chaib}@damas.ift.ulaval.ca
+
+Abstract
+
+We present a novel marginalized particle Gaussian process (MPGP) regression,
+which provides a fast, accurate online Bayesian ﬁltering framework to model the
+latent function. Using a state space model established by the data construction
+procedure, our MPGP recursively ﬁlters out the estimation of hidden function
+values by a Gaussian mixture. Meanwhile, it provides a new online method for
+training hyperparameters with a number of weighted particles. We demonstrate
+the estimated performance of our MPGP on both simulated and real large data
+sets. The results show that our MPGP is a robust estimation algorithm with high
+computational efﬁciency, which outperforms other state-of-art sparse GP methods.
+
+1
+
+Introduction
+
+The Gaussian process (GP) is a popular nonparametric Bayesian method for nonlinear regression.
+However, the O(n3 ) computational load for training the GP model would severely limit its applica-
+bility in practice when the number of training points n is larger than a few thousand [1]. A number
+of attempts have been made to handle it with a small computational load. One typical method is a
+sparse pseudo-input Gaussian process (SPGP) [2] that uses a pseudo-input data set with m inputs
+(m (cid:28) n) to parameterize the GP predictive distribution to reduce the computational burden. Then
+a sparse spectrum Gaussian process (SSGP) [3] was proposed to further improve the performance
+of SPGP while retaining the computational efﬁciency by using a stationary trigonometric Bayesian
+model with m basis functions. However, both SPGP and SSGP learn hyperparameters ofﬂine by
+maximizing the marginal likelihood before making the inference. They would take a risk to fall in
+the local optimum. Another recent model is a Kalman ﬁlter Gaussian process (KFGP) [4] which re-
+duces computation load by correlating function values of data subsets at each Kalman ﬁlter iteration.
+But it still causes underﬁtting or overﬁtting if the hyperparameters are badly learned ofﬂine.
+On the contrary, we propose in this paper an online marginalized particle ﬁlter to simultaneously
+learn the hyperprameters and hidden function values. By collecting small data subsets sequentially,
+we establish a novel state space model which allows us to estimate the marginal posterior distribution
+(not the marginal likelihood) of hyperparameters online with a number of weighted particles. For
+each particle, a Kalman ﬁlter is applied to estimate the posterior distribution of hidden function
+values. We will later explain it in details and show its validity via the experiments on large datasets.
+
+2 Data Construction
+
+In practice, the whole training data set is usually constructed by gathering small subsets sev-
+eral times. For the tth collection, the training subset (Xt , yt ) consists of nt input-output pairs:
+t )}. Each scalar output y i
+{(x1
+t ), · · · (xnt
+t , ynt
+t is generated from a nonlinear function f (xi
+t ) of a
+t , y1
+d-dimensional input vector xi
+t with an additive Gaussian noise N (0, a2
+0 ). All the pairs are separately
+organized as an input matrix Xt and output vector yt . For simplicity, the whole training data with
+
+1
+
+T collections is symbolized as (X1:T , y1:T ). The goal refers to a regression issue - estimating the
+(cid:63) , · · · xm
+function value of f (x) at m test inputs X(cid:63) = [x1
+(cid:63) ] given (X1:T , y1:T ).
+
+3 Gaussian Process Regression
+
+A Gaussian process (GP) represents a distribution over functions, which is a generalization of the
+Gaussian distribution to an inﬁnite dimensional function space. Formally, it is a collection of random
+variables, any ﬁnite number of which have a joint Gaussian distribution [1]. Similar to a Gaussian
+distribution speciﬁed by a mean vector and covariance matrix, a GP is fully deﬁned by a mean func-
+tion m(x) = E [f (x)] and covariance function k(x, x(cid:48) ) = E [(f (x) − m(x))(f (x(cid:48) ) − m(x(cid:48) ))].
+Here we follow the practical choice that m(x) is set to be zero. Moreover, due to the spatial non-
+stationary phenomena in the real world, we choose k(x, x(cid:48) ) as kSE (x, x(cid:48) ) + kN N (x, x(cid:48) ) where
+1 exp[−0.5a−2
+2 (x − x(cid:48) )T (x − x(cid:48) )] is the stationary squared exponential covariance func-
+kSE = a2
+3 sin−1 [a−2
+4 ˜xT ˜x(cid:48) ((1 + a−2
+4 ˜xT ˜x)(1 + a−2
+4 ˜x(cid:48)T ˜x(cid:48) ))−0.5 ] is the nonstationary neural
+tion, kN N = a2
+network covariance function with the augmented input ˜x = [1 xT ]T . For simplicity, all the hyper-
+parameters are collected into a vector θ = [a0 a1 a2 a3 a4 ]T .
+The regression problem could be solved by the standard GP with the following two steps: First,
+learning θ given (X1:T , y1:T ). One technique is to draw samples from p(θ |X1:T , y1:T ) using
+Markov Chain Monte Carlo (MCMC) [5, 6], another popular way is to maximize the log evi-
+dence p(y1:T |X1:T , θ) via a gradient based optimizer [1]. Second, estimating the distribution of
+the function value p(f (X(cid:63) )|X1:T , y1:T , X(cid:63) , θ). From the perspective of GP, a function f (x) could
+be loosely considered as an inﬁnitely long vector in which each random variable is the function value
+at an input x, and any ﬁnite set of function values is jointly Gaussian distributed. Hence, the joint
+distribution p(y1:T , f (X(cid:63) )|X1:T , X(cid:63) , θ) is a multivariate Gaussian distribution. Then according to
+the conditional property of Gaussian distribution, p(f (X(cid:63) )|X1:T , y1:T , X(cid:63) , θ) is also Gaussian dis-
+tributed with the following mean vector ¯f (X(cid:63) ) and covariance matrix P (X(cid:63) , X(cid:63) ) [1, 7]:
+0 I ]−1y1:T
+¯f (X(cid:63) ) = Kθ (X(cid:63) , X1:T )[Kθ (X1:T , X1:T ) + a2
+P (X(cid:63) , X(cid:63) ) = Kθ (X(cid:63) , X(cid:63) ) − Kθ (X(cid:63) , X1:T )[Kθ (X1:T , X1:T ) + a2
+0 I ]−1Kθ (X(cid:63) , X1:T )T
+If there are n training inputs and m test inputs then Kθ (X(cid:63) , X1:T ) denotes an m × n covariance
+matrix in which each entry is calculated by the covariance function k(x, x(cid:48) ) with the learned θ . It is
+similar to construct Kθ (X1:T , X1:T ) and Kθ (X(cid:63) , X(cid:63) ).
+
+4 Marginalized Particle Gaussian Process Regression
+
+Even though GP is an elegant nonparametric method for Bayesian regression, it is commonly in-
+feasible for large data sets due to an O(n3 ) scaling for learning the model. In order to derive a
+computational tractable GP model which preserves the estimation accuracy, we ﬁrstly explore a
+state space model from the data construction procedure, then propose a marginalized particle ﬁlter
+to estimate the hidden f (X(cid:63) ) and θ in an online Bayesian ﬁltering framework.
+
+4.1 State Space Model
+
+The standard state space model (SSM) consists of the state equation and observation equation. The
+state equation reﬂects the Markovian evolution of hidden states (the hyperparamters and function
+values). For the hidden static hyperparameter θ , a popular method in ﬁltering techniques is to add an
+artiﬁcial evolution using kernel smoothing which guarantees the estimation convergence [8, 9, 10]:
+θt = bθt−1 + (1 − b) ¯θt−1 + st−1
+(1)
+where b = (3δ − 1)/(2δ), δ is a discount factor which is typically around 0.95-0.99, ¯θt−1 is the
+Monte Carlo mean of θ at t − 1, and st−1 ∼ N (0, r2Σt−1 ), r2 = 1 − b2 , Σt−1 is the Monte Carlo
+variance matrix of θ at t − 1. For hidden function values, we attempt to explore the relation between
+t = Xt ∪ X(cid:63) and f c
+the (t − 1)th and tth data subset. For simplicity, we denoted X c
+(cid:20) Kθt (X c
+(cid:21)
+t ). If
+t = f (X c
+t−1 |X c
+f (x) ∼ GP (0, k(x, x(cid:48) )), then the prior distribution p(f c
+t , θt ) is jointly Gaussian:
+t−1 , X c
+t , f c
+t , X c
+Kθt (X c
+t , X c
+t−1 |X c
+t−1 )
+t )
+t−1 , X c
+p(f c
+t , f c
+t , θt ) = N (0,
+)
+Kθt (X c
+t , X c
+t−1 )T Kθt (X c
+t−1 , X c
+t−1 )
+
+2
+
+Then according to the conditional property of Gaussian distribution, we could get
+t |f c
+t , θt ) = N (G(θt )f c
+p(f c
+t−1 , X c
+t−1 , X c
+t−1 , Q(θt ))
+
+(2)
+
+where
+
+t−1 )K −1
+(3)
+G(θt ) = Kθt (X c
+t , X c
+(X c
+t−1 , X c
+t−1 )
+θt
+t ) − Kθt (X c
+t−1 )K −1
+(4)
+t , X c
+Q(θt ) = Kθt (X c
+t , X c
+t−1 , X c
+(X c
+t , X c
+t−1 )Kθt (X c
+t−1 )T
+θt
+This conditional density (2) could be transformed into a linear equation of the function value with
+t ∼ N (0, Q(θt )):
+an additive Gaussian noise vf
+t−1 + vf
+t = G(θt )f c
+f c
+t
+
+(5)
+
+Finally, the observation (output) equation could be directly obtained from the tth data collection:
+t + vy
+(6)
+yt = Ht f c
+t
+t = f (Xt ) since yt is only obtained from the
+where Ht = [Int 0] is an index matrix to make Ht f c
+t ∼ N (0, R(θt )) is from the section 2 where R(θt ) = a2
+tth training inputs Xt . The noise vy
+0,t I . Note
+that a0 is a ﬁxed unknown hyperparameter. We use the symbol a0,t just because of the consistency
+with the artiﬁcial evolution of θ . To sum up, our SSM is fully speciﬁed by (1), (5), (6).
+
+4.2 Bayesian Inference by Marginalized Particle Filter
+
+In contrast to the GP regression with a two-step ofﬂine inference in section 3, we propose an online
+ﬁltering framework to simultaneously learn hyperparameters and estimate hidden function values.
+According to the SSM before, the inference problem refers to compute the posterior distribution
+t , θ1:t |X1:t , X(cid:63) , y1:t ). One technique is MCMC, but MCMC usually suffers from a long con-
+p(f c
+vergence time. Hence we choose another popular technique - particle ﬁlter. However, for our SSM,
+the traditional sampling importance resampling (SIR) particle ﬁlter will introduce the unnecessary
+computational load due to the fact that (5) in the SSM is a linear structure given θt . This inspires us
+to apply a more efﬁcient marginalized particle ﬁlter (also called Rao-Blackwellised particle ﬁlter)
+[9, 11, 12, 13] to deal with the estimation problem by combining Kalman ﬁlter into particle ﬁlter.
+Using Bayes rule, the posterior could be factorized as
+t , θ1:t |X1:t , X(cid:63) , y1:t ) = p(θ1:t |X1:t , X(cid:63) , y1:t )p(f c
+t |θ1:t , X1:t , X(cid:63) , y1:t )
+p(f c
+p(θ1:t |X1:t , X(cid:63) , y1:t ) refers to a marginal posterior which could be solved by particle ﬁlter. After
+t |θ1:t , X1:t , X(cid:63) , y1:t ) could be computed by
+obtaining the estimation of θ1:t , the second term p(f c
+t is the hidden state in the linear substructure (equation (5)) of SSM.
+Kalman ﬁlter since f c
+The detailed inference procedure is as follows: First, p(θ1:t |X1:t , X(cid:63) , y1:t ) should be factorized in
+a recursive form so that it could be applied into sequential importance sampling framework:
+p(θ1:t |X1:t , X(cid:63) , y1:t ) ∝ p(yt |y1:t−1 , θ1:t , X1:t , X(cid:63) )p(θt |θt−1 )p(θ1:t−1 |X1:t−1 , X(cid:63) , y1:t−1 )
+At each iteration of the sequential importance sampling, the particles for the hyperparameter vector
+are drawn from the proposal distribution p(θt |θt−1 ) (easily obtained from equation (1)), then the
+importance weight for each particle at t could be computed according to p(yt |y1:t−1 , θ1:t , X1:t , X(cid:63) ).
+(cid:90)
+This distribution could be solved analytically:
+(cid:90)
+p(yt |y1:t−1 , θ1:t , X1:t , X(cid:63) ) =
+(cid:90)
+
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) )df c
+p(yt , f c
+t
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) )df c
+p(yt |f c
+t , θt , Xt , X(cid:63) )p(f c
+t
+
+=
+
+=
+
+t|t−1 )df c
+t|t−1 , P c
+t , R(θt ))N (f c
+N (Ht f c
+t
+
+= N (Ht f c
+t|t−1 , HtP c
+t|t−1H T
+t + R(θt ))
+where p(yt |f c
+t , θt , Xt , X(cid:63) ) follows a Gaussian distribution N (Ht f c
+t , R(θt )) (refers to equation (6)),
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) ) = N (f c
+t|t−1 ) is the prediction step of Kalman ﬁlter for f c
+t which
+p(f c
+t|t−1 , P c
+is also Gaussian distributed with the predictive mean f c
+t|t−1 and covariance P c
+t|t−1 .
+
+(7)
+
+3
+
+t |θ1:t , X1:t , X(cid:63) , y1:t ) using the prediction-update Kalman
+Second, we explain how to compute p(f c
+ﬁlter. According to the recursive Bayesian ﬁltering, this posterior could be factorized as:
+p(yt |f c
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) )
+t , θt , Xt , X(cid:63) )p(f c
+t |θ1:t , X1:t , X(cid:63) , y1:t ) =
+p(f c
+p(yt |y1:t−1 , θ1:t , X1:t , X(cid:63) )
+(cid:90)
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) ) which is an integral:
+In the prediction step, the goal is to compute p(f c
+(cid:90)
+t−1 |y1:t−1 , θ1:t , X1:t , X(cid:63) )df c
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) ) =
+p(f c
+t , f c
+p(f c
+t−1
+(cid:90)
+t−1 |y1:t−1 , θ1:t−1 , X1:t−1 , X(cid:63) )df c
+t |f c
+t−1 , θt , Xt−1:t , X(cid:63) )p(f c
+p(f c
+t−1
+
+(8)
+
+=
+
+=
+
+t−1|t−1 )df c
+t−1|t−1 , P c
+t−1 , Q(θt ))N (f c
+N (G(θt )f c
+t−1
+
+(9)
+t−1|t−1G(θt )T + Q(θt ))
+t−1|t−1 , G(θt )P c
+= N (G(θt )f c
+t |f c
+t−1 |y1:t−1 , θ1:t−1 , X1:t−1 , X(cid:63) ) =
+t−1 , θt , Xt−1:t , X(cid:63) ) is directly from (2), and p(f c
+where p(f c
+t |y1:t−1 , θ1:t , X1:t , X(cid:63) ) could
+t−1|t−1 ) is the posterior estimation for f c
+t−1 . Since p(f c
+N (f c
+t−1|t−1 , P c
+also be expressed as N (f c
+t|t−1 ), then the prediction step is summarized as:
+t|t−1 , P c
+
+(10)
+
+(12)
+
+(11)
+
+t|t−1 = G(θt )P c
+t−1|t−1 , P c
+t|t−1 = G(θt )f c
+f c
+t−1|t−1G(θt )T + Q(θt )
+In the update step, the current observation density p(yt |f c
+t , R(θt )) is used
+t , θt , Xt , X(cid:63) ) = N (Ht f c
+t |θ1:t , X1:t , X(cid:63) , y1:t ) = N (f c
+t|t ) is
+to correct the prediction. Putting (7) and (9) into (8), p(f c
+t|t , P c
+actually Gaussian distributed with the Kalman Gain Γt where:
+t + R(θt ))−1
+Γt = P c
+t|t−1H T
+t (HtP c
+t|t−1H T
+t|t−1 − ΓtHtP c
+t|t−1 + Γt (yt − Ht f c
+t|t = P c
+t|t−1 ), P c
+t|t = f c
+f c
+t|t−1
+Finally, the whole algorithm (t = 1, 2, 3, ....) is summarized as follows:
+• For i = 1, 2, ...N
+t ∼ p(θt |˜θi
+– Drawing θi
+t−1 ) according to (1)
+t to specify k(x, x(cid:48) ) in GP to construct G(θi
+– Using θi
+t ), R(θi
+t ), Q(θi
+t ) in (3-4) and (6)
+– Kalman Predict: Using ˜f c,i
+t−1|t−1 , ˜P c,i
+t−1|t−1 into (10) to compute f c,i
+t|t−1 , P c,i
+t|t−1
+– Kalman Update: Using f c,i
+t|t and P c,i
+t|t−1 into (11) and (12) to compute f c,i
+t|t−1 and P c,i
+t|t
+t /((cid:80)N
+– Putting f c,i
+t|t−1 , P c,i
+t ) into (7) to compute the importance weight ¯wi
+t|t−1 , R(θi
+t
+• Normalizing the weight: wi
+t|t = (cid:80)N
+ˆθt = (cid:80)N
+t = ¯wi
+i=1 ¯wi
+t ) (i = 1, ...N )
+• Hyperparameter and Hidden function value estimation:
+t|t = (cid:80)N
+t|t ⇒ ˆf (cid:63)
+ˆf c
+ˆf c
+t f c,i
+t ,
+t|t = H (cid:63)
+i=1 wi
+i=1 wi
+t θi
+t|t
+t
+t|t − ˆf c
+t|t − ˆf c
+t|t )T ) ⇒ ˆP (cid:63)
+ˆP c
+ˆP c
+t (P c,i
+t|t + (f c,i
+t|t )(f c,i
+t|t = H (cid:63)
+i=1 wi
+t|t (H (cid:63)
+t )T
+t
+t = [0 Im ] is an index matrix to get the function value estimation at X(cid:63)
+where H (cid:63)
+• Resampling: For i = 1, ...N , resample θi
+t , f c,i
+t|t , P c,i
+t|t with respect to the importance weight
+t , ˜f c,i
+t|t , ˜P c,i
+t to obtain ˜θi
+t|t for the next step
+wi
+
+At each iteration, our marginalized particle Gaussian process (MPGP) uses a small training subset
+to estimate f (X(cid:63) ) by Kalman ﬁlters, and learn hyperparameters online by weighted particles. The
+computational cost of the marginalized particle ﬁlter is governed by O(N T S 3 ) [10] where N is the
+number of particles, T is the number of data collections, S is the size of each collection. This could
+largely reduce the computational load. Moreover, the MPGP propagates the previous estimation to
+improve the current accuracy in the recursive ﬁltering framework. From the algorithm above, we
+also ﬁnd that f (X(cid:63) ) is estimated as a Gaussian mixture at each iteration since each hyperparam-
+eter particle accompanies with a Kalman ﬁlter for f (X(cid:63) ). Hence the MPGP could accelerate the
+
+4
+
+Figure 1: Estimation result comparison. (a-b) show the estimation for f1 at t = 10 by SE-KFGP
+(blue line with blue dashed interval in (a)), SE-MPGP (red line with red dashed interval in (a)),
+SENN-KFGP (blue line with blue dashed interval in (b)), SENN-MPGP (red line with red dashed
+interval in (b)). The black crosses are the training outputs at t = 10, the black line is the true f (X(cid:63) ).
+The denotation of (c-d),(e-f),(g-h) is same as (a-b) except that (c-d) are for f2 at t = 10, (e-f) are for
+f1 at t = 100, (g-h) are for f2 at t = 50. (i-m), (n-r) are the estimation of the log hyperparameters
+(log(a0 ) to log(a4 )) for f1 , f2 over time.
+
+computational speed, while preserving the accuracy. Additionally, it is worth to mention that the
+Kalman ﬁlter GP (KFGP) [4] is a special case of our MPGP since the KFGP ﬁrstly trains the hy-
+t |θ1:t , X1:t , X(cid:63) , y1:t )
+perparamter vector ofﬂine and uses it to specify the SSM, then estimates p(f c
+by Kalman ﬁlter. But the ofﬂine learning procedure in KFGP will either take a long time using a
+large extra training data or fall into an unsatisfactory local optimum using a small extra training data.
+In our MPGP, the local optimum could be used as the initial setting of hyperparameters, then the
+underlying θ could be learned online by the marginalized particle ﬁlter to improve the performance.
+Finally, to avoid confusion, we should clarify the difference between our MPGP and the GP mod-
+eled Bayesian ﬁlters [14, 15]. The goal of GP modeled Bayesian ﬁlters is to use GP modeling for
+Bayesian ﬁltering, on the contrary, our MPGP is to use Bayesian ﬁltering for GP modeling.
+
+5 Experiments
+
+Two Synthetic Datasets: The proposed MPGP is ﬁrstly evaluated on two simulated one-
+dimensional datasets. One is a function with a sharp peak which is spatially inhomogeneously
+smooth [16]: f1 (x) = sin(x) + 2 exp(−30x2 ). For f1 (x), we gather the training data with 100
+collections. For each collection, we randomly select 30 inputs from [-2, 2], then calculate their
+outputs by adding a Gaussian noise N (0, 0.32 ) to their function values. The test input is from -2
+to 2 with 0.05 interval. The other function is with a discontinuity [17]: if 0 ≤ x ≤ 0.3, f2 (x) =
+N (x; 0.6, 0.22 )+N (x; 0.15, 0.052 ), if 0.3 < x ≤ 1, f2 (x) = N (x; 0.6, 0.22 )+N (x; 0.15, 0.052 )+
+4. For f2 (x), we gather the training data with 50 collections. For each collection, we randomly se-
+lect 60 inputs from [0, 1], then calculate their outputs by adding a Gaussian noise N (0, 0.82 ) to their
+function values. The test input is from 0 to 1 with 0.02 interval.
+The ﬁrst experiment aims to evaluate the estimation performance in comparison of KFGP in [4].
+We denote SE-KFGP, SENN-KFGP as KFGP with the covariance function kSE , KFGP with the
+covariance function kSE + kN N . Similarly, SE-MPGP and SENN-MPGP are MPGP with kSE ,
+
+5
+
+−2−1012−4−2024xy−2−1012−4−2024xy−2−1012−4−2024xy−2−1012−4−2024xy00.20.40.60.81−50510xy00.20.40.60.81−50510xy00.20.40.60.81−50510xy00.20.40.60.81−50510xy050100−2−1.5−1−0.50tlog(a1)  050100−1−0.500.5tlog(a2)  050100−2−1.5−1−0.50tlog(a3)  050100−1.6−1.4−1.2−1tlog(a4)  050100−1−0.500.5tlog(a0)  01020304050−3−2−10tlog(a1)  01020304050−1012tlog(a2)  01020304050−1−0.8−0.6−0.4−0.2tlog(a3)  01020304050−0.500.511.5tlog(a4)  01020304050−1012tlog(a0)  SE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSENN−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSENN−MPGPSENN−MPGP(b)(c)(a)(e)(f)(g)(h)(d)t=10t=10t=10t=10t=100t=100(i)(j)(k)(l)(m)(r)(q)(p)(o)(n)t=50t=50Figure 2: The NMSE and MNLP of KFGP and MPGP for f1 , f2 over time.
+
+Figure 3: The NMSE and MNLP of MPGP as a function of the number of particles. The ﬁrst row is
+for f1 , the second row is for f2 .
+
+MPGP with kSE + kN N . The number of particles in MPGP is set to 10. The evaluation criterion
+is the test Normalized Mean Square Error (NMSE) and the test Mean Negative Log Probability
+(MNLP) as suggested in [3]. First, it is shown in Figure 1 that the estimation performance for both
+KFGP and MPGP is getting better and attempts to convergence over time (refers to (a-h)) since
+the previous estimation would be incorporated into the current estimation in the recursive Bayesian
+ﬁltering. Second, for both f1 and f2 , the estimation of MPGP is better than KFGP via the NMSE and
+MNLP comparison in Figure 2. The KFGP uses ofﬂine learned hyperparameters all the time. On
+the contrary, MPGP initializes hyperparameters using the ones by KFGP, then online learns the true
+hyperparameters (refers to (i-r) in Figure 1). Hence the MNLP of MPGP is much lower than KFGP.
+Finally, if we only focus on our MPGP, then we could ﬁnd SENN-MPGP is better than SE-MPGP
+since SENN-MPGP takes the spatial nonstationary phenomenon into account.
+The second experiment aims to illustrate the average performance of SE-MPGP and SENN-MPGP
+when the number of particles increases. For each number of particles, we run the SE-MPGP and
+SENN-MPGP 5 times and compute the average NMSE and MNLP. From Figure 3, we ﬁnd: First,
+with increasing the number of particles, the NMSE and MNLP of SE-MPGP and SENN-MPGP
+would decrease at the beginning and become convergence while the running time increases over
+time. The reason is that the estimation accuracy and computational load of particle ﬁlters will
+increase when the number of particles increases. Second, the average performance of SENN-MPGP
+is better than SE-MPGP since it captures the spatial nonstationarity, but SENN-MPGP needs more
+running time since the size of the hyperparameter vector to be inferred will increase.
+The third experiment aims to compare our MPGP with the benchmarks. The state-of-art sparse
+GP methods we choose are: sparse pseudo-input Gaussian process (SPGP) [2] and sparse spectrum
+Gaussian process (SSGP) [3]. Moreover, we also want to examine the robustness of our MPGP
+since we should clarify whether the good estimation of our MPGP heavily depends on the order
+of training data collection. Hence, we randomly interrupt the order of training subsets we used
+before, then implement SPGP with 5 pseudo inputs (5-SPGP), SSGP with 10 basis functions (10-
+SSGP), SE-MPGP with 5 particles (5-SE-MPGP), SENN-MPGP with 5 particles (5-SENN-MPGP).
+
+6
+
+0204060801000.080.10.120.140.160.180.2t  0204060801000.40.60.81t  010203040500.10.20.30.40.5t  0102030405011.21.41.61.82t  SE−KFGPSENN−KFGPSE−MPGPSENN−MPGPSE−KFGPSE−MPGPSENN−KFGPSENN−MPGPSE−KFGPSENN−KFGPSE−MPGPSENN−MPGPSE−KFGPSENN−KFGPSE−MPGPSENN−MPGPMNLP for f1(x)NMSE for f2(x)NMSE for f1(x)MNLP for f2(x)2468101214160.0850.090.0950.1Number of ParticlesNMSE  24681012141600.511.5Number of ParticlesMNLP  2468101214160102030405060Number of ParticlesRunning Time  051015200.10.150.20.250.30.350.4Number of ParticlesNMSE  0510152011.522.53Number of ParticlesMNLP  05101520010203040Number of ParticlesRunning Time  SE−MPGP SENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPTable 1: Benchmarks Comparison for Synthetic Datasets. The NMSEi, MNLPi, RTimei represent
+the NMSE, MNLP and running time for the function fi (i = 1, 2)
+Method
+NMSE1 MNLP1 RTime1
+NMSE2 MNLP2 RTime2
+
+5-SPGP
+10-SSGP
+5-SE-MPGP
+5-SENN-MPGP
+
+0.2243
+0.0887
+0.0880
+0.0881
+
+0.5409
+0.1606
+1.6318
+0.1820
+
+28.6418s
+18.8605s
+12.5737s
+18.7513s
+
+0.5445
+0.1144
+0.1687
+0.1289
+
+1.5950
+1.1208
+1.3524
+1.1782
+
+30.3578s
+10.2025s
+12.4801s
+11.5909s
+
+Table 2: Benchmarks Comparison. Data1 is the temperature dataset. Data2 is the pendulum dataset.
+Data1
+NMSE MNLP RTime Data2
+NMSE MNLP RTime
+
+5-SPGP
+10-SSGP
+5-SE-MPGP
+5-SENN-MPGP
+
+0.48
+0.27
+0.11
+0.10
+
+1.62
+1.33
+1.05
+1.16
+
+181.3s
+97.16s
+50.99s
+59.25s
+
+10-SPGP
+10-SSGP
+20-SE-MPGP
+20-SENN-MPGP
+
+0.61
+1.04
+0.63
+0.58
+
+1.98
+10.85
+2.20
+2.12
+
+16.54s
+23.59s
+7.04s
+8.60s
+
+In Table 1, our 5-SE-MPGP mainly outperforms SPGP except that its MNLP1 is worse than the one
+of SPGP. The reason is the synthetic functions are nonstationary but SE-MPGP uses a stationary SE
+kernel. Hence we perform 5-SENN-MPGP with a nonstationary kernel to show that our MPGP is
+competitive with SSGP, and much better with shorter running time than SPGP.
+Global Surface Temperature Dataset: We present here a preliminary analysis of the Global Sur-
+face Temperature Dataset in January 2011 (http://data.giss.nasa.gov/gistemp/). We ﬁrst gather the
+training data with 100 collections. For each collection, we randomly select 90 data points where the
+input vector is the longitude and latitude location, the output is the temperature (oC ). There are two
+test data sets: the ﬁrst one is a grid test input set (Longitude: -180:40:180, Latitude: -90:20:90) that
+is used to show the estimated surface temperature. The second test input set (100 points) is randomly
+selected from the data website after obtaining all the training data.
+The ﬁrst experiment aims to show the predicted surface temperature at the grid test inputs. We set the
+number of particles in the SE-MPGP and SENN-MPGP as 20. From Figure 4, the KFGP methods
+stuck in the local optimum: SE-KFGP seems underﬁtting since it does not model the cold region
+around the location (100, 50), SENN-KFGP seems overﬁtting since it unexpectedly models the cold
+region around (-100, -50). On the contrary, SE-MPGP and SENN-MPGP suitably ﬁt the data set via
+the hyperparameter online learning.
+The second experiment is to evaluate the estimation error of our MPGP using the second test data.
+We ﬁrstly run all the methods to compute the NMSE and MNLP over iteration. From the ﬁrst row of
+Figure 5, the NMSE and MNLP of MPGP are lower than KFGP. Moreover, SENN-MPGP is much
+lower than SE-MPGP, which shows that SENN-MPGP successfully models the spatial nonstation-
+arity of the temperature data. Then we change the number of particles. For each number, we run
+SE-MPGP, SENN-MPGP 3 times to evaluate the average NMSE, MNLP and running time. It shows
+that SENN-MPGP ﬁts the data better than SE-MPGP but the trade-off is the longer running time.
+The third experiment is to compare our MPGP with the benchmarks. All the denotations are same as
+the third experiment of the simulated data. We also randomly interrupt the order of training subsets
+for the robustness consideration. From Table 2, the comparison results show that our MPGP uses a
+shorter running time with a better estimation performance than SPGP and SSGP.
+Pendulum Dataset: This is a small data set which contains 315 training points. In [3], it is men-
+tioned that SSGP model seems to be overﬁtting for this data due to the gradient ascent optimization.
+We are interested in whether our method can successfully capture the nonlinear property of this
+pendulum data. We ﬁrstly collect the training data 9 times, and 35 training data for each collec-
+tion. Then, 100 test points are randomly selected for evaluating the performance. From Table 2, our
+SENN-MPGP obtains the estimation with the fastest speed and the smallest NMSE among all the
+methods, and the MNLP is competitive to SPGP.
+
+7
+
+Figure 4: The temperature estimation at t = 100. The ﬁrst row (from left to right): the temperature
+value bar, the full training observation plot, the grid test output estimation by SE-KFGP, SENN-
+KFGP, SE-MPGP, SENN-MPGP. The black crosses are the observations at t = 100. The second
+row (from left to right) is the estimation of log hyperparameters (log(a0 ) to log(a4 )).
+
+Figure 5: The NMSE and MNLP evaluation. The ﬁrst row: the NMSE and MNLP over iteration.
+The second row: the average NMSE, MNLP, Running time as a function of the number of particles.
+
+6 Conclusion
+
+We have proposed a novel Bayesian ﬁltering framework for GP regression, which is a fast and accu-
+rate online method. Our MPGP framework does not only estimate the function value successfully,
+but it also provides a new technique for learning the unknown static hyperparameters by online es-
+timating the marginal posterior of hyperparameters. The small training set at each iteration would
+largely reduce the computation load while the estimation performance is improved over iteration due
+to the fact that recursive ﬁltering would propagate the previous estimation to enhance the current es-
+timation. In comparison with other benchmarks, we have shown that our MPGP could provide a
+robust estimation with a competitively computational speed. In the future, it would be interesting to
+explore the time-varying function estimation with our MPGP.
+
+8
+
+longitudelatitude  −180−1000100180−90−5005090longitudelatitude  −180−1000100180−90−5005090longitudelatitude  −180−1000100180−90−5005090longitudelatitude  −180−1000100180−90−5005090longitudelatitude  −180−1000100180−90−50050900501003.844.24.44.64.855.25.4tlog(a1)  050100−0.4−0.3−0.2−0.100.1tlog(a2)  050100−3.05−3−2.95−2.9−2.85−2.8−2.75−2.7−2.65tlog(a3)  050100−1−0.98−0.96−0.94−0.92−0.9−0.88−0.86−0.84−0.82tlog(a4)  0501000.10.20.30.40.50.60.70.8  log(a0)t−8−6−4−202468SE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSENN−MPGPSENN−MPGP01020304050607080901000.20.30.40.50.6IterationNMSE  01020304050607080901001.31.41.51.61.71.81.92IterationMNLP  510152025300.20.250.30.350.40.45Number of ParticlesNMSE  510152025301.41.61.822.22.42.6Number of ParticlesMNLP  510152025300100200300400Number of Particles Running Time  SE−KFGPSENN−KFGPSE−MPGPSENN−MPGPSE−KFGPSENN−KFGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPSE−MPGPSENN−MPGPReferences
+[1] C. E. Rasmussen, C. K. I. Williams, Gaussian Process for Machine learning, MIT Press, Cam-
+bridge, MA, 2006.
+[2] E. Snelson, Z. Ghahramani, Sparse gaussian processes using pseudo-inputs, in: NIPS, 2006,
+pp. 1257–1264.
+[3] M. L.-Gredilla, J. Q.-Candela, C. E. Rasmussen, A. R. F.-Vidal, Sparse spectrum gaussian
+process regression, Journal of Machine Learning Research 11 (2010) 1865–1881.
+[4] S. Reece, S. Roberts, An introduction to gaussian processes for the kalman ﬁlter expert, in:
+FUSION, 2010.
+[5] R. M. Neal, Monte carlo implementation of gaussian process models for bayesian regression
+and classiﬁcation, Tech. rep., Department of Statistics, University of Toronto (1997).
+[6] D. J. C. MacKay, Introduction to gaussian processes, in: Neural Networks and Machine Learn-
+ing, 1998, pp. 133–165.
+[7] M. P. Deisenroth, Efﬁcient reinforcement learning using gaussian processes, Ph.D. thesis, Karl-
+sruhe Institute of Technology (2010).
+[8] J. Liu, M. West, Combined parameter and state estimation in simulation-based ﬁltering, in:
+Sequential Monte Carlo Methods in Practice, 2001, pp. 197–223.
+[9] P. Li, R. Goodall, V. Kadirkamanathan, Estimation of parameters in a linear state space model
+using a Rao-Blackwellised particle ﬁlter, IEE Proceedings on Control Theory and Applications
+151 (2004) 727–738.
+[10] N. Kantas, A. Doucet, S. S. Singh, J. M. Maciejowski, An overview of squential Monte Carlo
+methods for parameter estimation in general state space models, in: 15 th IFAC Symposium
+on System Identiﬁcation, 2009.
+[11] A. Doucet, N. de Freitas, K. Murphy, S. Russell, Rao-Blackwellised particle ﬁltering for dy-
+namic Bayesian networks, in: UAI, 2000, pp. 176–183.
+[12] N. de Freitas, Rao-Blackwellised particle ﬁltering for fault diagnosis, in: IEEE Aerospace
+Conference Proceedings, 2002, pp. 1767–1772.
+[13] T. Sch ¨on, F. Gustafsson, P.-J. Nordlund, Marginalized particle ﬁlters for mixed linear/nonlinear
+state-space models, IEEE Transactions on Signal Processing 53 (2005) 2279 – 2289.
+[14] J. Ko, D. Fox, Gp-bayesﬁlters: Bayesian ﬁltering using gaussian process prediction and obser-
+vation models, in: IROS, 2008, pp. 3471–3476.
+[15] M. P. Deisenroth, R. Turner, M. F. Huber, U. D. Hanebeck, C. E. Rasmussen, Robust ﬁltering
+and smoothing with gaussian processes, IEEE Transactions on Automatic Control.
+[16] I. DiMatteo, C. R. Genovese, R. E. Kass, Bayesian Curve Fitting with Free-Knot Splines,
+Biometrika 88 (2001) 1055–1071.
+[17] S. A. Wood, Bayesian mixture of splines for spatially adaptive nonparametric regression,
+Biometrika 89 (2002) 513–528.
+
+9
+
+

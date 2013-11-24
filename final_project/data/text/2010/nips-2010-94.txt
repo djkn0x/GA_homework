@@ -1,0 +1,808 @@
+A Primal-Dual Message-Passing Algorithm for
+Approximated Large Scale Structured Prediction
+
+Tamir Hazan
+TTI Chicago
+hazan@ttic.edu
+
+Raquel Urtasun
+TTI Chicago
+rurtasun@ttic.edu
+
+Abstract
+
+In this paper we propose an approximated structured prediction framework for
+large scale graphical models and derive message-passing algorithms for learn-
+ing their parameters efﬁciently. We ﬁrst relate CRFs and structured SVMs and
+show that in CRFs a variant of the log-partition function, known as the soft-max,
+smoothly approximates the hinge loss function of structured SVMs. We then
+propose an intuitive approximation for the structured prediction problem, using
+duality, based on a local entropy approximation and derive an efﬁcient message-
+passing algorithm that is guaranteed to converge. Unlike existing approaches, this
+allows us to learn efﬁciently graphical models with cycles and very large number
+of parameters.
+
+1
+Introduction
+Unlike standard supervised learning problems which involve simple scalar outputs, structured pre-
+diction deals with structured outputs such as sequences, grids, or more general graphs.
+Ideally,
+one would want to make joint predictions on the structured labels instead of simply predicting each
+element independently, as this additionally accounts for the statistical correlations between label
+elements, as well as between training examples and their labels. These properties make structured
+prediction appealing for a wide range of applications such as image segmentation, image denoising,
+sequence labeling and natural language parsing.
+Several structured prediction models have been recently proposed, including log-likelihood models
+such as conditional random ﬁelds (CRFs, [10]), and structured support vector machines (structured
+SVMs) such as maximum-margin Markov networks (M3Ns [21]). For CRFs, learning is done by
+minimizing a convex function composed of a negative log-likelihood loss and a regularization term.
+Learning structured SVMs is done by minimizing the convex regularized structured hinge loss.
+Despite the convexity of the objective functions, ﬁnding the optimal parameters of these models can
+be computationally expensive since it involves exponentially many labels. When the label structure
+corresponds to a tree, learning can be done efﬁciently by using belief propagation as a subroutine;
+The sum-product algorithm is typically used in CRFs and the max-product algorithm in structured
+SVMs. In general, when the label structure corresponds to a general graph, one cannot compute
+the objective nor the gradient exactly, except for some special cases in structured SVMs, such as
+matching and sub-modular functions [22]. Therefore, one usually resorts to approximate inference
+algorithms, cf. [2] for structured SVMs and [20, 12] for CRFs. However, the approximate inference
+algorithms are computationally too expensive to be used as a subroutine of the learning algorithm,
+therefore they cannot be applied efﬁciently for large scale structured prediction problems. Also, it is
+not clear how to deﬁne a stopping criteria for these approaches as the objective does not monotoni-
+cally decrease since the objective and the gradient are both approximated. This might result in poor
+approximations.
+In this paper we propose an approximated structured prediction framework for large scale graphical
+models and derive message-passing algorithms for learning their parameters efﬁciently. We relate
+CRFs and structured SVMs, and show that in CRFs a variant of the log-partition function, known as
+
+1
+
+soft-max, smoothly approximates the hinge loss function of structured SVMs. We then propose an
+intuitive approximation for the structured prediction problem, using duality, based on a local entropy
+approximation and derive an efﬁcient message-passing algorithm that is guaranteed to converge.
+Unlike existing approaches, this allows us to learn efﬁciently graphical models with cycles and
+very large number of parameters. We demonstrate the effectiveness of our approach in an image
+denoising task. This task was previously solved by sharing parameters across cliques. In contrast,
+our algorithm is able to efﬁciently learn large number of parameters resulting in orders of magnitude
+better prediction.
+In the remaining of the paper, we ﬁrst relate CRFs and structured SVMs in Section 3, show our
+approximate prediction framework in Section 4, derive a message-passing algorithm to solve the
+approximated problem efﬁciently in Section 5, and show our experimental evaluation.
+2 Regularized Structured Loss Minimization
+Consider a supervised learning setting with objects x ∈ X and labels y ∈ Y . In structured prediction
+the labels may be sequences, trees, grids, or other high-dimensional objects with internal structure.
+Consider a function Φ : X × Y → Rd that maps (x, y) pairs to feature vectors. Our goal is to
+construct a linear prediction rule
+
+(cid:62)
+
+¯(cid:96)(θ , x, y) +
+
+yθ (x) = argmax
+θ
+Φ(x, y)
+y∈Y
+with parameters θ ∈ Rd , such that yθ (x) is a good approximation to the true label of x. Intuitively
+one would like to minimize the loss (cid:96)(y , yθ ) incurred by using θ to predict the label of x, given that
+the true label is y . However, since the prediction is norm-insensitive this method can lead to over
+(cid:88)
+ﬁtting. Therefore the parameters θ are typically learned by minimizing the norm-dependent loss
+(cid:107)θ(cid:107)p
+C
+p ,
+p
+(x,y)∈S
+deﬁned over a training set S . The function ¯(cid:96) is a surrogate loss of the true loss (cid:96)(y , ˆy). In this paper
+(cid:111)
+(cid:110)
+we focus on structured SVMs and CRFs which are the most common structured prediction models.
+The ﬁrst deﬁnition of structured SVMs used the structured hinge loss [21]
+Φ(x, ˆy) − θ
+(cid:62)
+(cid:62)
+¯(cid:96)hinge (θ , x, y) = max
+Φ(x, y)
+(cid:96)(y , ˆy) + θ
+ˆy∈Y
+The structured hinge loss upper bounds the true loss function, and corresponds to a maximum-
+(cid:62)
+margin approach that explicitly penalizes training examples (x, y) for which θ
+Φ(x, y) <
+(cid:62)
+Φ(x, yθ (x)).
+(cid:96)(y , yθ (x)) + θ
+(cid:16)
+(cid:17)
+(cid:16)
+(cid:88)
+The second loss function that we consider is based on log-linear models, and is commonly used in
+CRFs [10]. Let the conditional distribution be
+p( ˆy |x, y ; θ) =
+(cid:62)
+1
+Z (x, y)
+ˆy∈Y
+where (cid:96)(y , ˆy) is a prior distribution and Z (x, y) the partition function. The surrogate loss function
+is then the negative log-likelihood under the parameters θ
+
+(cid:96)(y , ˆy) + θ
+
+(cid:96)(y , ˆy) + θ
+
+Z (x, y) =
+
+Φ(x, ˆy)
+
+exp
+
+(cid:62)
+
+Φ(x, ˆy)
+
+exp
+
+,
+
+(1)
+
+(cid:17)
+
+1
+p( ˆy |x, y ; θ)
+In structured SVMs and CRFs a convex loss function and a convex regularization are minimized.
+
+¯(cid:96)log (θ , x, y) = ln
+
+.
+
+3 One parameter extension of CRFs and Structured SVMs
+In CRFs one aims to minimize the regularized negative log-likelihood of the conditional distribution
+p( ˆy |x, y ; θ) which decomposes into the log-partition and the linear term θ
+(cid:62)
+ (cid:88)
+ ,
+Φ(x, y). Hence the
+problem of minimizing the regularized loss in (1) with the loss function ¯(cid:96)log can be written as
+(x,y)∈S
+2
+
+ln Z (x, y) − d
+(cid:62)
+
+(cid:107)θ(cid:107)p
+p
+
+(CRF)
+
+min
+θ
+
+C
+p
+
+θ +
+
+(structured SVM)
+
+where (x, y) ∈ S ranges over training pairs and d = (cid:80)
+(x,y)∈S Φ(x, y) is the vector of empirical
+means.
+Structured SVMs aim at minimizing the regularized hinge loss ¯(cid:96)hinge (θ , x, y), which measures the
+loss of the label yθ (x) that most violates the training pair (x, y) ∈ S by more than (cid:96)(y , yθ (x)).
+ (cid:88)
+ ,
+(cid:110)
+(cid:111) − d(cid:62)θ +
+Since yθ (x) is independent of the training label y , the structured SVM program takes the form:
+C
+(cid:96)(y , ˆy) + θ
+min
+max
+ˆy∈Y
+p
+θ
+(x,y)∈S
+where (x, y) ∈ S ranges over the training pairs, and d is the vector of empirical means.
+(cid:17) (cid:107)1/ , where the norm is computed for the vector rang-
+(cid:16)
+In the following we deal with both structured prediction tasks (i.e., structured SVMs and CRFs)
+as two instances of the same framework, by extending the partition function to norms, namely
+Z (x, y) = (cid:107) exp
+(cid:62)
+Φ(x, ˆy)
+(cid:96)(y , ˆy) + θ
+ing over ˆy ∈ Y . Using the norm formulation we move from the partition function, for  = 1, to the
+maximum over the exponential function for  = 0. Equivalently, we relate the log-partition and the
+(cid:32)
+(cid:33)
+(cid:88)
+max-function by the soft-max function
+ˆy∈Y
+
+(cid:96)(y , ˆy) + θ
+
+
+ln Z (x, y) =  ln
+
+(cid:107)θ(cid:107)p
+p
+
+Φ(x, ˆy)
+
+Φ(x, ˆy)
+
+exp
+
+(2)
+
+(cid:62)
+
+(cid:62)
+
+C
+p
+
+min
+θ
+
+(cid:107)θ(cid:107)p
+p
+
+(structured-prediction)
+
+ln Z (x, y) − d(cid:62)θ +
+
+For  = 1 the soft-max function reduces to the log-partition function, and for  = 0 it reduces
+to the max-function. Moreover, when  → 0 the soft-max function is a smooth approximation of
+the max-function, in the same way the (cid:96)1/ -norm is a smooth approximation of the (cid:96)∞ -norm. This
+ (cid:88)
+ ,
+smooth approximation of the max-function is used in different areas of research [8]. We thus deﬁne
+the structured prediction problem as
+(x,y)∈S
+which is a one-parameter extension of CRFs and structured SVMs, i.e.,  = 1 and  = 0 respec-
+tively. Similarly to CRFs and structured SVMs [11, 16], one can use gradient methods to optimize
+(cid:88)
+(cid:88)
+structured prediction. The gradient of θr takes the form
+p ( ˆy |x, y ; θ)φr (x, ˆy) − dr + |θr |p−1 sign(θr ),
+(cid:33)
+(cid:32)
+(x,y)∈S
+ˆy
+
+p ( ˆy |x, y ; θ) =
+(cid:96)(y , ˆy) + θ
+1
+(5)
+exp
+Z (x, y)1/
+
+is a probability distribution over the possible labels ˆy ∈ Y . When  → 0 this probability distribution
+gets concentrated around its maximal values, since all its elements are raised to the power of a very
+large number (i.e., 1/). Therefore for  = 0 we get a structured SVM subgradient.
+In many real-life applications the labels y ∈ Y are n-tuples, y = (y1 , ..., yn ), hence there are
+exponentially many labels in Y . The feature maps usually describe relations between subsets of
+(cid:88)
+(cid:88)
+label elements yα ⊂ {y1 , ..., yn}, and local interactions on single label elements yv , namely
+α∈Er,x
+v∈Vr,x
+
+φr (x, ˆy1 , ..., ˆyn ) =
+
+φr,v (x, ˆyv ) +
+
+φr,α (x, ˆyα ).
+
+Φ(x, ˆy)
+
+where
+
+(cid:62)
+
+(3)
+
+(4)
+
+(6)
+
+Each feature φr (x, ˆy) can be described by its factor graph Gr,x , a bipartite graph with one set of
+nodes corresponding to Vr,x and the other set corresponds to Er,x . An edge connects a single label
+node v ∈ Vr,x with a subset of label nodes α ∈ Er,x if and only if yv ∈ yα . In the following we
+presentation we consider fully factorized loss (cid:96)(y , ˆy) = (cid:80)n
+consider the factor graph G = ∪rGr which is the union of all factor graphs. We denote by N (v)
+and N (α) the set of neighbors of v and α respectively, in the factor graph G. For clarity in the
+v=1 (cid:96)v (yv , ˆyv ), although our derivation
+naturally extends to any graphical model representing the interactions (cid:96)(y , ˆy).
+
+3
+
+To compute the soft-max and the marginal probabilities, p ( ˆyv |x, y ; θ) and p ( ˆyα |x, y ; θ), expo-
+nentially many labels have to be considered. This is in general computationally prohibitive, and
+thus one has to rely on inference and message-passing algorithms. When the factor graph has no
+cycles inference can be efﬁciently computed using belief propagation, but in the presence of cycles
+inference can only be approximated [25, 26, 7, 5, 13]. There are two main problems when deal-
+ing with graphs with cycles and approximate inference: efﬁciency and accuracy. For graphs with
+cycles there are no guarantees on the number of steps the message-passing algorithm requires till
+convergence, therefore it is computationally costly to run it as a subroutine. Moreover, as these
+message-passing algorithms have no guarantees on the quality of their solution, the gradient and the
+objective function can only be approximated, and one cannot know if the update rule decreased or
+increased the structured prediction objective. In contrast, in this work we propose to approximate
+the structured prediction problem and to efﬁciently solve the approximated problem exactly using
+message-passing. Intuitively, we suggest a principled way to run the approximate inference updates
+for few steps, while re-using the messages of previous steps to extract intermediate beliefs. These
+beliefs are used to update θr , although the intermediate beliefs may not agree on their marginal
+probabilities. This allows us to efﬁciently learn graphical models with large number of parameters.
+
+4 Approximate Structured Prediction
+
+The structured prediction objective in (3) and its gradients deﬁned in (4) cannot be computed ef-
+ﬁciently for general graphs since both involve computing the soft-max function, ln Z (x, y), and
+the marginal probabilities, p ( ˆyv |x, y ; θ) and p ( ˆyα |x, y ; θ), which take into account exponentially
+many elements ˆy ∈ Y . In the following we suggest an intuitive approximation for structured pre-
+diction, based on its dual formulation.
+Since the dual of the soft-max is the entropy barrier, it follows that the dual program for structured
+prediction is governed by the entropy function of the probabilities px,y ( ˆy). The following duality
+formulation is known for CRFs when  = 1 with (cid:96)2
+2 regularization, and for structured SVM when
+2 regularization, [11, 21, 1]. Here we derive the dual program for every  and every (cid:96)p
+ = 0 with (cid:96)2
+p
+regularization using conjugate duality:
+(cid:13)(cid:13)(cid:13)(cid:13)(cid:13)(cid:13)q
+(cid:13)(cid:13)(cid:13)(cid:13)(cid:13)(cid:13)
+− C 1−q
+H (px,y ) +
+Claim 1 The dual program of the structured prediction program in (3) takes the form
+(cid:88)
+(cid:88)
+(cid:88)
+(cid:88)
+px,y ( ˆy)Φ(x, ˆy) − d
+max
+px,y ( ˆy)(cid:96)(y , ˆy)
+px,y ( ˆy)∈∆Y
+q
+ˆy∈Y
+(x,y)∈S
+(x,y)∈S
+where ∆Y is the probability simplex over Y and H (px,y ) = − (cid:80)
+ˆy
+q
+ˆy px,y ( ˆy) ln px,y ( ˆy) is the entropy.
+Proof: In [6]
+When  = 1 the CRF dual program reduces to the well-known duality relation between the log-
+likelihood and the entropy. When  = 0 we obtain the dual formulation of structured SVM which
+emphasizes the duality relation between the max-function and the probability simplex. In general,
+Claim 1 describes the relation between the soft-max function and the entropy barrier over the prob-
+ability simplex.
+The dual program in Claim 1 considers the probabilities px,y ( ˆy) over exponentially many labels
+ˆy ∈ Y , as well as their entropies H (px,y ). However, when we take into account the graphical
+model imposed by the features, Gr,x , we observe that the linear terms in the dual formulation con-
+(cid:80)
+α cαH (bx,y ,α ) + (cid:80)
+sider the marginals probabilities px,y ( ˆyv ) and px,y ( ˆyα ). We thus propose to replace the marginal
+probabilities with their corresponding beliefs, and to replace the entropy term by the local entropies
+v cvH (bx,y ,v ) over the beliefs. Whenever , cv , cα ≥ 0, the approximated
+dual is concave and it corresponds to a convex dual program. By deriving its dual we obtain our
+approximated structured prediction, for which we construct an efﬁcient algorithm in Section 5.
+
+,
+
+4
+
+Bimodal noise
+Gaussian noise
+I4
+I2
+I3
+I1
+I4
+I2
+I3
+I1
+7.2510
+6.8164
+4.4751
+5.2905
+2.3193
+3.2275
+2.4707
+2.7344
+LBP-SGD
+7.2583
+6.7578
+4.4678
+5.2954
+2.3145
+3.2324
+2.4731
+2.7344
+LBP-SMD
+6.6211
+6.0278
+4.3994
+5.2148
+2.4023
+3.1299
+2.4194
+2.7417
+LBP-BFGS
+53.6035
+29.6338
+41.0718
+10.0488
+2.9053
+4,1382
+3.0762
+3.0469
+MF-SGD
+–
+–
+–
+–
+14.4360
+3.0640
+3.8721
+2.9688
+MF-SMD
+7.2510
+6.4624
+4.6167
+5.2661
+2.4780
+3.6157
+2.7783
+3.0005
+MF-BFGS
+0.9277
+0.0244
+0.1221
+0.0537
+0.1318
+0.0073
+0.1294
+0.0488
+Ours
+Figure 1: Gaussian and bimodal noise: Comparison of our approach to loopy belief propaga-
+tion and mean ﬁeld approximations when optimizing using BFGS, SGD and SMD. Note that our
+approach signiﬁcantly outperforms all the baselines. MF-SMD did not work for Bimodal noise.
+(cid:32) (cid:96)v (yv , ˆyv ) + (cid:80)
+θr φr,v (x, ˆyv ) − (cid:80)
+(cid:88)
+(cid:88)
+Theorem 1 The approximation of the structured prediction program in (3) takes the form
+α∈N (v) λx,y ,v→α ( ˆyv )
+r:v∈Vr,x
+(cid:32) (cid:80)
+(cid:33)
+θr φr,α (x, ˆyα ) + (cid:80)
+exp
+(cid:88)
+cv
+(x,y)∈S ,v
+ˆyv
+v∈N (α) λx,y ,v→α ( ˆyv )
+r:α∈Er
++
+cα ln
+cα
+(x,y)∈S ,α
+
+cv ln
+(cid:88)
+ˆyα
+
+− d(cid:62)θ − C
+p
+
+min
+λx,y,v→α ,θ
+
+exp
+
+(cid:33)
+
+(cid:107)θ(cid:107)p
+p
+
+cα
+ˆcv
+
+λx,y ,v→α ( ˆyv ) =
+
+Proof: In [6]
+5 Message-Passing Algorithm for Approximated Structured Prediction
+In the following we describe a block coordinate descent algorithm for the approximated structured
+prediction program of Theorem 1. Coordinate descent methods are appealing as they optimize a
+small number of variables while holding the rest ﬁxed, therefore they are efﬁcient and can be easily
+parallelized. Since the primal program is lower bounded by the dual program, the primal objective
+function is guaranteed to converge. We begin by describing how to ﬁnd the optimal set of variables
+related to a node v in the graphical model, namely λx,y ,v→α ( ˆyv ) for every α ∈ N (v), every ˆyv and
+every (x, y) ∈ S .
+Lemma 1 Given a vertex v in the graphical model, the optimal λx,y ,v→α ( ˆyv ) for every α ∈
+ (cid:88)
+(cid:33)
+(cid:32) (cid:80)
+θr φr,α (x, ˆyα ) + (cid:80)
+N (v), ˆyv ∈ Yv , (x, y) ∈ S in the approximated program of Theorem 1 satisﬁes
+u∈N (α)\v λx,y ,u→α ( ˆyu )
+r:α∈Er,x
+(cid:96)v (yv , ˆyv ) +
+ − µx,y ,α→v ( ˆyv ) + cx,y ,v→α
+µx,y ,α→v ( ˆyv ) = cα ln
+exp
+cα
+(cid:88)
+(cid:88)
+ˆyα \ ˆyv
+1 , where ˆcv = cv + (cid:80)
+θr φr,v (x, ˆyv ) +
+r:v∈Vr,x
+β∈N (v)
+for every constant cx,y ,v→α
+α∈N (v) cα . In particular, if either  and/or cα
+are zero then µx,y ,α→v corresponds to the (cid:96)∞ norm and can be computed by the max-function.
+Moreover, if either  and/or cα are zero in the objective, then the optimal λx,y ,v→α can be computed
+for any arbitrary cα > 0, and similarly for cv > 0.
+Proof: In [6]
+It is computationally appealing to ﬁnd the optimal λx,y ,v→α ( ˆyv ). When the optimal value cannot be
+found, one usually takes a step in the direction of the negative gradient and the objective function
+needs to be computed to ensure that the chosen step size reduces the objective. Obviously, com-
+puting the objective function at every iteration signiﬁcantly slows the algorithm. When the optimal
+λx,y ,v→α ( ˆyv ) can be found, the block coordinate descent algorithm can be executed efﬁciently in
+distributed manner, since every λx,y ,v→α ( ˆyv ) can be computed independently. The only interactions
+occur when computing the normalization step cx,y ,v→α . This allows for easy computation in GPUs.
+We now turn to describe how to change θ in order to improve the approximated structured prediction.
+1For numerical stability in our algorithm we set cx,y,v→α such that (cid:80)
+Since we cannot ﬁnd the optimal θr while holding the rest ﬁxed, we perform a step in the direction
+5
+
+λx,y,v→α ( ˆyv ) = 0
+
+µx,y ,β→v ( ˆyv )
+
+ˆyv
+
+where
+bx,y ,v ( ˆyv ) ∝ exp
+
+of the negative gradient, when , cα , ci are positive, or in the direction of the subgradient otherwise.
+We choose the step size η to guarantee a descent on the objective.
+Lemma 2 The gradient of the approximated structured prediction program in Theorem 1 with re-
+(cid:88)
+(cid:88)
+spect to θr equals to
+bx,y ,α ( ˆyα )φr,α (x, ˆyα ) − dr + C · |θr |p−1 · sign(θr ),
+bx,y ,v ( ˆyv )φr,v (x, ˆyv ) +
+(cid:32) (cid:96)v (yv , ˆyv ) + (cid:80)
+(cid:33)
+θr φr,v (x, ˆyv ) − (cid:80)
+(x,y)∈S ,α∈Er,x , ˆyα
+(x,y)∈S ,v∈Vr,x , ˆyv
+α∈N (v) λx,y ,v→α ( ˆyv )
+r:v∈Vr,x
+(cid:32) (cid:80)
+(cid:33)
+θr φr,α (x, ˆyα ) + (cid:80)
+cv
+v∈N (α) λx,y ,v→α ( ˆyv )
+r:α∈Er,x
+cα
+
+bx,y ,α ( ˆyα ) ∝ exp
+(cid:111)
+(cid:110)(cid:80)
+θr φr,α (x, ˆyα ) + (cid:80)
+However, if either  and/or cα equal zero, then the beliefs bx,y ,α ( ˆyα ) can be taken from the
+set of probability distributions over support of the max-beliefs, namely bx,y ,α ( ˆy∗
+α ) > 0 only if
+α ∈ argmax ˆyα
+ˆy∗
+. Similarly for bx,y ,v ( ˆy∗
+v∈N (α) λx,y ,v→α ( ˆyα )
+v )
+r:α∈Er,x
+whenever  and/or cv equal zero.
+Proof: In [6]
+Lemmas 1 and 2 describe the coordinate descent algorithm for the approximated structured predic-
+tion in Theorem 1. We refer the reader to [6] for a summary of our algorithm.
+The coordinate descent algorithm is guaranteed to converge, as it monotonically decreases the ap-
+proximated structured prediction objective in Theorem 1, which is lower bounded by its dual pro-
+gram. However, convergence to the global minimum cannot be guaranteed in all cases. In particular,
+for  = 0 the coordinate descent on the approximated structured SVMs is not guaranteed to converge
+to its global minimum, unless one uses subgradient methods which are not monotonically decreas-
+ing. Moreover, even when we are guaranteed to converge to the global minimum, i.e., , cα , cv > 0,
+the sequence of variables λx,y ,v→α ( ˆyv ) generated by the algorithm is not guaranteed to converge
+to an optimal solution, nor to be bounded. As a trivial example, adding an arbitrary constant to the
+variables, λx,y ,v→α ( ˆyv ) + c, does not change the objective value, hence the algorithm can generate
+non-decreasing unbounded sequences. However, the beliefs generated by the algorithm are bounded
+and guaranteed to converge to the solution of the dual approximated structured prediction problem.
+
+Claim 2 The block coordinate descent algorithm in lemmas 1 and 2 monotonically reduces the
+approximated structured prediction objective in Theorem 1, therefore the value of its objective is
+guaranteed to converge. Moreover, if , cα , cv > 0, the objective is guaranteed to converge to the
+global minimum, and its sequence of beliefs are guaranteed to converge to the unique solution of the
+approximated structured prediction dual.
+Proof: In [6]
+The convergence result has a practical implication, describing the ways we can estimate the con-
+vergence of the algorithm, either by the primal objective, the dual objective or the beliefs. The
+approximated structured prediction can also be used for non-concave entropy approximations, such
+as the Bethe entropy, where cα > 0 and cv < 0. In this case the algorithm is well deﬁned, and its
+stationary points correspond to the stationary points of the approximated structured prediction and
+its dual. Intuitively, this statement holds since the coordinate descent algorithm iterates over points
+λx,y ,v→α ( ˆyv ), θr with vanishing gradients. Equivalently the algorithm iterates over saddle points
+λx,y ,v→α ( ˆyv ), bx,y ,v ( ˆyv ), bx,y ,α ( ˆyα ) and (θr , zr ) of the Lagrangian deﬁned in Theorem 1. When-
+ever the dual program is concave these saddle points are optimal points of the convex primal, but for
+non-concave dual the algorithm iterates over saddle points. This is summarized in the claim below:
+
+Claim 3 Whenever the approximated structured prediction is non convex, i.e., , cα > 0 and cv < 0,
+the algorithm in lemmas 1 and 2 is not guaranteed to converge, but whenever it converges it reaches
+a stationary point of the primal and dual approximated structured prediction programs.
+Proof: In [6]
+
+6
+
+Figure 2: Denoising results: Gaussian (left) and Bimodal (right) noise.
+6 Experimental evaluation
+We performed experiments on 2D grids since they are widely used to represent images, and have
+many cycles. We ﬁrst investigate the role of  in the accuracy and running time of our algorithm, for
+ﬁxed cα , cv = 1. We used a 10 × 10 binary image and randomly generated 10 corrupted samples
+ﬂipping every bit with 0.2 probability. We trained the model using CRF, structured-SVM and our
+approach for  = {1, 0.5, 0.01, 0}, ranging from approximated CRFs ( = 1) to approximated
+structured SVM ( = 0) and its smooth version ( = 0.01). The runtime for CRF and structured-
+SVM is order of magnitudes larger than our method since they require exact inference for every
+training example and every iteration of the algorithm. For the approximated structured prediction,
+the runtimes are 323, 324, 326, 294 seconds for  = {1, 0.5, 0.01, 0} respectively. As  gets smaller
+the runtime slightly increases, but it decreases for  = 0 since the (cid:96)∞ norm is computed efﬁciently
+using the max function. However,  = 0 is less accurate than  = 0.01; When the approximated
+structured SVM converges, the gap between the primal and dual objectives was 1.3, and only 10−5
+for  > 0. This is to be expected since the approximated structured SVM is non-smooth (Claim 2),
+and we did not used subgradient methods to ensure convergence to the optimal solution.
+We generated test images in a similar fashion while using the same  for training and testing. In
+this setting both CRF and structured-SVM performed well, with 2 misclassiﬁcations. For the ap-
+proximated structured prediction, we obtained 2 misclassiﬁcations for  > 0. We also evaluated the
+quality of the solution using different values of  for training and inference [24]. When predicting
+with smaller  than the one used for learning the results are marginally worse than when predicting
+with the same . However, when predicting with larger , the results get signiﬁcantly worse, e.g.,
+learning with  = 0.01 and predicting with  = 1 results in 10 errors, and only 2 when  = 0.01.
+The main advantage of our algorithm is that it can efﬁciently learn many parameters. We now com-
+pared in a 5 × 5 dataset a model learned with different parameters for every edge and vertex (≈ 300
+parameters) and a model learned with parameters shared among the vertices and edges (2 parameters
+for edges and 2 for vertices) [9]. Using large number of parameters increases performance: sharing
+parameters resulted in 16 misclassiﬁcations, while optimizing over the 300 parameters resulted in 2
+errors. Our algorithm avoids overﬁtting in this case, we conjecture it is due to the regularization.
+We now compare our approach to state-of-the-art CRF solvers on the binary image dataset of [9]
+that consists of 4 different 64 × 64 base images. Each base image was corrupted 50 times with each
+type of noise. Following [23], we trained different models to denoise each individual image, using
+40 examples for training and 10 for test. We compare our approach to approximating the conditional
+likelihood using loopy belief propagation (LBP) and mean ﬁeld approximation (MF). For each of
+these approximations, we use stochastic gradient descent (SGD), stochastic meta-descent (SMD)
+and BFGS to learn the parameters. We do not report pseudolikelihood (PL) results since it did not
+work. The same behavior of PL was noticed by [23]. To reduce the computational complexity and
+the chances of convergence, [9, 23] forced their parameters to be shared across all nodes such that
+∀i, θi = θn and ∀i, ∀j ∈ N (i), θij = θe . In contrast, since our approach is efﬁcient, we can exploit
+the full ﬂexibility of the graph and learn more than 10, 000 parameters. This is computationally
+prohibitive with the baselines. We use the pixel values as node potentials and an Ising model with
+only bias for the edge potentials, i.e., φi,j = [1, −1; −1, 1]. For all experiments we use  = 1, and
+p = 2. For the baselines, we use the code, features and optimal parameters of [23].
+Under the ﬁrst noise model, each pixel was corrupted via i.i.d. Gaussian noise with mean 0 and stan-
+dard deviation of 0.3. Fig. 1 depicts test error in (%) for the different base images (i.e., I1 , . . . , I4 ).
+Note that our approach outperforms considerably the loopy belief propagation and mean ﬁeld ap-
+proximations for all optimization criteria (BFGS, SGD, SMD). For example, for the ﬁrst base image
+the error of our approach is 0.0488%, which is equivalent to a 2 pixels error on average. In contrast
+
+7
+
+(Bimodal)
+(Gaussian)
+Figure 3: Convergence. Primal and dual train errors for I1 .
+the best baseline gets 112 pixels wrong on average. Fig. 2 (left) depicts test examples as well as our
+denoising results. Note that our approach is able to cope with large amounts of noise.
+Under the second noise model, each pixel was corrupted with an independent mixture of Gaussians.
+For each class, a mixture of 2 Gaussians with equal mixing weights was used, yielding the Bimodal
+noise. The mixture model parameters were (0.08, 0.03) and (0.46, 0.03) for the ﬁrst class and
+(0.55, 0.02) and (0.42, 0.10) for the second class, with (a, b) a Gaussian with mean a and standard
+deviation b. Fig. 1 depicts test error in (%) for the different base images. As before, our approach
+outperforms all the baselines. We do not report MF-SMD results since it did not work. Denoised
+images are shown in Fig. 2 (right). We now show how our algorithm converges in a few iterations.
+Fig. 3 depicts the primal and dual training errors as a function of the number of iterations. Note that
+our algorithm converges, and the dual and primal values are very tight after a few iterations.
+7 Related Work
+For the special case of CRFs, the idea of approximating the entropy function with local entropies
+appears in [24, 3]. In particular, [24] proved that using a concave entropy approximation gives robust
+prediction. [3] optimized the non-concave Bethe entropy cα = 1, cv = 1 − |N (v)|, by repeatedly
+maximizing its concave approximation, thus converging in few concave iterations. Our work differs
+from these works in two aspects: we derive an efﬁcient algorithm in Section 5 for the concave
+approximated program (cα , cv > 0) and our framework and algorithm include structured SVMs, as
+well as their smooth approximation when  → 0.
+Some forms of approximated structured prediction were investigated for the special cases of CRFs.
+In [18] a similar program was used, but without the Lagrange multipliers λx,y ,v→α ( ˆyv ) and no
+regularization, i.e., C = 0. As a result the local log-partition functions are unrelated, and efﬁcient
+counting algorithm can be used for learning. In [3] a different approximated program was derived for
+cα = 1, cv = 0 which was solved by the BFGS convex solver. Our work is different as it considers
+efﬁcient algorithms for approximated structured prediction which take advantage of the graphical
+model by sending messages along its edges. We show in the experiments that this signiﬁcantly
+improves the run-time of the algorithm. Also, our approximated structured prediction includes as
+special cases approximated CRF, for  = 1, and approximated structured SVM, for  = 0. More-
+over, we describe how to smoothly approximate the structured SVMs to avoid the shortcomings of
+subgradient methods, by simply setting  → 0 .
+Some forms of approximated structured SVMs were dealt in [19] with the structured SMO algo-
+rithm. Independently, [14] presented an approximated structured SVMs program and a message
+passing algorithm, which reduce to Theorem 1 and Lemma 1 with  = 0 and cα = 1, cv = 1.
+However, in this algorithm the messages are not guaranteed to be bounded. They main difference of
+[14] from our work is that they lack the dual formulation, which we use to prove that the structured
+SVM smooth approximation, with  → 0, is guaranteed to converge to optimum and that the dual
+variables, i.e. the beliefs, are guaranteed to converge to the optimal beliefs. The relation between
+the margin and the soft-max is similar to the one used in [17]. Independently, [4, 15] described the
+connection between structured SVMs loss and CRFs loss. [15] also presented the one-parameter
+extension of CRFs and structured SVMs described in (3).
+8 Conclusion and Discussion
+In this paper we have related CRFs and structured SVMs and shown that the soft-max, a variant of
+the log-partition function, approximates smoothly the structured SVM hinge loss. We have also pro-
+posed an approximation for structured prediction problems based on local entropy approximations
+and derived an efﬁcient message-passing algorithm that is guaranteed to converge, even for general
+graphs. We have demonstrated the effectiveness of our approach to learn graphs with large number
+of parameters.We plan to investigate other domains of application such as image segmentation.
+
+8
+
+0510152025−8000−7000−6000−5000−4000−3000−2000Iterations  PrimalDual0510152025−8000−7000−6000−5000−4000−3000−2000Iterations  PrimalDualReferences
+[1] M. Collins, A. Globerson, T. Koo, X. Carreras, and P.L. Bartlett. Exponentiated gradient algorithms for
+conditional random ﬁelds and max-margin markov networks. JMLR, 9:1775–1822, 2008.
+[2] T. Finley and T. Joachims. Training structural SVMs when exact inference is intractable. In ICML, pages
+304–311. ACM, 2008.
+[3] V. Ganapathi, D. Vickrey, J. Duchi, and D. Koller. Constrained approximate maximum entropy learning
+of markov random ﬁelds. In UAI, 2008.
+[4] K. Gimpel and N.A. Smith. Softmax-margin CRFs: Training log-linear models with cost functions. In
+Human Language Technologies: The 2010 Annual Conference of the North American Chapter of the
+Association for Computational Linguistics, pages 733–736. Association for Computational Linguistics,
+2010.
+[5] T. Hazan and A. Shashua. Norm-Product Belief Propagation: Primal-Dual Message-Passing for Approx-
+imate Inference. Arxiv preprint arXiv:0903.3127, 2009.
+[6] T. Hazan and R. Urtasun. Approximated Structured Prediction for Learning Large Scale Graphical Mod-
+els. Arxiv preprint arXiv:1006.2899, 2010.
+[7] T. Heskes. Convexity arguments for efﬁcient minimization of the Bethe and Kikuchi free energies. Journal
+of Artiﬁcial Intelligence Research, 26(1):153–190, 2006.
+[8] J.K. Johnson, D.M. Malioutov, and A.S. Willsky. Lagrangian relaxation for MAP estimation in graphical
+models. In Proceedings of the Allerton Conference on Control, Communication and Computing. Citeseer,
+2007.
+[9] S. Kumar and M. Hebert. Discriminative Fields for Modeling Spatial Dependencies in Natural Images.
+In Neural Information Processing Systems. MIT Press, Cambridge, MA, 2003.
+[10] J. Lafferty, A. McCallum, and F. Pereira. Conditional random ﬁelds: Probabilistic models for segmenting
+and labeling sequence data. In ICML, pages 282–289, 2001.
+[11] G. Lebanon and J. Lafferty. Boosting and maximum likelihood for exponential models. NIPS, 1:447–454,
+2002.
+[12] A. Levin and Y. Weiss. Learning to Combine Bottom-Up and Top-Down Segmentation. In European
+Conference on Computer Vision, 2006.
+[13] T. Meltzer, A. Globerson, and Y. Weiss. Convergent message passing algorithms-a unifying view. In UAI,
+2009.
+[14] O. Meshi, D. Sontag, T. Jaakkola, and A. Globerson. Learning Efﬁciently with Approximate Inference
+via Dual Losses. In Proc. ICML. Citeseer, 2010.
+[15] P. Pletscher, C. Ong, and J. Buhmann. Entropy and Margin Maximization for Structured Output Learning.
+Machine Learning and Knowledge Discovery in Databases, pages 83–98, 2010.
+[16] N. Ratliff, J.A. Bagnell, and M. Zinkevich. Subgradient methods for maximum margin structured learn-
+ing. In ICML Workshop on Learning in Structured Output Spaces, 2006.
+[17] F. Sha and L.K. Saul. Large margin hidden Markov models for automatic speech recognition. Advances
+in neural information processing systems, 19:1249, 2007.
+[18] C. Sutton and A. McCallum. Piecewise training for structured prediction. Machine Learning, 77(2):165–
+194, 2009.
+[19] B. Taskar. Learning structured prediction models: a large margin approach. PhD thesis, Stanford, CA,
+USA, 2005. Adviser-Koller, Daphne.
+[20] B. Taskar, P. Abbeel, and D. Koller. Discriminative probabilistic models for relational data. In UAI, pages
+895–902. Citeseer, 2002.
+[21] B. Taskar, C. Guestrin, and D. Koller. Max-margin Markov networks. NIPS, 16:51, 2004.
+[22] B. Taskar, S. Lacoste-Julien, and M. I. Jordan. Structured prediction, dual extragradient and Bregman
+projections. JMLR, 7:1653–1684, 2006.
+[23] S. Vishwanathan, N. Schraudolph, M. Schmidt, and K. Murphy. Accelerated Training of Conditional
+Random Fields with Stochastic Meta-Descent . In International Conference in Machine Learning, 2006.
+[24] M.J. Wainwright. Estimating the Wrong Graphical Model: Beneﬁts in the Computation-Limited Setting.
+JMLR, 7:1859, 2006.
+[25] M.J. Wainwright and M.I. Jordan. Graphical models, exponential families, and variational inference.
+Foundations and Trends R(cid:13) in Machine Learning, 1(1-2):1–305, 2008.
+[26] J.S. Yedidia, W. T. Freeman, and Y. Weiss. Constructing free-energy approximations and generalized
+belief propagation algorithms. Transactions on Information Theory, 51(7):2282–2312, 2005.
+
+9
+
+
