@@ -1,14 +1,16 @@
 import re
 import os
 from time import sleep
+from collections import Counter
 
+import nltk
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.tokenize import sent_tokenize, word_tokenize
-from nltk.collocations import BigramCollocationFinder
-from nltk.metrics import BigramAssocMeasures
+from nltk.collocations import BigramCollocationFinder, TrigramCollocationFinder
+from nltk.metrics import BigramAssocMeasures, TrigramAssocMeasures 
 
-year_range = range(2013, 2014)
+year_range = range(2012, 2013)
 stops = stopwords.words('english')
 blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
 combined = []
@@ -23,6 +25,10 @@ for year in year_range:
 
 	print "\n...starting %s files" % str(year)
 
+	unigram_list = []
+	bigram_list = []
+	trigram_list = []
+
 	directory = "../data/text/%s" % str(year)
 	files = os.listdir(directory)
 
@@ -35,39 +41,32 @@ for year in year_range:
 				text = open(filename).read().lower()
 
 				# === Tokenize and stem  ===
-				sents = sent_tokenize(text)				
+				sents = sent_tokenize(text)			
 				for sent in sents: 
 					s = blacklist.sub('', sent)
 					tokens = word_tokenize(s)
 
-					for token in tokens: 
-						# if token in english words
-						stem = stem_word(token)
-						combined.append(stem)
+					for token in tokens:
+						if token not in stops: 
+							stem = stem_word(token)
+							combined.append(stem)
 
 			except: 
 				pass
+	
+	# === Unigrams ===
+	words = [w.lower() for w in combined]
+	count = Counter(words).most_common(25)
+	print count
+	
+	# === Bigrams ===
+	words = [w.lower() for w in combined]
+	bcf = BigramCollocationFinder.from_words(words)
+	bigrams = bcf.ngram_fd.items()
+	print bigrams[:25]
 
-
-# TO DO: strip punctuation from combined
-
-# === Unigrams ===
-# TO DO: strip punctuation from combined
-
-
-# === Bigrams ===
-words = [w.lower() for w in combined]
-bcf = BigramCollocationFinder.from_words(words)
-# TO DO: strip stopwords from bigrams
-bigrams = bcf.nbest(BigramAssocMeasures.likelihood_ratio, 1000)
-
-clean = []
-for bigram in bigrams:
-	if bigram[0] not in stops:
-		if bigram[1] not in stops:
-			clean.append(bigram)
-print clean
-
-
-#fdist = nltk.FreqDist(bigrams)
-#keys = fdist.keys()
+	# === Trigrams ===
+	words = [w.lower() for w in combined]
+	tcf = TrigramCollocationFinder.from_words(words)
+	trigrams = tcf.ngram_fd.items()
+	print trigrams[:25]
