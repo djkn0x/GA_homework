@@ -19,10 +19,13 @@ for year in year_range:
 		output = os.path.splitext(os.path.basename(f))[0] + ".txt"
 		output_file = "../data/text/%s/%s" % (str(year), output)
 
-		if ".pdf" in input_file:
+		if input_file.endswith(".pdf"):
+
 			print "...extracting %s as %s" % (input_file, output_file)
+			
 			try:
 				os_call = str("pdf2txt.py -c utf-8 -o %s %s" % (output_file, input_file)) 
 				os.system(os_call)
+			
 			except: 
 				pass
