@@ -1,19 +1,20 @@
+"""
+This script uses NLTK to calculate the trigrams (three word collocations) 
+within a text corpus.  
+
+"""
+
 import re
 import os
 from time import sleep
 from collections import Counter
-
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.tokenize import sent_tokenize, word_tokenize
-from nltk.collocations import BigramCollocationFinder, TrigramCollocationFinder
-from nltk.metrics import BigramAssocMeasures, TrigramAssocMeasures 
+from nltk.collocations import TrigramCollocationFinder
+from nltk.metrics import TrigramAssocMeasures 
 
-year_range = range(2005, 2013)
-stops = stopwords.words('english')
-blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
-fulltext = []
 
 def stem_word(word):
 	"""Takes a single word input and returns the stem."""
@@ -22,14 +23,6 @@ def stem_word(word):
 	stemmed_word = stem(word)
 	return stemmed_word
 
-def calc_bigrams(text, min_freq=100):
-	"""Returns frequency of bigrams from a text input."""
-	words = [w.lower() for w in text]
-	bcf = BigramCollocationFinder.from_words(words)
-	bcf.apply_freq_filter(min_freq)
-	bigrams = bcf.ngram_fd.items()
-	bigram_list.append(bigrams)
-	return bigram_list
 
 def calc_trigrams(text, min_freq=50):
 	"""Returns frequency of trigrams from a text input."""
@@ -40,10 +33,15 @@ def calc_trigrams(text, min_freq=50):
 	trigram_list.append(trigrams)
 	return trigram_list
 
+
+year_range = range(2005, 2013)
+stops = stopwords.words('english')
+blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
+fulltext = []
+
 for year in year_range:
 
 	print "\n...starting %s files" % str(year)
-
 	combined = []
 	
 	directory = "../data/text/%s" % str(year)
@@ -74,18 +72,19 @@ for year in year_range:
 				pass
 	
 
-	# === Bigrams by year ===
-	bigram_list = []
-	year_bigrams = calc_bigrams(combined)
+	# === Trigrams by year ===
+	trigram_list = []
+	year_trigrams = calc_trigrams(combined)
 
-	f = open("../data/bigrams/%s_bigrams.txt" % str(year), 'w')
-	f.write(str(year_bigrams))
+	f = open("../data/trigrams/%s_trigrams.txt" % str(year), 'w')
+	f.write(str(year_trigrams))
 	f.close()
 
-# === Bigrams across entire corpus ===
-bigram_list = []
-corpus_bigrams = calc_bigrams(fulltext)
 
-f = open("../data/bigrams/corpus_bigrams.txt", 'w')
-f.write(str(corpus_bigrams))
+# === Trigrams across entire corpus ===
+trigram_list = []
+corpus_trigrams = calc_trigrams(fulltext)
+
+f = open("../data/trigrams/corpus_trigrams.txt", 'w')
+f.write(str(corpus_trigrams))
 f.close()

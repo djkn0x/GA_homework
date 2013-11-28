@@ -1,3 +1,8 @@
+"""
+This script prints out the number of text files within a series of directories.  
+
+"""
+
 import os
 
 year_range = range(2005, 2013)

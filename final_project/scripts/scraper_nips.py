@@ -1,3 +1,9 @@
+"""
+This script uses requests and BeautifulSoup to find and download papers submitted to  
+the Neural Information Processing Systems (NIPS) Foundation annual conference.  
+
+"""
+
 import os
 import re
 from time import sleep
@@ -5,6 +11,8 @@ from urllib2 import urlopen
 from bs4 import BeautifulSoup as bs
 import requests
 
+# The NIPS urls (e.g. http://books.nips.cc/nips25.html) refer to the conference number 
+# rather than the year so need to use a num_range rather than a year_range
 num_range = range(18, 26)
 
 for num in num_range:

@@ -1,3 +1,8 @@
+"""
+This script prints out the number of words in text files within a directory.  
+
+"""
+
 import os
 
 directory = "../data/corpus"
