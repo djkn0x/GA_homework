@@ -1,3 +1,8 @@
+"""
+This script uses NLTK and Counter to count the unigrams within a text corpus.  
+
+"""
+
 import re
 import os
 from collections import Counter
@@ -6,10 +11,6 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.tokenize import sent_tokenize, word_tokenize
 
-year_range = range(2005, 2013)
-stops = stopwords.words('english')
-blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
-fulltext = []
 
 def stem_word(word):
 	"""Takes a single word input and returns the stem."""
@@ -18,11 +19,18 @@ def stem_word(word):
 	stemmed_word = stem(word)
 	return stemmed_word
 
+
 def calc_unigrams(text, number=100):
 	"""Returns frequency of unigrams from a text input."""
 	words = [w for w in text]
 	count = Counter(words).most_common(number)
 	return count
+
+
+year_range = range(2005, 2013)
+stops = stopwords.words('english')
+blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
+fulltext = []
 
 for year in year_range:
 
@@ -62,6 +70,7 @@ for year in year_range:
 	f = open("../data/unigrams/%s_unigrams.txt" % str(year), 'w')
 	f.write(str(year_unigrams))
 	f.close()
+
 
 # === Unigrams across entire corpus ===
 corpus_unigrams = calc_unigrams(fulltext, number=5000)

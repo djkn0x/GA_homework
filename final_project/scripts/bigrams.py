@@ -1,10 +1,19 @@
-import re 
+"""
+This script uses NLTK to calculate the bigrams (two word collocations) 
+within a text corpus.  
+
+"""
+
+import re
 import os
-import string
+from time import sleep
+from collections import Counter
+import nltk
 from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.collocations import BigramCollocationFinder
-from nltk.metrics import BigramAssocMeasures
-from collections import defaultdict
+from nltk.metrics import BigramAssocMeasures 
 
 
 def stem_word(word):
@@ -15,60 +24,26 @@ def stem_word(word):
 	return stemmed_word
 
 
-def calc_bigrams(text):
+def calc_bigrams(text, min_freq=100):
 	"""Returns frequency of bigrams from a text input."""
-	words = [w for w in text]
+	words = [w.lower() for w in text]
 	bcf = BigramCollocationFinder.from_words(words)
-	# bcf.apply_freq_filter(freq)
-	bigram_measures = BigramAssocMeasures()
-	bigrams = bcf.nbest(bigram_measures.pmi, 100)
+	bcf.apply_freq_filter(min_freq)
+	bigrams = bcf.ngram_fd.items()
 	bigram_list.append(bigrams)
 	return bigram_list
 
 
-# def calc_brigrams(text, min_freq=10, n_best=10, scores=False) :
-
-# 	"""Gets N best bigrams from a list of words.
-# 	@param min_freq: minimum ngram frequency to keep
-# 	@type min_freq: int; default value of 10
-# 	@param n_best: number of highest-scored ngrams to return
-# 	@type n_best: int
-# 	@param scores: return tuples of ngram and scores, or not
-# 	@type scores: boolean
-# 	"""
-
-# 	bcf = BigramCollocationFinder.from_words(text)
-# 	bcf.apply_freq_filter(min_freq)
-# 	bigrams = BigramAssocMeasures.likelihood_ratio
-
-# 	if scores is False :
-# 		return bcf.nbest(bigrams, n_best)
-# 	elif scores is True :
-# 		return bcf.score_ngrams(bigrams)[:n_best]
-
-
-def regex_punc_strip(text):
-
-	"""Strips punctuation from a string. 
-	Source: http://stackoverflow.com/questions/265960/best-way-to-strip-punctuation-from-a-string-in-python
-	"""
-
-	regex = re.compile('[%s]' % re.escape(string.punctuation))
-	return regex.sub('', text)
-
-
-fulltext = []
-bigram_list = []
-blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
+year_range = range(2005, 2013)
 stops = stopwords.words('english')
-
-year_range = range(2005, 2006)
+blacklist = re.compile(u'[^a-zA-Z0-9 ]+')
+fulltext = []
 
 for year in year_range:
 
 	print "\n...starting %s files" % str(year)
 	combined = []
-
+	
 	directory = "../data/text/%s" % str(year)
 	files = os.listdir(directory)
 
@@ -89,23 +64,27 @@ for year in year_range:
 					for token in tokens:
 						if len(token) > 3:
 							if token not in stops: 
-								# token = stem_word(token)
+								# stem = stem_word(token)
 								combined.append(token)
 								fulltext.append(token)
 
 			except: 
 				pass
 	
+
 	# === Bigrams by year ===
+	bigram_list = []
 	year_bigrams = calc_bigrams(combined)
 
 	f = open("../data/bigrams/%s_bigrams.txt" % str(year), 'w')
 	f.write(str(year_bigrams))
 	f.close()
 
+
 # === Bigrams across entire corpus ===
+bigram_list = []
 corpus_bigrams = calc_bigrams(fulltext)
 
-f = open("../data/bigrams/corpus_unigrams.txt", 'w')
+f = open("../data/bigrams/corpus_bigrams.txt", 'w')
 f.write(str(corpus_bigrams))
 f.close()

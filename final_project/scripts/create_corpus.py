@@ -1,3 +1,9 @@
+"""
+This script uses stopwords (from nltk.corpus), nltk.stem and nltk.tokenize to clean up text files and 
+convert them into a usable corpus.  
+
+"""
+
 import re
 import os
 from time import sleep

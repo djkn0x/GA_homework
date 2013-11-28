@@ -1,3 +1,9 @@
+"""
+This script uses requests and BeautifulSoup to find and download final project papers 
+from the Stanford CS229 Machine Learning course. 
+
+"""
+
 import os
 import re
 from time import sleep
@@ -5,7 +11,7 @@ from urllib2 import urlopen
 from bs4 import BeautifulSoup as bs
 import requests
 
-year_range = range(2006, 2013)
+year_range = range(2005, 2013)
 
 for year in year_range:
 

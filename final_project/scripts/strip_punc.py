@@ -1,9 +1,17 @@
-import re, string
+"""
+This script uses regular expressions and string.punctuation to strip all 
+punctuation from a given text file. 
 
-regex = re.compile('[%s]' % re.escape(string.punctuation))
+"""
+
+import re 
+import string
+
 
 def regex_punc_strip(text):
+	regex = re.compile('[%s]' % re.escape(string.punctuation))
 	return regex.sub('', text)
+
 
 filename = "/Users/dk/Desktop/test_corpus.txt"
 text = open(filename).read()

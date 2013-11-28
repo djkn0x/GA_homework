@@ -1,3 +1,8 @@
+"""
+This script uses PDFMiner (http://www.unixuser.org/~euske/python/pdfminer/) to extract text out of pdf files
+
+"""
+
 from time import sleep
 import os
 import pdfminer

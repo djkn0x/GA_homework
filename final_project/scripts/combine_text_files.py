@@ -1,3 +1,8 @@
+"""
+This script takes a group of text files in a folder and combines them into a single text file. 
+
+"""
+
 import os
 
 combined = []
