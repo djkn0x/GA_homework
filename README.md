@@ -4,26 +4,26 @@
 Venue: General Assembly SF
 Date: Fall 2013 
 
-##CORE SKILLS
+##Core skills
 
 * Math and computing skills: Applying your math and computing skills to make meaning out of large data sets
 * Data manipulation skills: Learning how to manipulate big data by using various toolsets such as Hadoop & AWS
 * Predictive modeling skills: Learning how to make predictions about data using fundamental modeling techniques that will help you make better informed business decisions
 
-##CURRICULUM
+##Curriculum
 
-###UNIT 1: THE BASICS OF DATA SCIENCE
+###Unit 1: The basics of Data Science 
 * Introduction to Data Exploration
 * Introduction to Machine Learning
 
-###UNIT 2: FUNDAMENTAL MODELING TECHNIQUES
+###Unit 2: Fundamental modeling techniques
 * K-Nearest Neighbors Classification
 * Naive Bayes Classification
 * Regression & Regularization
 * Logistic Regression
 * K-Means Clustering
 
-###UNIT 3: FURTHER MODELING TECHNIQUES
+###Unit 3: Further modeling techniques
 * Machine Learning in Python
 * Ensemble Techniques
 * Decision Trees & Random Forests
@@ -31,7 +31,7 @@ Date: Fall 2013
 * Dimensionality Reduction
 * Recommendation Systems
 
-###UNIT 4: OTHER TOOLS
+###Unit 4: Other tools
 * Database Techniques
 * Social Network Analysis
 * Map-Reduce
